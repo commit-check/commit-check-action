@@ -1,0 +1,56 @@
+name: main
+
+on:
+  release:
+    branches: [main]
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'which tag to update to'
+        default: 'v1'
+        required: true
+      ref:
+        description: 'which branch to update the tag on'
+        default: 'main'
+        required: true
+
+jobs:
+  re-tag:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        ref: ${{ inputs.ref }}
+    - name: Config git name and email
+      run: |
+        git config user.name 'github-actions'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+    - name: Update tag with parameter
+      if: github.event.inputs.tag != ''
+      run: |
+        git tag --delete ${{ inputs.tag }}  || true
+        git push --delete origin ${{ inputs.tag }} || true
+        git tag -a ${{ inputs.tag }} -m 'Retag ${{ inputs.tag }}'
+        git push origin ${{ inputs.tag }}
+    - name: Update tag to v1
+      if: github.event.inputs.tag == ''
+      run: |
+        git tag --delete v1 || true
+        git push --delete origin v1 || true
+        git tag -a v1 -m 'Retag v1'
+        git push origin v1
+
+  commit-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: commit-check/commit-check-action@v1
+        id: check
+        with:
+          message: true
+          branch: true
+          author-name: true
+          author-email: true
+          dry-run: true
