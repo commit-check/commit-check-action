@@ -2,8 +2,8 @@ name: Commit Check
 description: Check commit message formatting, branch naming, referencing Jira tickets, and more
 author: shenxianpeng
 branding:
-  icon: "check-circle"
-  color: "green"
+  icon: "git-commit"
+  color: "blue"
 inputs:
   message:
     description: check commit message formatting convention
