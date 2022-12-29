@@ -1,7 +1,7 @@
 # Commit-Check GitHub Action
 
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action)
-[![GitHub marketplace](https://img.shields.io/badge/marketplace-commit--check-blue?logo=github)](https://github.com/marketplace/actions/commit-check)
+[![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 
 A Github Action for checking commit message formatting, branch naming, referencing Jira tickets, and more.
 
