@@ -5,6 +5,29 @@
 
 A Github Action for checking commit message formatting, branch naming, referencing Jira tickets, and more.
 
+## Usage
+
+Create a new GitHub Actions workflow in your project, e.g. at [.github/workflows/commit-check.yml](.github/workflows/commit-check.yml)
+
+```yaml
+name: Commit Check
+
+on: pull_request
+
+jobs:
+  commit-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: commit-check/commit-check-action@v1
+        with:
+          message: true
+          branch: true
+          author-name: true
+          author-email: true
+          dry-run: true
+```
+
 ## Optional Inputs
 
 ### `message`
@@ -36,8 +59,26 @@ A Github Action for checking commit message formatting, branch naming, referenci
 
 Note: to change the default rules of above inputs, just add your own [`.commit-check.yml`](https://github.com/commit-check/commit-check#usage) config file.
 
+## Add Commit Check Action badge in README
+
+You can show Commit Check Action status with a badge in your repository README
+
+Example
+
+```
+[![commit-check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
+```
+
+[![commit-check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
+
 ## Versioning
 
 Versioning follows [Semantic Versioning](https://semver.org/).
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/H2H85WC9L)
+## Have question or feedback?
+
+To provide feedback (requesting a feature or reporting a bug) please post to [issues](https://github.com/commit-check/commit-check/issues).
+
+## License
+
+[MIT License](LICENSE)

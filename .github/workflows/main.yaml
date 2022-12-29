@@ -41,16 +41,3 @@ jobs:
         git push --delete origin v1 || true
         git tag -a v1 -m 'Retag v1'
         git push origin v1
-
-  commit-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: commit-check/commit-check-action@v1
-        id: check
-        with:
-          message: true
-          branch: true
-          author-name: true
-          author-email: true
-          dry-run: true
