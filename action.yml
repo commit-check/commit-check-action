@@ -1,4 +1,4 @@
-name: commit-check-action
+name: Commit Check Action
 description: Check commit message formatting, branch naming, referencing Jira tickets, and more
 author: shenxianpeng
 branding:
