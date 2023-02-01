@@ -3,7 +3,7 @@
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action)
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 
-A Github Action for checking commit message formatting, branch naming, referencing Jira tickets, and more.
+A Github Action for checking commit message formatting, branch naming, committer name, email, and more.
 
 ## Usage
 
@@ -57,19 +57,30 @@ jobs:
 - **Description**: run checks without failing
 - Default: 'false'
 
-Note: to change the default rules of above inputs, just add your own [`.commit-check.yml`](https://github.com/commit-check/commit-check#usage) config file.
+Note: to change the default rules of above inputs, just add your own [`.commit-check.yml`](.commit-check.yml) config file.
 
-## Add Commit Check Action badge in README
+https://github.com/commit-check/commit-check#usage
 
-You can show Commit Check Action status with a badge in your repository README
+## Badging your repository
 
-Example
+You can add a badge to your repository to show your contributors / users that you use commit-check!
+
+[![Commit Check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
+
+Markdown
 
 ```
-[![commit-check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
+[![Commit Check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
 ```
 
-[![commit-check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
+reStructuredText
+
+```
+.. image:: https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg
+    :target: https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml
+    :alt: Commit Check
+```
+
 
 ## Versioning
 

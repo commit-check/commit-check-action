@@ -1,25 +1,25 @@
 checks:
 
   - check: commit_message
-    regex: '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test){1}(\([\w\-\.]+\))?(!)?: ([\w ])+([\s\S]*)'
+    regex: '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test){1}(\([\w\-\.]+\))?(!)?: ([\w ])+([\s\S]*)|(Merge).*|(fixup!.*)'
     error: "The commit message should be structured as follows:\n\n
     <type>[optional scope]: <description>\n
     [optional body]\n
     [optional footer(s)]\n\n
     More details please refer to https://www.conventionalcommits.org"
-    suggest: 'git commit --amend'
+    suggest: git commit --amend --no-verify
 
   - check: branch_name
-    regex: '^(bugfix|feature|release|hotfix|task)\/.+|(master)|(main)|(HEAD)|(PR-.+)'
-    error: 'Branches must begin with these types: bugfix/ feature/ release/ hotfix/ task/'
-    suggest: 'git checkout -b type/branch_name'
+    regex: ^(bugfix|feature|release|hotfix|task)\/.+|(master)|(main)|(HEAD)|(PR-.+)
+    error: "Branches must begin with these types: bugfix/ feature/ release/ hotfix/ task/"
+    suggest: git checkout -b type/branch_name
 
   - check: author_name
-    regex: r'^([a-zA-Z]{2,}\s[a-zA-Z]{1,}'?-?[a-zA-Z]{2,}\s?([a-zA-Z]{1,})?)'
-    error: 'The user name seems invalid'
-    suggest: 'git config user.name "Peter Shen"'
+    regex: ^[a-z ,.\'-]+$|.*(\[bot])
+    error: The committer name seems invalid
+    suggest: git config user.name "Peter Shen"
 
   - check: author_email
-    regex: '^\S+@\S+\.\S+$'
-    error: 'The email address seems invalid'
-    suggest: 'git config user.email xianpeng.shen@gmail.com'
+    regex: ^\S+@\S+\.\S+$
+    error: The committer email seems invalid
+    suggest: git config user.email petershen@example.com
