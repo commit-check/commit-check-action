@@ -59,8 +59,6 @@ jobs:
 
 Note: to change the default rules of above inputs, just add your own [`.commit-check.yml`](.commit-check.yml) config file.
 
-https://github.com/commit-check/commit-check#usage
-
 ## Badging your repository
 
 You can add a badge to your repository to show your contributors / users that you use commit-check!
