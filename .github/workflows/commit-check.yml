@@ -2,7 +2,6 @@ name: Commit Check
 
 on:
   push:
-    branches: 'main'
   pull_request:
     branches: 'main'
 
@@ -17,4 +16,4 @@ jobs:
           branch: true
           author-name: true
           author-email: true
-          dry-run: true
+          summary: true

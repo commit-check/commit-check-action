@@ -12,7 +12,10 @@ Create a new GitHub Actions workflow in your project, e.g. at [.github/workflows
 ```yaml
 name: Commit Check
 
-on: pull_request
+on:
+  push:
+  pull_request:
+    branches: 'main'
 
 jobs:
   commit-check:
@@ -26,20 +29,21 @@ jobs:
           author-name: true
           author-email: true
           dry-run: true
+          summary: true
 ```
 
 ## Optional Inputs
 
 ### `message`
 
-- **Description**: check commit message formatting convention
-  - By default the rule follows [conventionalcommits](https://www.conventionalcommits.org/)
+- **Description**: check commit message formatting convention.
+  - By default the rule follows [conventionalcommits](https://www.conventionalcommits.org/).
 - Default: 'true'
 
 ### `branch`
 
-- **Description**: check git branch naming convention
-  - By default follow bitbucket [branching model](https://support.atlassian.com/bitbucket-cloud/docs/configure-a-projects-branching-model/)
+- **Description**: check git branch naming convention.
+  - By default follow bitbucket [branching model](https://support.atlassian.com/bitbucket-cloud/docs/configure-a-projects-branching-model/).
 - Default: 'true'
 
 ### `author-name`
@@ -54,10 +58,15 @@ jobs:
 
 ### `dry-run`
 
-- **Description**: run checks without failing
+- **Description**: run checks without failing. exit code is 0 otherwise is 1.
 - Default: 'false'
 
-Note: to change the default rules of above inputs, just add your own [`.commit-check.yml`](.commit-check.yml) config file.
+### `summary`
+
+- **Description**: display job summary to a workflow run
+- Default: 'true'
+
+Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
 ## Badging your repository
 
