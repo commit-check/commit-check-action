@@ -68,6 +68,18 @@ jobs:
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
+## GitHub Actions job summary
+
+By default, commit-check-action results are shown on the job summary page of the workflow. 
+
+### Success summary
+
+![Success summary](https://github.com/commit-check/.github/blob/main/screenshot/success-summary.png)
+
+### Failure summary
+
+![Failure summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-summary.png)
+
 ## Badging your repository
 
 You can add a badge to your repository to show your contributors / users that you use commit-check!
