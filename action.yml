@@ -1,5 +1,5 @@
 name: Commit Check Action
-description: Check commit message formatting, branch naming, referencing Jira tickets, and more
+description: Check commit message formatting, branch naming, committer name, email, and more
 author: shenxianpeng
 branding:
   icon: "git-commit"
@@ -25,35 +25,19 @@ inputs:
     description: run checks without failing
     required: false
     default: false
+  summary:
+    description: add a job summary
+    required: false
+    default: true
 runs:
   using: "composite"
   steps:
-    - name: Install action dependencies
+    - run: ${{ github.action_path }}/entrypoint
       shell: bash
-      run: |
-        if [[ "${{runner.os}}" == "Linux" ]]; then
-          # https://github.com/pypa/setuptools/issues/3269
-          export DEB_PYTHON_INSTALL_LAYOUT=deb
-        fi
-        python3 -m pip install -r '${{ github.action_path }}/requirements.txt'
-    - name: Run commit-check
-      id: commit-check
-      shell: bash
-      run: |
-        args=""
-        if [ "${{ inputs.message }}" == "true" ]; then
-          args="$args --message"
-        fi
-        if [ "${{ inputs.branch }}" == "true" ]; then
-          args="$args --branch"
-        fi
-        if [ "${{ inputs.author-name }}" == "true" ]; then
-          args="$args --author-name"
-        fi
-        if [ "${{ inputs.author-email }}" == "true" ]; then
-           args="$args --author-email"
-        fi
-        if [ "${{ inputs.dry-run }}" == "true" ]; then
-          args="$args --dry-run"
-        fi
-        commit-check $args
+      env:
+        MESSAGE: ${{ inputs.message }}
+        BRANCH: ${{ inputs.branch }}
+        AUTHOR_NAME: ${{ inputs.author-name }}
+        AUTHOR_EMAIL: ${{ inputs.author-email }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        SUMMARY: ${{ inputs.summary }}
