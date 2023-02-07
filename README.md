@@ -29,7 +29,7 @@ jobs:
           author-name: true
           author-email: true
           dry-run: true
-          summary: true
+          job-job-summary: true
 ```
 
 ## Optional Inputs
@@ -61,24 +61,24 @@ jobs:
 - **Description**: run checks without failing. exit code is 0 otherwise is 1.
 - Default: 'false'
 
-### `summary`
+### `job-summary`
 
 - **Description**: display job summary to a workflow run
 - Default: 'true'
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
-## GitHub Actions job summary
+## GitHub Action job summary
 
 By default, commit-check-action results are shown on the job summary page of the workflow. 
 
-### Success summary
+### Success job summary
 
-![Success summary](https://github.com/commit-check/.github/blob/main/screenshot/success-summary.png)
+![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-summary.png)
 
-### Failure summary
+### Failure job summary
 
-![Failure summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-summary.png)
+![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-summary.png)
 
 ## Badging your repository
 
@@ -108,7 +108,3 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## Have question or feedback?
 
 To provide feedback (requesting a feature or reporting a bug) please post to [issues](https://github.com/commit-check/commit-check/issues).
-
-## License
-
-[MIT License](LICENSE)

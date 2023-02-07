@@ -25,14 +25,14 @@ inputs:
     description: run checks without failing
     required: false
     default: false
-  summary:
+  job-summary:
     description: add a job summary
     required: false
     default: true
 runs:
   using: "composite"
   steps:
-    - run: ${{ github.action_path }}/entrypoint
+    - run: ${{ github.action_path }}/entrypoint.sh
       shell: bash
       env:
         MESSAGE: ${{ inputs.message }}
@@ -40,4 +40,4 @@ runs:
         AUTHOR_NAME: ${{ inputs.author-name }}
         AUTHOR_EMAIL: ${{ inputs.author-email }}
         DRY_RUN: ${{ inputs.dry-run }}
-        SUMMARY: ${{ inputs.summary }}
+        JOB_SUMMARY: ${{ inputs.job-summary }}

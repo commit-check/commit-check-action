@@ -16,4 +16,4 @@ jobs:
           branch: true
           author-name: true
           author-email: true
-          summary: true
+          job-summary: true
