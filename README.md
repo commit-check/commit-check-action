@@ -29,7 +29,7 @@ jobs:
           author-name: true
           author-email: true
           dry-run: true
-          job-job-summary: true
+          job-summary: true
 ```
 
 ## Optional Inputs
