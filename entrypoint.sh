@@ -26,7 +26,7 @@ run_commit_check(){
     fi
 
     echo "commit-check $args"
-    commit-check "$args" > result.txt
+    commit-check $args > result.txt
     ret_code=$?
 }
 
