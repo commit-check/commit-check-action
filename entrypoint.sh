@@ -1,9 +1,10 @@
 #!/bin/bash
+set -euo pipefail
 
 ret_code=0
 
 install_dependencies(){
-    if [ "$RUNNER_OS" == "Linux" ]; then
+    if [[ "$RUNNER_OS" == "Linux" ]]; then
         # https://github.com/pypa/setuptools/issues/3269
         export DEB_PYTHON_INSTALL_LAYOUT=deb
     fi
@@ -12,16 +13,13 @@ install_dependencies(){
 
 run_commit_check(){
     args=""
-    if [ "$MESSAGE" == "true" ]; then
+    if [[ "$MESSAGE" == "true" ]]; then
         args="$args --message"
-    fi
-    if [ "$BRANCH" == "true" ]; then
+    elif [[ "$BRANCH" == "true" ]]; then
         args="$args --branch"
-    fi
-    if [ "$AUTHOR_NAME" == "true" ]; then
+    elif [[ "$AUTHOR_NAME" == "true" ]]; then
         args="$args --author-name"
-    fi
-    if [ "$AUTHOR_EMAIL" == "true" ]; then
+    elif [[ "$AUTHOR_EMAIL" == "true" ]]; then
         args="$args --author-email"
     fi
 
@@ -31,7 +29,7 @@ run_commit_check(){
 }
 
 add_job_summary(){
-    if [ "$JOB_SUMMARY" == "false" ]; then
+    if [[ "$JOB_SUMMARY" == "false" ]]; then
         exit
     fi
 
@@ -54,7 +52,7 @@ install_dependencies
 run_commit_check
 add_job_summary
 
-if [ "$DRY_RUN" == "true" ]; then
+if [[ "$DRY_RUN" == "true" ]]; then
     ret_code=0
 fi
 
