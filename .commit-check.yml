@@ -10,7 +10,7 @@ checks:
     suggest: git commit --amend --no-verify
 
   - check: branch
-    regex: ^(bugfix|feature|release|hotfix|task)\/.+|(master)|(main)|(HEAD)|(PR-.+)
+    regex: ^(bugfix|feature|release|hotfix|task|dependabot)\/.+|(master)|(main)|(HEAD)|(PR-.+)
     error: "Branches must begin with these types: bugfix/ feature/ release/ hotfix/ task/"
     suggest: git checkout -b type/branch_name
 
