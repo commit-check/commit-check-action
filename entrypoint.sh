@@ -3,14 +3,6 @@ set -euo pipefail
 
 ret_code=0
 
-install_dependencies(){
-    if [[ "$RUNNER_OS" == "Linux" ]]; then
-        # https://github.com/pypa/setuptools/issues/3269
-        export DEB_PYTHON_INSTALL_LAYOUT=deb
-    fi
-    python3 -m pip install -r requirements.txt
-}
-
 run_commit_check(){
     args=""
     if [[ "$MESSAGE" == "true" ]]; then
@@ -48,7 +40,6 @@ add_job_summary(){
     fi
 }
 
-install_dependencies
 run_commit_check
 add_job_summary
 
