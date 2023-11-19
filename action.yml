@@ -32,6 +32,15 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Install action dependencies
+      shell: bash
+      run: |
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          # https://github.com/pypa/setuptools/issues/3269
+          export DEB_PYTHON_INSTALL_LAYOUT=deb
+        fi
+        python3 -m pip install -r "$GITHUB_ACTION_PATH/requirements.txt"
+    - name: Run commit-check
     - run: ${{ github.action_path }}/entrypoint.sh
       shell: bash
       env:
