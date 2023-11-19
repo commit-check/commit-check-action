@@ -7,11 +7,14 @@ run_commit_check(){
     args=""
     if [[ "$MESSAGE" == "true" ]]; then
         args="$args --message"
-    elif [[ "$BRANCH" == "true" ]]; then
+    fi
+    if [[ "$BRANCH" == "true" ]]; then
         args="$args --branch"
-    elif [[ "$AUTHOR_NAME" == "true" ]]; then
+    fi
+    if [[ "$AUTHOR_NAME" == "true" ]]; then
         args="$args --author-name"
-    elif [[ "$AUTHOR_EMAIL" == "true" ]]; then
+    fi
+    if [[ "$AUTHOR_EMAIL" == "true" ]]; then
         args="$args --author-email"
     fi
 
