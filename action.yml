@@ -41,8 +41,8 @@ runs:
         fi
         python3 -m pip install -r "$GITHUB_ACTION_PATH/requirements.txt"
     - name: Run commit-check
-    - run: ${{ github.action_path }}/entrypoint.sh
       shell: bash
+      run: ${{ github.action_path }}/entrypoint.sh
       env:
         MESSAGE: ${{ inputs.message }}
         BRANCH: ${{ inputs.branch }}
