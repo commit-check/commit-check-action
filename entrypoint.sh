@@ -17,6 +17,9 @@ run_commit_check(){
     if [[ "$AUTHOR_EMAIL" == "true" ]]; then
         args="$args --author-email"
     fi
+    if [[ "$COMMIT_SIGNOFF" == "true" ]]; then
+        args="$args --commit-signoff"
+    fi
 
     echo "commit-check $args"
     commit-check $args > result.txt

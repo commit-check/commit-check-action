@@ -39,7 +39,7 @@ jobs:
 ### `message`
 
 - **Description**: check commit message formatting convention.
-  - By default the rule follows [conventionalcommits](https://www.conventionalcommits.org/).
+  - By default the rule follows [conventional commits](https://www.conventionalcommits.org/).
 - Default: 'true'
 
 ### `branch`
@@ -56,6 +56,11 @@ jobs:
 ### `author-email`
 
 - **Description**: check committer author email
+- Default: 'true'
+
+### `commit-signoff`
+
+- **Description**: check committer commit signature
 - Default: 'true'
 
 ### `dry-run`
