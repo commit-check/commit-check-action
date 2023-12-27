@@ -21,6 +21,10 @@ inputs:
     description: check committer author email
     required: false
     default: true
+  commit-signoff:
+    description: check committer commit signature
+    required: false
+    default: true
   dry-run:
     description: run checks without failing
     required: false
@@ -48,5 +52,6 @@ runs:
         BRANCH: ${{ inputs.branch }}
         AUTHOR_NAME: ${{ inputs.author-name }}
         AUTHOR_EMAIL: ${{ inputs.author-email }}
+        COMMIT_SIGNOFF: ${{ inputs.commit-signoff }}
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}

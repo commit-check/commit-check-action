@@ -5,7 +5,7 @@
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action)
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 
-A Github Action for checking commit message formatting, branch naming, committer name, email, and more.
+A Github Action for checking commit message formatting, branch naming, committer name, email, commit signoff and more.
 
 ## Usage
 
@@ -39,7 +39,7 @@ jobs:
 ### `message`
 
 - **Description**: check commit message formatting convention.
-  - By default the rule follows [conventionalcommits](https://www.conventionalcommits.org/).
+  - By default the rule follows [conventional commits](https://www.conventionalcommits.org/).
 - Default: 'true'
 
 ### `branch`
@@ -56,6 +56,11 @@ jobs:
 ### `author-email`
 
 - **Description**: check committer author email
+- Default: 'true'
+
+### `commit-signoff`
+
+- **Description**: check committer commit signature
 - Default: 'true'
 
 ### `dry-run`
