@@ -30,6 +30,7 @@ jobs:
           branch: true
           author-name: true
           author-email: true
+          commit-signoff: true
           dry-run: true
           job-summary: true
 ```
