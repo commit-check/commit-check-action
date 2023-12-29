@@ -17,7 +17,7 @@ changelog:
     - title: '👋 Deprecated'
       labels:
         - 'deprecation'
-    - title: 👒 Dependencies
+    - title: 📦 Dependencies
       labels:
         - dependencies
     - title: Other Changes
