@@ -21,7 +21,7 @@ def add_job_summary() -> int:
 
     if os.path.getsize("result.txt") > 0:
         with open("result.txt", "r") as result_file:
-            result_text = result_file.read().replace("\x1B[0m", "")  # Remove ANSI colors
+            result_text = re.sub(r'\x1B\[[0-9;]*[a-zA-Z]', '', result_file.read())  # Remove ANSI colors
 
         with open(GITHUB_STEP_SUMMARY, "a") as summary_file:
             summary_file.write("### Commit-Check ❌\n```\n")
