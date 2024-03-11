@@ -27,7 +27,7 @@ def add_job_summary() -> int:
         with open(GITHUB_STEP_SUMMARY, "a") as summary_file:
             summary_file.write("### Commit-Check ❌\n```\n")
             summary_file.write(result_text)
-            summary_file.write("\n```")
+            summary_file.write("```")
         return 1
     else:
         with open(GITHUB_STEP_SUMMARY, "a") as summary_file:
