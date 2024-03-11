@@ -41,6 +41,7 @@ AUTHOR_EMAIL = os.getenv("AUTHOR_EMAIL", "false")
 COMMIT_SIGNOFF = os.getenv("COMMIT_SIGNOFF", "false")
 DRY_RUN = os.getenv("DRY_RUN", "false")
 JOB_SUMMARY = os.getenv("JOB_SUMMARY", "false")
+GITHUB_STEP_SUMMARY = os.environ["GITHUB_STEP_SUMMARY"]
 
 print(f"MESSAGE = {MESSAGE}")
 print(f"BRANCH = {BRANCH}")
