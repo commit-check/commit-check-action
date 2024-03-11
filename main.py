@@ -41,7 +41,6 @@ AUTHOR_EMAIL = os.getenv("AUTHOR_EMAIL", "false")
 COMMIT_SIGNOFF = os.getenv("COMMIT_SIGNOFF", "false")
 DRY_RUN = os.getenv("DRY_RUN", "false")
 JOB_SUMMARY = os.getenv("JOB_SUMMARY", "false")
-GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY", "false")
 
 print(f"MESSAGE = {MESSAGE}")
 print(f"BRANCH = {BRANCH}")
@@ -49,8 +48,7 @@ print(f"AUTHOR_NAME = {AUTHOR_NAME}")
 print(f"AUTHOR_EMAIL = {AUTHOR_EMAIL}")
 print(f"COMMIT_SIGNOFF = {COMMIT_SIGNOFF}")
 print(f"DRY_RUN = {DRY_RUN}")
-print(f"JOB_SUMMARY = {JOB_SUMMARY}")
-print(f"GITHUB_STEP_SUMMARY = {GITHUB_STEP_SUMMARY}\n")
+print(f"JOB_SUMMARY = {JOB_SUMMARY}\n")
 
 ret_code = run_commit_check()
 ret_code += add_job_summary()  # Combine return codes
