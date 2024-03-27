@@ -23,7 +23,7 @@ jobs:
   commit-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: commit-check/commit-check-action@v1
         with:
           message: true
