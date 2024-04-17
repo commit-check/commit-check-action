@@ -1,7 +1,6 @@
 name: Commit Check
 
 on:
-  push:
   pull_request:
     branches: 'main'
   workflow_dispatch:
