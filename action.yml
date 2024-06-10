@@ -46,7 +46,7 @@ runs:
         python3 -m pip install -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         # Verifying artifact attestations
-        gh attestation verify commit_check-*.whl -R commit-check/commit-check
+        gh attestation verify "$GITHUB_ACTION_PATH/commit_check-*.whl" -R commit-check/commit-check
       env:
         GH_TOKEN: ${{ github.token }}
     - name: Run commit-check
