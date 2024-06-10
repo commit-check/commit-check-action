@@ -43,10 +43,14 @@ runs:
           # https://github.com/pypa/setuptools/issues/3269
           export DEB_PYTHON_INSTALL_LAYOUT=deb
         fi
-        python3 -m pip install -r "$GITHUB_ACTION_PATH/requirements.txt"
+        # Download artifact
+        python3 -m pip download -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         # Verifying artifact attestations
         gh attestation verify "$GITHUB_ACTION_PATH/commit_check-*.whl" -R commit-check/commit-check
+
+        # Install artifact
+        python3 -m pip install -r "$GITHUB_ACTION_PATH/commit_check-*.whl"
       env:
         GH_TOKEN: ${{ github.token }}
     - name: Run commit-check
