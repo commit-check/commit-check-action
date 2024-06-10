@@ -44,6 +44,9 @@ runs:
           export DEB_PYTHON_INSTALL_LAYOUT=deb
         fi
         python3 -m pip install -r "$GITHUB_ACTION_PATH/requirements.txt"
+
+        # Verifying artifact attestations
+        gh attestation verify commit_check-*.whl -R commit-check/commit-check
     - name: Run commit-check
       shell: bash
       run: python3 ${{ github.action_path }}/main.py
