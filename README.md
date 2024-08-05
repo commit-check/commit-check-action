@@ -3,7 +3,7 @@
 [![Main](https://github.com/commit-check/commit-check-action/actions/workflows/main.yaml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/main.yaml)
 [![Commit Check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action)
-[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=24&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
+[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=26&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 
 A Github Action for checking commit message formatting, branch naming, committer name, email, commit signoff and more.
