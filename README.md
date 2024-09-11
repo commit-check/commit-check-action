@@ -47,7 +47,7 @@ jobs:
 ### `branch`
 
 - **Description**: check git branch naming convention.
-  - By default follow bitbucket [branching model](https://support.atlassian.com/bitbucket-cloud/docs/configure-a-projects-branching-model/).
+  - By default follow bitbucket [conventional branch](https://conventional-branch.github.io/en/posts/).
 - Default: 'true'
 
 ### `author-name`
