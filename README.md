@@ -47,7 +47,7 @@ jobs:
 ### `branch`
 
 - **Description**: check git branch naming convention.
-  - By default follow bitbucket [conventional branch](https://conventional-branch.github.io/en/posts/).
+  - By default follow bitbucket [conventional branch](https://conventional-branch.github.io/posts/).
 - Default: 'true'
 
 ### `author-name`
