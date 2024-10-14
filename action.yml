@@ -43,6 +43,8 @@ runs:
           # https://github.com/pypa/setuptools/issues/3269
           export DEB_PYTHON_INSTALL_LAYOUT=deb
         fi
+        python3 -m venv venv
+        source venv/bin/activate
         python3 -m pip install -r "$GITHUB_ACTION_PATH/requirements.txt"
     - name: Run commit-check
       shell: bash
