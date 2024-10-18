@@ -117,7 +117,7 @@ def add_pr_comments() -> int:
         )
 
         # Fetch all existing comments on the PR
-        comments = pull_request.get_issue_comments()
+        comments = pull_request.get_comments()
 
         # Track if we found a matching comment
         matching_comments = []
