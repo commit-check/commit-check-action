@@ -106,7 +106,7 @@ def add_pr_comments() -> int:
         # Initialize GitHub client
         g = Github(token)
         repo = g.get_repo(repo_name)
-        pr = repo.get_issue(int(pr_number))
+        pull_request = repo.get_issue(int(pr_number))
 
         # Prepare comment content
         result_text = read_result_file()
@@ -116,7 +116,38 @@ def add_pr_comments() -> int:
             else f"{FAILURE_TITLE}```\n{result_text}\n```"
         )
 
-        pr.create_comment(body=pr_comments)
+        # Fetch all existing comments on the PR
+        comments = pull_request.get_issue_comments()
+
+        # Track if we found a matching comment
+        matching_comments = []
+        last_comment = None
+
+        for comment in comments:
+            if comment.body.startswith(SUCCESS_TITLE) or comment.body.startswith(
+                FAILURE_TITLE
+            ):
+                matching_comments.append(comment)
+        if matching_comments:
+            last_comment = matching_comments[-1]
+
+            if last_comment.body == pr_comments:
+                print(f"PR comment already up-to-date for PR #{pr_number}.")
+                return 0
+            else:
+                # If the last comment doesn't match, update it
+                print(f"Updating the last comment on PR #{pr_number}.")
+                last_comment.edit(pr_comments)
+
+            # Delete all older matching comments
+            for comment in matching_comments[:-1]:
+                print(f"Deleting an old comment on PR #{pr_number}.")
+                comment.delete()
+        else:
+            # No matching comments, create a new one
+            print(f"Creating a new comment on PR #{pr_number}.")
+            pull_request.create_issue_comment(body=pr_comments)
+
         return 0 if result_text is None else 1
     except Exception as e:
         print(f"Error posting PR comment: {e}", file=sys.stderr)
