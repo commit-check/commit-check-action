@@ -106,7 +106,7 @@ def add_pr_comments() -> int:
         # Initialize GitHub client
         g = Github(token)
         repo = g.get_repo(repo_name)
-        issue = repo.get_issue(int(pr_number))
+        pr = repo.get_issue(int(pr_number))
 
         # Prepare comment content
         result_text = read_result_file()
@@ -116,7 +116,7 @@ def add_pr_comments() -> int:
             else f"{FAILURE_TITLE}```\n{result_text}\n```"
         )
 
-        issue.create_comment(body=pr_comments)
+        pr.create_comment(body=pr_comments)
         return 0 if result_text is None else 1
     except Exception as e:
         print(f"Error posting PR comment: {e}", file=sys.stderr)

@@ -11,6 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./  # self test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # used by `pr-comments`
         with:
           message: true
           branch: true
