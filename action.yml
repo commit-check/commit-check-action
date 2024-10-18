@@ -30,9 +30,13 @@ inputs:
     required: false
     default: false
   job-summary:
-    description: add a job summary
+    description: display job summary to the workflow run
     required: false
     default: true
+  pr-comments:
+    description: post results to the pull request comments
+    required: false
+    default: false
 runs:
   using: "composite"
   steps:
@@ -55,3 +59,4 @@ runs:
         COMMIT_SIGNOFF: ${{ inputs.commit-signoff }}
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
+        PR_COMMENTS: ${{ inputs.pr-comments }}

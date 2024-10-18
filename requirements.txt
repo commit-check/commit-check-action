@@ -1,3 +1,5 @@
 # Install commit-check CLI
 # For details please see: https://github.com/commit-check/commit-check
 commit-check==0.8.3
+# Interact with the GitHub API.
+PyGithub=v2.4.0

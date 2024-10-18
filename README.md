@@ -34,6 +34,7 @@ jobs:
           commit-signoff: true
           dry-run: true
           job-summary: true
+          pr-comments: true
 ```
 
 ## Optional Inputs
@@ -72,14 +73,19 @@ jobs:
 
 ### `job-summary`
 
-- **Description**: display job summary to a workflow run
+- **Description**: display job summary to the workflow run
+- Default: 'true'
+
+### `pr-comments`
+
+- **Description**: post results to the pull request comments
 - Default: 'true'
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
 ## GitHub Action job summary
 
-By default, commit-check-action results are shown on the job summary page of the workflow. 
+By default, commit-check-action results are shown on the job summary page of the workflow.
 
 ### Success job summary
 
