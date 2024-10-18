@@ -7,8 +7,8 @@ from github import Github
 
 
 # Constants for message titles
-SUCCESS_TITLE = "### Commit-Check ✔️\n"
-FAILURE_TITLE = "### Commit-Check ❌\n"
+SUCCESS_TITLE = "# Commit-Check ✔️"
+FAILURE_TITLE = "# Commit-Check ❌"
 
 # Environment variables
 MESSAGE = os.getenv("MESSAGE", "false")
@@ -70,7 +70,7 @@ def read_result_file() -> str | None:
             result_text = re.sub(
                 r"\x1B\[[0-9;]*[a-zA-Z]", "", result_file.read()
             )  # Remove ANSI colors
-        return result_text
+        return result_text.rstrip()
     return None
 
 
@@ -84,7 +84,7 @@ def add_job_summary() -> int:
     summary_content = (
         SUCCESS_TITLE
         if result_text is None
-        else f"{FAILURE_TITLE}```\n{result_text}\n```"
+        else f"{FAILURE_TITLE}\n```\n{result_text}\n```"
     )
 
     with open(GITHUB_STEP_SUMMARY, "a") as summary_file:
@@ -113,7 +113,7 @@ def add_pr_comments() -> int:
         pr_comments = (
             SUCCESS_TITLE
             if result_text is None
-            else f"{FAILURE_TITLE}```\n{result_text}\n```"
+            else f"{FAILURE_TITLE}\n```\n{result_text}\n```"
         )
 
         # Fetch all existing comments on the PR
@@ -146,7 +146,7 @@ def add_pr_comments() -> int:
         else:
             # No matching comments, create a new one
             print(f"Creating a new comment on PR #{pr_number}.")
-            pull_request.create_issue_comment(body=pr_comments)
+            pull_request.create_comment(body=pr_comments)
 
         return 0 if result_text is None else 1
     except Exception as e:
