@@ -81,6 +81,10 @@ jobs:
 - **Description**: post results to the pull request comments
 - Default: 'true'
 
+> [!IMPORTANT]
+> This is a experimental feature
+> use it you need to set `GITHUB_TOKEN` in the GitHub Action.
+
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
 ## GitHub Action job summary
@@ -94,6 +98,12 @@ By default, commit-check-action results are shown on the job summary page of the
 ### Failure job summary
 
 ![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-summary.png)
+
+## GitHub Pull Request comments
+
+### Success pull request comment
+
+![Success pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/success-pr-comments.png)
 
 ## Badging your repository
 
