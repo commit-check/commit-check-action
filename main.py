@@ -95,12 +95,7 @@ def add_job_summary() -> int:
 
 def add_pr_comments() -> int:
     """Posts the commit check result as a comment on the pull request."""
-    if (
-        PR_COMMENTS == "false"
-        or not GITHUB_TOKEN
-        or not GITHUB_REPOSITORY
-        or not GITHUB_REF
-    ):
+    if PR_COMMENTS == "false":
         return 0
 
     try:
