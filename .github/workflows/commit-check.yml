@@ -18,3 +18,4 @@ jobs:
           author-email: true
           commit-signoff: true
           job-summary: true
+          pr-comments: true
