@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }} # Checkout PR HEAD commit
       - uses: commit-check/commit-check-action@v1
         with:
           message: true
@@ -34,6 +36,7 @@ jobs:
           commit-signoff: true
           dry-run: true
           job-summary: true
+          pr-comments: true
 ```
 
 ## Optional Inputs
@@ -72,22 +75,41 @@ jobs:
 
 ### `job-summary`
 
-- **Description**: display job summary to a workflow run
+- **Description**: display job summary to the workflow run
 - Default: 'true'
+
+### `pr-comments`
+
+- **Description**: post results to the pull request comments
+- Default: 'true'
+
+> [!IMPORTANT]
+> This is a experimental feature
+> use it you need to set `GITHUB_TOKEN` in the GitHub Action.
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
 ## GitHub Action job summary
 
-By default, commit-check-action results are shown on the job summary page of the workflow. 
+By default, commit-check-action results are shown on the job summary page of the workflow.
 
 ### Success job summary
 
-![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-summary.png)
+![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-job-summary.png)
 
 ### Failure job summary
 
-![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-summary.png)
+![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-job-summary.png)
+
+## GitHub Pull Request comments
+
+### Success pull request comment
+
+![Success pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/success-pr-comments.png)
+
+### Failure pull request comment
+
+![Failure pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/failure-pr-comments.png)
 
 ## Badging your repository
 

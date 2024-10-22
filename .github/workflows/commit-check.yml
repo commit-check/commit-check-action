@@ -13,6 +13,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: ./  # self test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # used by `pr-comments`
         with:
           message: true
           branch: true
@@ -20,3 +22,4 @@ jobs:
           author-email: true
           commit-signoff: true
           job-summary: true
+          pr-comments: true
