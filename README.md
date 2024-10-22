@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }} # Checkout PR HEAD commit
       - uses: commit-check/commit-check-action@v1
         with:
           message: true
