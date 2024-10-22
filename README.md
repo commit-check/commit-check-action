@@ -95,17 +95,21 @@ By default, commit-check-action results are shown on the job summary page of the
 
 ### Success job summary
 
-![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-summary.png)
+![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-job-summary.png)
 
 ### Failure job summary
 
-![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-summary.png)
+![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-job-summary.png)
 
 ## GitHub Pull Request comments
 
 ### Success pull request comment
 
 ![Success pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/success-pr-comments.png)
+
+### Failure pull request comment
+
+![Failure pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/failure-pr-comments.png)
 
 ## Badging your repository
 
