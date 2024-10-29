@@ -9,7 +9,7 @@ jobs:
   commit-check:
     runs-on: ubuntu-latest
     permissions:  # use permissions because of use pr-comments
-      contents: read
+      contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
