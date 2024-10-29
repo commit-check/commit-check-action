@@ -23,20 +23,25 @@ on:
 jobs:
   commit-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }} # Checkout PR HEAD commit
       - uses: commit-check/commit-check-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           message: true
           branch: true
           author-name: true
           author-email: true
           commit-signoff: true
-          dry-run: true
           job-summary: true
-          pr-comments: true
+          pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
 
 ## Optional Inputs
