@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions: # used by `pr-comments`
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
