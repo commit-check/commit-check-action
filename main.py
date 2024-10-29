@@ -3,7 +3,7 @@ import os
 import sys
 import subprocess
 import re
-from github import Github, GithubRetry()
+from github import Github, GithubRetry
 
 
 # Constants for message titles
