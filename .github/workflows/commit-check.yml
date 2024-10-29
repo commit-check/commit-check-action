@@ -5,14 +5,13 @@ on:
     branches: 'main'
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-  repository-projects: write
-
 jobs:
   commit-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      repository-projects: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,4 +26,4 @@ jobs:
           author-email: true
           commit-signoff: true
           job-summary: true
-          pr-comments: true
+          pr-comments: ${{ github.event_name == 'pull_request' }}
