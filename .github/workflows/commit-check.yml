@@ -5,13 +5,13 @@ on:
     branches: 'main'
   workflow_dispatch:
 
+permissions: # used by `pr-comments`
+  contents: read
+  pull-requests: write
+
 jobs:
   commit-check:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      repository-projects: write
     steps:
       - uses: actions/checkout@v4
         with:
