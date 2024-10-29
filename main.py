@@ -3,7 +3,7 @@ import os
 import sys
 import subprocess
 import re
-from github import Github
+from github import Github, GithubRetry()
 
 
 # Constants for message titles
@@ -105,7 +105,7 @@ def add_pr_comments() -> int:
 
         # Initialize GitHub client
         # g = Github(token)
-        g = Github(token, retry=github.GithubRetry())
+        g = Github(token, retry=GithubRetry())
         repo = g.get_repo(repo_name)
         pull_request = repo.get_issue(int(pr_number))
 
