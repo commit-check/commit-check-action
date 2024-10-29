@@ -23,17 +23,16 @@ on:
 jobs:
   commit-check:
     runs-on: ubuntu-latest
-    permissions:
+    permissions:  # use permissions because of use pr-comments
       contents: read
-      issues: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }} # Checkout PR HEAD commit
+          ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
       - uses: commit-check/commit-check-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because of use pr-comments
         with:
           message: true
           branch: true
