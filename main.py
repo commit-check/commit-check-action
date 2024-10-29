@@ -104,7 +104,8 @@ def add_pr_comments() -> int:
         pr_number = os.getenv("GITHUB_REF").split("/")[-2]
 
         # Initialize GitHub client
-        g = Github(token)
+        # g = Github(token)
+        g = Github(token, retry=github.GithubRetry())
         repo = g.get_repo(repo_name)
         pull_request = repo.get_issue(int(pr_number))
 
