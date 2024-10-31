@@ -3,7 +3,7 @@
 [![Main](https://github.com/commit-check/commit-check-action/actions/workflows/main.yaml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/main.yaml)
 [![Commit Check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action)
-[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=18&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
+[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=37&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 
 A Github Action for checking commit message formatting, branch naming, committer name, email, commit signoff and more.
@@ -23,17 +23,24 @@ on:
 jobs:
   commit-check:
     runs-on: ubuntu-latest
+    permissions:  # use permissions because of use pr-comments
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
       - uses: commit-check/commit-check-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because of use pr-comments
         with:
           message: true
           branch: true
           author-name: true
           author-email: true
           commit-signoff: true
-          dry-run: true
           job-summary: true
+          pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
 
 ## Optional Inputs
@@ -47,7 +54,7 @@ jobs:
 ### `branch`
 
 - **Description**: check git branch naming convention.
-  - By default follow bitbucket [branching model](https://support.atlassian.com/bitbucket-cloud/docs/configure-a-projects-branching-model/).
+  - By default follow bitbucket [conventional branch](https://conventional-branch.github.io/).
 - Default: 'true'
 
 ### `author-name`
@@ -72,22 +79,41 @@ jobs:
 
 ### `job-summary`
 
-- **Description**: display job summary to a workflow run
+- **Description**: display job summary to the workflow run
 - Default: 'true'
+
+### `pr-comments`
+
+- **Description**: post results to the pull request comments
+- Default: 'true'
+
+> [!IMPORTANT]
+> This is a experimental feature
+> use it you need to set `GITHUB_TOKEN` in the GitHub Action.
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
 ## GitHub Action job summary
 
-By default, commit-check-action results are shown on the job summary page of the workflow. 
+By default, commit-check-action results are shown on the job summary page of the workflow.
 
 ### Success job summary
 
-![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-summary.png)
+![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-job-summary.png)
 
 ### Failure job summary
 
-![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-summary.png)
+![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-job-summary.png)
+
+## GitHub Pull Request comments
+
+### Success pull request comment
+
+![Success pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/success-pr-comments.png)
+
+### Failure pull request comment
+
+![Failure pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/failure-pr-comments.png)
 
 ## Badging your repository
 

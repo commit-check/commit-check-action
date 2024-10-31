@@ -30,13 +30,17 @@ inputs:
     required: false
     default: false
   job-summary:
-    description: add a job summary
+    description: display job summary to the workflow run
+    required: false
+    default: true
+  pr-comments:
+    description: post results to the pull request comments
     required: false
     default: true
 runs:
   using: "composite"
   steps:
-    - name: Install action dependencies
+    - name: Install dependencies and run commit-check
       shell: bash
       run: |
         if [[ "$RUNNER_OS" == "Linux" ]]; then
@@ -51,11 +55,9 @@ runs:
 
         # Install artifact
         python3 -m pip install commit_check-*.whl
-      env:
-        GH_TOKEN: ${{ github.token }}
-    - name: Run commit-check
-      shell: bash
-      run: python3 ${{ github.action_path }}/main.py
+        python3 -m venv venv
+        source venv/bin/activate
+        python3 "$GITHUB_ACTION_PATH/main.py"
       env:
         MESSAGE: ${{ inputs.message }}
         BRANCH: ${{ inputs.branch }}
@@ -64,3 +66,4 @@ runs:
         COMMIT_SIGNOFF: ${{ inputs.commit-signoff }}
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
+        PR_COMMENTS: ${{ inputs.pr-comments }}
