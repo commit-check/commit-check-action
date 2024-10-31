@@ -54,7 +54,7 @@ runs:
         gh attestation verify commit_check-*.whl -R commit-check/commit-check
 
         # Install artifact
-        python3 -m pip install commit_check-*.whl
+        python3 -m pip install commit_check-*.whl PyGithub-*.whl
         python3 -m venv venv
         source venv/bin/activate
         python3 "$GITHUB_ACTION_PATH/main.py"
