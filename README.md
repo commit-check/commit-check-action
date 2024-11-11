@@ -85,10 +85,10 @@ jobs:
 ### `pr-comments`
 
 - **Description**: post results to the pull request comments
-- Default: 'true'
+- Default: 'false'
 
 > [!IMPORTANT]
-> This is an experimental feature. To use it you need to set `GITHUB_TOKEN` in the GitHub Action.
+> `pr-comments` is an experimental feature. To use it you need to set `GITHUB_TOKEN` in the GitHub Action.
 >
 > This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77)
 
@@ -141,6 +141,6 @@ reStructuredText
 
 Versioning follows [Semantic Versioning](https://semver.org/).
 
-## Have question or feedback?
+## Have questions or feedback?
 
 To provide feedback (requesting a feature or reporting a bug) please post to [issues](https://github.com/commit-check/commit-check/issues).
