@@ -85,11 +85,12 @@ jobs:
 ### `pr-comments`
 
 - **Description**: post results to the pull request comments
-- Default: 'true'
+- Default: 'false'
 
 > [!IMPORTANT]
-> This is a experimental feature
-> use it you need to set `GITHUB_TOKEN` in the GitHub Action.
+> `pr-comments` is an experimental feature. To use it you need to set `GITHUB_TOKEN` in the GitHub Action.
+>
+> This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77)
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
@@ -117,7 +118,7 @@ By default, commit-check-action results are shown on the job summary page of the
 
 ## Badging your repository
 
-You can add a badge to your repository to show your contributors / users that you use commit-check!
+You can add a badge to your repository to show your contributors/users that you use commit-check!
 
 [![Commit Check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
 
@@ -140,6 +141,6 @@ reStructuredText
 
 Versioning follows [Semantic Versioning](https://semver.org/).
 
-## Have question or feedback?
+## Have questions or feedback?
 
 To provide feedback (requesting a feature or reporting a bug) please post to [issues](https://github.com/commit-check/commit-check/issues).
