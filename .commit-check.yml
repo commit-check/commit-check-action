@@ -25,6 +25,6 @@ checks:
     suggest: run command `git config user.email yourname@example.com`
 
   - check: merge_base
-    regex: main # it can be master, develop, devel etc based on your project.
+    regex: origin/main # it can be master, develop, devel etc based on your project.
     error: Current branch is not rebased onto target branch
     suggest: please ensure your branch is rebased with the target branch
