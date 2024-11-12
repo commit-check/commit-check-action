@@ -39,6 +39,7 @@ jobs:
           author-name: true
           author-email: true
           commit-signoff: true
+          merge-base: false
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
@@ -59,18 +60,26 @@ jobs:
 
 ### `author-name`
 
-- **Description**: check committer author name
+- **Description**: check committer author name.
 - Default: 'true'
 
 ### `author-email`
 
-- **Description**: check committer author email
+- **Description**: check committer author email.
 - Default: 'true'
 
 ### `commit-signoff`
 
-- **Description**: check committer commit signature
+- **Description**: check committer commit signature.
 - Default: 'true'
+
+### `merge-base`
+
+- **Description**: check current branch is rebased onto target branch.
+- Default: 'false'
+
+> [!IMPORTANT]
+> `merge-base` is an experimental feature. by default it's disable.
 
 ### `dry-run`
 
@@ -79,18 +88,18 @@ jobs:
 
 ### `job-summary`
 
-- **Description**: display job summary to the workflow run
+- **Description**: display job summary to the workflow run.
 - Default: 'true'
 
 ### `pr-comments`
 
-- **Description**: post results to the pull request comments
+- **Description**: post results to the pull request comments.
 - Default: 'false'
 
 > [!IMPORTANT]
-> `pr-comments` is an experimental feature. To use it you need to set `GITHUB_TOKEN` in the GitHub Action.
+> `pr-comments` is an experimental feature. by default it's disable. To use it you need to set `GITHUB_TOKEN` in the GitHub Action.
 >
-> This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77)
+> This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
