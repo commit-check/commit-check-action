@@ -8,6 +8,15 @@
 
 A Github Action for checking commit message formatting, branch naming, committer name, email, commit signoff and more.
 
+## Table of Contents
+
+* [Usage](#usage)
+* [Optional Inputs](#optional-inputs)
+* [GitHub Action Job Summary](#github-action-job-summary)
+* [GitHub Pull Request Comments](#github-pull-request-comments)
+* [Badging Your Repository](#badging-your-repository)
+* [Versioning](#versioning)
+
 ## Usage
 
 Create a new GitHub Actions workflow in your project, e.g. at [.github/workflows/commit-check.yml](.github/workflows/commit-check.yml)
@@ -51,33 +60,33 @@ jobs:
 
 - **Description**: check commit message formatting convention.
   - By default the rule follows [conventional commits](https://www.conventionalcommits.org/).
-- Default: 'true'
+- Default: `true`
 
 ### `branch`
 
 - **Description**: check git branch naming convention.
   - By default follow bitbucket [conventional branch](https://conventional-branch.github.io/).
-- Default: 'true'
+- Default: `true`
 
 ### `author-name`
 
 - **Description**: check committer author name.
-- Default: 'true'
+- Default: `true`
 
 ### `author-email`
 
 - **Description**: check committer author email.
-- Default: 'true'
+- Default: `true`
 
 ### `commit-signoff`
 
 - **Description**: check committer commit signature.
-- Default: 'true'
+- Default: `true`
 
 ### `merge-base`
 
 - **Description**: check current branch is rebased onto target branch.
-- Default: 'false'
+- Default: `false`
 
 > [!IMPORTANT]
 > `merge-base` is an experimental feature. by default it's disable.
@@ -87,17 +96,17 @@ jobs:
 ### `dry-run`
 
 - **Description**: run checks without failing. exit code is 0 otherwise is 1.
-- Default: 'false'
+- Default: `false`
 
 ### `job-summary`
 
 - **Description**: display job summary to the workflow run.
-- Default: 'true'
+- Default: `true`
 
 ### `pr-comments`
 
 - **Description**: post results to the pull request comments.
-- Default: 'false'
+- Default: `false`
 
 > [!IMPORTANT]
 > `pr-comments` is an experimental feature. by default it's disable. To use it you need to set `GITHUB_TOKEN` in the GitHub Action.
@@ -106,29 +115,29 @@ jobs:
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml), if you want to customize just add your `.commit-check.yml` config file under your repository root directory.
 
-## GitHub Action job summary
+## GitHub Action Job Summary
 
 By default, commit-check-action results are shown on the job summary page of the workflow.
 
-### Success job summary
+### Success Job Summary
 
 ![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-job-summary.png)
 
-### Failure job summary
+### Failure Job Summary
 
 ![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-job-summary.png)
 
-## GitHub Pull Request comments
+## GitHub Pull Request Comments
 
-### Success pull request comment
+### Success Pull Request Comment
 
 ![Success pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/success-pr-comments.png)
 
-### Failure pull request comment
+### Failure Pull Request Comment
 
 ![Failure pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/failure-pr-comments.png)
 
-## Badging your repository
+## Badging Your Repository
 
 You can add a badge to your repository to show your contributors/users that you use commit-check!
 
