@@ -90,7 +90,7 @@ jobs:
 
 > [!IMPORTANT]
 > `merge-base` is an experimental feature. by default it's disable.
-> 
+>
 > To use this feature, you need fetch all history for all branches by setting `fetch-depth: 0` in `actions/checkout`.
 
 ### `dry-run`

@@ -3,7 +3,7 @@ import os
 import sys
 import subprocess
 import re
-from github import Github
+from github import Github  # type: ignore
 
 
 # Constants for message titles
@@ -52,7 +52,8 @@ def run_commit_check() -> int:
     args = [
         arg
         for arg, value in zip(
-            args, [MESSAGE, BRANCH, AUTHOR_NAME, AUTHOR_EMAIL, COMMIT_SIGNOFF, MERGE_BASE]
+            args,
+            [MESSAGE, BRANCH, AUTHOR_NAME, AUTHOR_EMAIL, COMMIT_SIGNOFF, MERGE_BASE],
         )
         if value == "true"
     ]
@@ -104,7 +105,12 @@ def add_pr_comments() -> int:
     try:
         token = os.getenv("GITHUB_TOKEN")
         repo_name = os.getenv("GITHUB_REPOSITORY")
-        pr_number = os.getenv("GITHUB_REF").split("/")[-2]
+        pr_number = os.getenv("GITHUB_REF")
+        if pr_number is not None:
+            pr_number = pr_number.split("/")[-2]
+        else:
+            # Handle the case where GITHUB_REF is not set
+            raise ValueError("GITHUB_REF environment variable is not set")
 
         # Initialize GitHub client
         g = Github(token)
@@ -157,6 +163,23 @@ def add_pr_comments() -> int:
         return 1
 
 
+def log_error_and_exit(
+    failure_title: str, result_text: str | None, ret_code: int
+) -> None:
+    """
+    Logs an error message to GitHub Actions and exits with the specified return code.
+
+    Args:
+        failure_title (str): The title of the failure message.
+        result_text (str): The detailed result text to include in the error message.
+        ret_code (int): The return code to exit with.
+    """
+    if result_text:
+        error_message = f"{failure_title}\n```\n{result_text}\n```"
+        print(f"::error::{error_message}")
+    sys.exit(ret_code)
+
+
 def main():
     """Main function to run commit-check, add job summary and post PR comments."""
     log_env_vars()
@@ -169,7 +192,8 @@ def main():
     if DRY_RUN == "true":
         ret_code = 0
 
-    sys.exit(ret_code)
+    result_text = read_result_file()
+    log_error_and_exit(FAILURE_TITLE, result_text, ret_code)
 
 
 if __name__ == "__main__":
