@@ -163,7 +163,9 @@ def add_pr_comments() -> int:
         return 1
 
 
-def log_error_and_exit(failure_title, result_text, ret_code):
+def log_error_and_exit(
+    failure_title: str, result_text: str | None, ret_code: int
+) -> None:
     """
     Logs an error message to GitHub Actions and exits with the specified return code.
 
