@@ -54,6 +54,22 @@ jobs:
           pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
 
+## Used By
+
+<p align="center">
+  <a href="https://github.com/apache"><img src="https://avatars.githubusercontent.com/u/47359?s=200&v=4" alt="Apache" width="28"/></a>
+  <strong>Apache</strong>&nbsp;&nbsp;
+  <a href="https://github.com/discovery-unicamp"><img src="https://avatars.githubusercontent.com/u/112810766?s=200&v=4" alt="discovery-unicamp" width="28"/></a>
+  <strong>discovery-unicamp</strong>&nbsp;&nbsp;
+  <a href="https://github.com/TexasInstruments"><img src="https://avatars.githubusercontent.com/u/24322022?s=200&v=4" alt="Texas Instruments" width="28"/></a>
+  <strong>Texas Instruments</strong>&nbsp;&nbsp;
+  <a href="https://github.com/opencadc"><img src="https://avatars.githubusercontent.com/u/13909060?s=200&v=4" alt="OpenCADC" width="28"/></a>
+  <strong>OpenCADC</strong>&nbsp;&nbsp;
+  <a href="https://github.com/extrawest"><img src="https://avatars.githubusercontent.com/u/39154663?s=200&v=4" alt="Extrawest" width="28"/></a>
+  <strong>Extrawest</strong>
+  <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
+</p>
+
 ## Optional Inputs
 
 ### `message`
