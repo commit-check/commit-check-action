@@ -51,16 +51,23 @@ runs:
           # https://github.com/pypa/setuptools/issues/3269
           export DEB_PYTHON_INSTALL_LAYOUT=deb
         fi
+
+        # Set up virtual environment
+        python3 -m venv venv
+        source venv/bin/activate
+
         # Download artifact
         python3 -m pip download -r "$GITHUB_ACTION_PATH/requirements.txt"
 
-        # Verifying artifact attestations
-        gh attestation verify commit_check-*.whl -R commit-check/commit-check
+        # Verify artifact attestations
+        if ! gh attestation verify commit_check-*.whl -R commit-check/commit-check; then
+            echo "Artifact verification failed. Aborting installation."
+            exit 1
+        fi
 
         # Install artifact
         python3 -m pip install commit_check-*.whl PyGithub-*.whl
-        python3 -m venv venv
-        source venv/bin/activate
+
         python3 "$GITHUB_ACTION_PATH/main.py"
       env:
         MESSAGE: ${{ inputs.message }}
