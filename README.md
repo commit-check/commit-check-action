@@ -67,6 +67,8 @@ jobs:
   <strong>OpenCADC</strong>&nbsp;&nbsp;
   <a href="https://github.com/extrawest"><img src="https://avatars.githubusercontent.com/u/39154663?s=200&v=4" alt="Extrawest" width="28"/></a>
   <strong>Extrawest</strong>
+  <a href="https://github.com/Chainlift"><img src="https://avatars.githubusercontent.com/u/204404276?s=200&v=4" alt="Chainlift" width="28"/></a>
+  <strong>Chainlift</strong>&nbsp;&nbsp;
   <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
 </p>
 
