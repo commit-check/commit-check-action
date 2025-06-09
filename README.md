@@ -70,6 +70,8 @@ jobs:
   <strong>Extrawest</strong>
   <a href="https://github.com/Chainlift"><img src="https://avatars.githubusercontent.com/u/204404276?s=200&v=4" alt="Chainlift" width="28"/></a>
   <strong>Chainlift</strong>&nbsp;&nbsp;
+  <a href="https://github.com/mila-iqia"><img src="https://avatars.githubusercontent.com/u/11724251?s=200&v=4" alt="Mila" width="28"/></a>
+  <strong>Mila</strong>&nbsp;&nbsp;
   <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
 </p>
 
