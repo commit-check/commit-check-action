@@ -17,6 +17,7 @@ AUTHOR_NAME = os.getenv("AUTHOR_NAME", "false")
 AUTHOR_EMAIL = os.getenv("AUTHOR_EMAIL", "false")
 COMMIT_SIGNOFF = os.getenv("COMMIT_SIGNOFF", "false")
 MERGE_BASE = os.getenv("MERGE_BASE", "false")
+IMPERATIVE = os.getenv("IMPERATIVE", "true")
 DRY_RUN = os.getenv("DRY_RUN", "false")
 JOB_SUMMARY = os.getenv("JOB_SUMMARY", "false")
 PR_COMMENTS = os.getenv("PR_COMMENTS", "false")
@@ -34,6 +35,7 @@ def log_env_vars():
     print(f"AUTHOR_EMAIL = {AUTHOR_EMAIL}")
     print(f"COMMIT_SIGNOFF = {COMMIT_SIGNOFF}")
     print(f"MERGE_BASE = {MERGE_BASE}")
+    print(f"IMPERATIVE = {IMPERATIVE}")
     print(f"DRY_RUN = {DRY_RUN}")
     print(f"JOB_SUMMARY = {JOB_SUMMARY}")
     print(f"PR_COMMENTS = {PR_COMMENTS}\n")
@@ -48,12 +50,21 @@ def run_commit_check() -> int:
         "--author-email",
         "--commit-signoff",
         "--merge-base",
+        "--imperative",
     ]
     args = [
         arg
         for arg, value in zip(
             args,
-            [MESSAGE, BRANCH, AUTHOR_NAME, AUTHOR_EMAIL, COMMIT_SIGNOFF, MERGE_BASE],
+            [
+                MESSAGE,
+                BRANCH,
+                AUTHOR_NAME,
+                AUTHOR_EMAIL,
+                COMMIT_SIGNOFF,
+                MERGE_BASE,
+                IMPERATIVE,
+            ],
         )
         if value == "true"
     ]

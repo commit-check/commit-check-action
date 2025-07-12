@@ -51,6 +51,7 @@ jobs:
           author-email: true
           commit-signoff: true
           merge-base: false
+          imperative: true
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
@@ -113,6 +114,11 @@ jobs:
 > `merge-base` is an experimental feature. by default it's disable.
 >
 > To use this feature, you need fetch all history for all branches by setting `fetch-depth: 0` in `actions/checkout`.
+
+### `imperative`
+
+- **Description**: check commit message is imperative mood.
+- Default: `true`
 
 ### `dry-run`
 

@@ -29,6 +29,10 @@ inputs:
     description: check current branch is rebased onto target branch
     required: false
     default: false
+  imperative:
+    description: check commit message is in imperative mood
+    required: false
+    default: true
   dry-run:
     description: run checks without failing
     required: false
@@ -76,6 +80,7 @@ runs:
         AUTHOR_EMAIL: ${{ inputs.author-email }}
         COMMIT_SIGNOFF: ${{ inputs.commit-signoff }}
         MERGE_BASE: ${{ inputs.merge-base }}
+        IMPERATIVE: ${{ inputs.imperative }}
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
