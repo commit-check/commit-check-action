@@ -118,7 +118,7 @@ jobs:
 ### `imperative`
 
 - **Description**: check commit message is imperative mood.
-- Default: `true`
+- Default: `false`
 
 ### `dry-run`
 

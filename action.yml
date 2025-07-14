@@ -32,7 +32,7 @@ inputs:
   imperative:
     description: check commit message is in imperative mood
     required: false
-    default: true
+    default: false
   dry-run:
     description: run checks without failing
     required: false
