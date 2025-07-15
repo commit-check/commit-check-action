@@ -43,7 +43,7 @@ jobs:
           fetch-depth: 0  # required for merge-base check
       - uses: commit-check/commit-check-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because of use pr-comments
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because use of pr-comments
         with:
           message: true
           branch: true
