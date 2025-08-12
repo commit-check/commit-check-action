@@ -14,7 +14,7 @@ jobs:
   used-by:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: shenxianpeng/used-by@v0.1.4
         with:
           repo: '${{ github.repository }}'
