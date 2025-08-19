@@ -45,6 +45,14 @@ inputs:
     description: post results to the pull request comments
     required: false
     default: false
+  author-name-match-github:
+    description: check if committer name matches GitHub user profile
+    required: false
+    default: false
+  author-email-match-github:
+    description: check if committer email matches GitHub user profile
+    required: false
+    default: false
 runs:
   using: "composite"
   steps:
@@ -84,3 +92,5 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
+        AUTHOR_NAME_MATCH_GITHUB: ${{ inputs.author-name-match-github }}
+        AUTHOR_EMAIL_MATCH_GITHUB: ${{ inputs.author-email-match-github }}

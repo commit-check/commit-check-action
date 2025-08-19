@@ -21,6 +21,8 @@ IMPERATIVE = os.getenv("IMPERATIVE", "true")
 DRY_RUN = os.getenv("DRY_RUN", "false")
 JOB_SUMMARY = os.getenv("JOB_SUMMARY", "false")
 PR_COMMENTS = os.getenv("PR_COMMENTS", "false")
+AUTHOR_NAME_MATCH_GITHUB = os.getenv("AUTHOR_NAME_MATCH_GITHUB", "false")
+AUTHOR_EMAIL_MATCH_GITHUB = os.getenv("AUTHOR_EMAIL_MATCH_GITHUB", "false")
 GITHUB_STEP_SUMMARY = os.environ["GITHUB_STEP_SUMMARY"]
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")
@@ -38,7 +40,9 @@ def log_env_vars():
     print(f"IMPERATIVE = {IMPERATIVE}")
     print(f"DRY_RUN = {DRY_RUN}")
     print(f"JOB_SUMMARY = {JOB_SUMMARY}")
-    print(f"PR_COMMENTS = {PR_COMMENTS}\n")
+    print(f"PR_COMMENTS = {PR_COMMENTS}")
+    print(f"AUTHOR_NAME_MATCH_GITHUB = {AUTHOR_NAME_MATCH_GITHUB}")
+    print(f"AUTHOR_EMAIL_MATCH_GITHUB = {AUTHOR_EMAIL_MATCH_GITHUB}\n")
 
 
 def run_commit_check() -> int:
@@ -80,13 +84,26 @@ def run_commit_check() -> int:
 
 def read_result_file() -> str | None:
     """Reads the result.txt file and removes ANSI color codes."""
-    if os.path.getsize("result.txt") > 0:
+    result_content = ""
+    
+    # Read commit-check results
+    if os.path.exists("result.txt") and os.path.getsize("result.txt") > 0:
         with open("result.txt", "r") as result_file:
-            result_text = re.sub(
+            commit_check_result = re.sub(
                 r"\x1B\[[0-9;]*[a-zA-Z]", "", result_file.read()
             )  # Remove ANSI colors
-        return result_text.rstrip()
-    return None
+            result_content += commit_check_result.rstrip()
+    
+    # Read GitHub user check results
+    if os.path.exists("github_user_check_result.txt") and os.path.getsize("github_user_check_result.txt") > 0:
+        with open("github_user_check_result.txt", "r") as github_result_file:
+            github_check_result = github_result_file.read().rstrip()
+            if result_content:
+                result_content += "\n\n" + github_check_result
+            else:
+                result_content = github_check_result
+    
+    return result_content if result_content else None
 
 
 def add_job_summary() -> int:
@@ -174,6 +191,92 @@ def add_pr_comments() -> int:
         return 1
 
 
+def get_git_committer_info() -> tuple[str, str]:
+    """Gets the committer name and email from the latest commit."""
+    try:
+        # Get committer name
+        name_result = subprocess.run(
+            ["git", "log", "-1", "--pretty=format:%cn"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        committer_name = name_result.stdout.strip()
+        
+        # Get committer email
+        email_result = subprocess.run(
+            ["git", "log", "-1", "--pretty=format:%ce"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        committer_email = email_result.stdout.strip()
+        
+        return committer_name, committer_email
+    except subprocess.CalledProcessError as e:
+        print(f"Error getting git committer info: {e}", file=sys.stderr)
+        return "", ""
+
+
+def check_github_user_match() -> int:
+    """Checks if committer name and email match GitHub user profile."""
+    if AUTHOR_NAME_MATCH_GITHUB == "false" and AUTHOR_EMAIL_MATCH_GITHUB == "false":
+        return 0
+
+    try:
+        token = os.getenv("GITHUB_TOKEN")
+        if not token:
+            print("Error: GITHUB_TOKEN is required for GitHub user matching checks", file=sys.stderr)
+            return 1
+
+        # Get committer info from git
+        committer_name, committer_email = get_git_committer_info()
+        if not committer_name and not committer_email:
+            print("Error: Could not retrieve git committer information", file=sys.stderr)
+            return 1
+
+        # Initialize GitHub client
+        g = Github(token)
+        user = g.get_user()
+
+        errors = []
+
+        # Check name if enabled
+        if AUTHOR_NAME_MATCH_GITHUB == "true":
+            github_name = user.name or ""
+            if committer_name != github_name:
+                errors.append(f"Committer name '{committer_name}' does not match GitHub user name '{github_name}'")
+
+        # Check email if enabled
+        if AUTHOR_EMAIL_MATCH_GITHUB == "true":
+            github_email = user.email or ""
+            # Also check against public emails if primary email is private
+            if committer_email != github_email:
+                # Check public emails
+                try:
+                    public_emails = [email.email for email in user.get_emails() if email.verified]
+                    if committer_email not in public_emails:
+                        errors.append(f"Committer email '{committer_email}' does not match any verified GitHub user email")
+                except Exception:
+                    # If we can't access emails (permissions issue), just check the primary
+                    errors.append(f"Committer email '{committer_email}' does not match GitHub user email '{github_email}'")
+
+        if errors:
+            # Write errors to result file
+            with open("github_user_check_result.txt", "w") as result_file:
+                for error in errors:
+                    result_file.write(f"❌ {error}\n")
+            return 1
+
+        return 0
+
+    except Exception as e:
+        print(f"Error checking GitHub user match: {e}", file=sys.stderr)
+        with open("github_user_check_result.txt", "w") as result_file:
+            result_file.write(f"❌ Error checking GitHub user match: {e}\n")
+        return 1
+
+
 def log_error_and_exit(
     failure_title: str, result_text: str | None, ret_code: int
 ) -> None:
@@ -197,6 +300,7 @@ def main():
 
     # Combine return codes
     ret_code = run_commit_check()
+    ret_code += check_github_user_match()
     ret_code += add_job_summary()
     ret_code += add_pr_comments()
 

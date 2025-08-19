@@ -53,6 +53,8 @@ jobs:
           imperative: false
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
+          author-name-match-github: false
+          author-email-match-github: false
 ```
 
 ## Used By
@@ -138,6 +140,21 @@ jobs:
 > `pr-comments` is an experimental feature. By default, it's disabled. To use it, you need to set `GITHUB_TOKEN` in the GitHub Action.
 >
 > This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
+### `author-name-match-github`
+
+- **Description**: check if committer name matches GitHub user profile.
+- Default: `false`
+
+> [!IMPORTANT]
+> `author-name-match-github` requires `GITHUB_TOKEN` to be set in the GitHub Action to access the GitHub API.
+
+### `author-email-match-github`
+
+- **Description**: check if committer email matches GitHub user profile.
+- Default: `false`
+
+> [!IMPORTANT]
+> `author-email-match-github` requires `GITHUB_TOKEN` to be set in the GitHub Action to access the GitHub API.
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml). If you want to customize, just add your `.commit-check.yml` config file under your repository root directory.
 
