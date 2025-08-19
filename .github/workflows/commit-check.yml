@@ -30,8 +30,8 @@ jobs:
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
 
-      - name: Save GITHUB_OUTPUT to pr-comments.txt
-        run: echo "$GITHUB_OUTPUT" > pr-comments.txt
+      - name: Save PR comments to pr-comments.txt
+        run: echo "${{ steps.commit-check.outputs.pr_comments }}" > pr-comments.txt
 
       - name: Upload pr-comments.txt
         uses: actions/upload-artifact@v4
