@@ -29,3 +29,12 @@ jobs:
           imperative: true
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
+
+      - name: Save GITHUB_OUTPUT to pr-comments.txt
+        run: echo "$GITHUB_OUTPUT" > pr-comments.txt
+
+      - name: Upload pr-comments.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: commit-check-pr-comments
+          path: pr-comments.txt
