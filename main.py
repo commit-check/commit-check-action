@@ -169,8 +169,8 @@ def add_pr_comments() -> int:
             pull_request.create_comment(body=pr_comments)
 
         # output pr_comments to $GITHUB_OUTPUT
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as env_file:
-            env_file.write(f"pr_comments={pr_comments}\n")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output_file:
+            output_file.write(f"pr_comments={pr_comments}\n")
 
         return 0 if result_text is None else 1
     except Exception as e:

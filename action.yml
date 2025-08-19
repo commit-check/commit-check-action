@@ -48,7 +48,8 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install dependencies and run commit-check
+    - id: run
+      name: Install dependencies and run commit-check
       shell: bash
       run: |
         if [[ "$RUNNER_OS" == "Linux" ]]; then
@@ -84,3 +85,8 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
+
+outputs:
+  pr_comments:
+    description: The formatted PR comment body containing commit-check results
+    value: ${{ steps.run.outputs.pr_comments }}
