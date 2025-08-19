@@ -25,6 +25,7 @@ GITHUB_STEP_SUMMARY = os.environ["GITHUB_STEP_SUMMARY"]
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")
 GITHUB_REF = os.getenv("GITHUB_REF")
+GITHUB_PR_NUMBER = os.getenv("GITHUB_PR_NUMBER")
 
 
 def log_env_vars():
@@ -116,12 +117,19 @@ def add_pr_comments() -> int:
     try:
         token = os.getenv("GITHUB_TOKEN")
         repo_name = os.getenv("GITHUB_REPOSITORY")
-        pr_number = os.getenv("GITHUB_REF")
-        if pr_number is not None:
-            pr_number = pr_number.split("/")[-2]
-        else:
-            # Handle the case where GITHUB_REF is not set
-            raise ValueError("GITHUB_REF environment variable is not set")
+
+        # Get PR number from GITHUB_PR_NUMBER (for pull_request_target) or extract from GITHUB_REF (for pull_request)
+        pr_number = os.getenv("GITHUB_PR_NUMBER")
+        if pr_number is None:
+            # Fallback to extracting from GITHUB_REF for backward compatibility
+            github_ref = os.getenv("GITHUB_REF")
+            if github_ref is not None:
+                pr_number = github_ref.split("/")[-2]
+            else:
+                # Handle the case where neither environment variable is set
+                raise ValueError(
+                    "Neither GITHUB_PR_NUMBER nor GITHUB_REF environment variable is set"
+                )
 
         # Initialize GitHub client
         g = Github(token)

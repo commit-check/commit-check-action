@@ -21,6 +21,7 @@ jobs:
       - uses: ./ # self test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because of use pr-comments
+          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }} # pass PR number for pull_request_target events
         with:
           message: true
           branch: true
