@@ -16,7 +16,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
           fetch-depth: 0  # fetch all history for all branches and tags
-      - uses: commit-check/commit-check-action@copilot/fix-58e2f213-6f3b-492c-8b06-7e433b9a715b
+      - uses: commit-check/commit-check-action@9df7725c1bb0c910c1c1ea8da0afca1d08934177
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because of use pr-comments
         with:
