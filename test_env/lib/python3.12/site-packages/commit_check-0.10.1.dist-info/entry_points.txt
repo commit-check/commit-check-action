@@ -1,0 +1,2 @@
+[console_scripts]
+commit-check = commit_check.main:main
