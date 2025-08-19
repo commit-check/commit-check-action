@@ -108,6 +108,20 @@ def add_job_summary() -> int:
     return 0 if result_text is None else 1
 
 
+def set_pr_comments_output() -> None:
+    """Sets the pr_comments output regardless of PR_COMMENTS setting."""
+    result_text = read_result_file()
+    pr_comments = (
+        SUCCESS_TITLE
+        if result_text is None
+        else f"{FAILURE_TITLE}\n```\n{result_text}\n```"
+    )
+    
+    # output pr_comments to $GITHUB_OUTPUT
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output_file:
+        output_file.write(f"pr_comments={pr_comments}\n")
+
+
 def add_pr_comments() -> int:
     """Posts the commit check result as a comment on the pull request."""
     if PR_COMMENTS == "false":
@@ -168,10 +182,6 @@ def add_pr_comments() -> int:
             print(f"Creating a new comment on PR #{pr_number}.")
             pull_request.create_comment(body=pr_comments)
 
-        # output pr_comments to $GITHUB_OUTPUT
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output_file:
-            output_file.write(f"pr_comments={pr_comments}\n")
-
         return 0 if result_text is None else 1
     except Exception as e:
         print(f"Error posting PR comment: {e}", file=sys.stderr)
@@ -203,6 +213,9 @@ def main():
     ret_code = run_commit_check()
     ret_code += add_job_summary()
     ret_code += add_pr_comments()
+    
+    # Always set pr_comments output regardless of PR_COMMENTS setting
+    set_pr_comments_output()
 
     if DRY_RUN == "true":
         ret_code = 0
