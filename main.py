@@ -116,7 +116,7 @@ def set_pr_comments_output() -> None:
         if result_text is None
         else f"{FAILURE_TITLE}\n```\n{result_text}\n```"
     )
-    
+
     # output pr_comments to $GITHUB_OUTPUT
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output_file:
         output_file.write(f"pr_comments={pr_comments}\n")
@@ -213,7 +213,7 @@ def main():
     ret_code = run_commit_check()
     ret_code += add_job_summary()
     ret_code += add_pr_comments()
-    
+
     # Always set pr_comments output regardless of PR_COMMENTS setting
     set_pr_comments_output()
 
