@@ -45,10 +45,16 @@ inputs:
     description: post results to the pull request comments
     required: false
     default: false
+
+outputs:
+  pr_comments:
+    description: The formatted PR comment body containing commit-check results
+    value: ${{ steps.commit-check.outputs.pr_comments }}
+
 runs:
   using: "composite"
   steps:
-    - id: run
+    - id: commit-check
       name: Install dependencies and run commit-check
       shell: bash
       run: |
@@ -85,8 +91,3 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
-
-outputs:
-  pr_comments:
-    description: The formatted PR comment body containing commit-check results
-    value: ${{ steps.run.outputs.pr_comments }}
