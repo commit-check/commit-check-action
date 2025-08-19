@@ -26,7 +26,7 @@ name: Commit Check
 
 on:
   push:
-  pull_request:
+  pull_request_target:
     branches: 'main'
 
 jobs:
@@ -35,11 +35,13 @@ jobs:
     permissions:  # use permissions because use of pr-comments
       contents: read
       pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
+          ref: ${{ format('refs/pull/{0}/head', github.event.pull_request.number) }}  # checkout PR HEAD commit
           fetch-depth: 0  # required for merge-base check
+          persist-credentials: false
       - uses: commit-check/commit-check-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because use of pr-comments
@@ -52,7 +54,7 @@ jobs:
           merge-base: false
           imperative: false
           job-summary: true
-          pr-comments: ${{ github.event_name == 'pull_request' }}
+          pr-comments: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
 ```
 
 ## Used By
@@ -135,9 +137,7 @@ jobs:
 - Default: `false`
 
 > [!IMPORTANT]
-> `pr-comments` is an experimental feature. By default, it's disabled. To use it, you need to set `GITHUB_TOKEN` in the GitHub Action.
->
-> This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
+> `pr-comments` is an experimental feature. By default, it's disabled. To use it, you need to set `GITHUB_TOKEN` in the GitHub Action and ensure your workflow has `issues: write` permission.
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml). If you want to customize, just add your `.commit-check.yml` config file under your repository root directory.
 

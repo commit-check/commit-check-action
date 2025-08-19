@@ -1,7 +1,7 @@
 name: Commit Check
 
 on:
-  pull_request:
+  pull_request_target:
     branches: 'main'
   workflow_dispatch:
 
@@ -11,12 +11,14 @@ jobs:
     permissions:  # use permissions because of use pr-comments
       contents: read
       pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
+          ref: ${{ format('refs/pull/{0}/head', github.event.pull_request.number) }}  # checkout PR HEAD commit
           fetch-depth: 0  # fetch all history for all branches and tags
-      - uses: commit-check/commit-check-action@copilot/fix-58e2f213-6f3b-492c-8b06-7e433b9a715b
+          persist-credentials: false
+      - uses: ./ # self test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because of use pr-comments
         with:
@@ -28,4 +30,4 @@ jobs:
           merge-base: true
           imperative: true
           job-summary: true
-          pr-comments: ${{ github.event_name == 'pull_request' }}
+          pr-comments: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
