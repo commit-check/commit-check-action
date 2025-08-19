@@ -168,6 +168,9 @@ def add_pr_comments() -> int:
             print(f"Creating a new comment on PR #{pr_number}.")
             pull_request.create_comment(body=pr_comments)
 
+        # output pr_comments to GitHub Actions
+        print(f"::set-output name=pr_comments::{pr_comments}")
+
         return 0 if result_text is None else 1
     except Exception as e:
         print(f"Error posting PR comment: {e}", file=sys.stderr)
