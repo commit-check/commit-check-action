@@ -1,6 +1,5 @@
 # Commit-Check GitHub Action
 
-[![Main](https://github.com/commit-check/commit-check-action/actions/workflows/main.yaml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/main.yaml)
 [![Commit Check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action)
 [![Used by](https://img.shields.io/static/v1?label=Used%20by&message=67&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
