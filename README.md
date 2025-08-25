@@ -2,7 +2,7 @@
 
 [![Commit Check](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action)
-[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=67&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
+[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=68&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 [![slsa-badge](https://slsa.dev/images/gh-badge-level3.svg)](https://github.com/commit-check/commit-check-action/blob/a2873ca0482dd505c93fb51861c953e82fd0a186/action.yml#L59-L69)
 
