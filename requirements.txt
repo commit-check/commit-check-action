@@ -2,4 +2,4 @@
 # For details please see: https://github.com/commit-check/commit-check
 commit-check==0.10.1
 # Interact with the GitHub API.
-PyGithub==2.7.0
+PyGithub==2.8.1
