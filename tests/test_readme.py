@@ -23,8 +23,12 @@ def test_readme_exists_and_non_empty():
 
 def test_title_and_intro_present():
     text = load_readme_text()
-    assert re.search(r"^#\s+Commit-Check GitHub Action\s*$", text, re.M), "Missing H1 title"
-    assert "A GitHub Action for checking commit message" in text, "Missing introductory sentence"
+    assert re.search(
+        r"^#\s+Commit-Check GitHub Action\s*$", text, re.M
+    ), "Missing H1 title"
+    assert (
+        "A GitHub Action for checking commit message" in text
+    ), "Missing introductory sentence"
 
 
 def test_badges_section_contains_expected_badges():
