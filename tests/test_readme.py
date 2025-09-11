@@ -1,11 +1,11 @@
-"""
-README quality and consistency tests.
+"""README quality and consistency tests.
 
 Testing library/framework: pytest
 - These tests use only Python stdlib to avoid introducing new dependencies.
 - They validate structure, key sections, badge/link syntax, and critical snippets
   from the README to catch regressions in documentation that users depend on.
 """
+
 from __future__ import annotations
 
 import re
