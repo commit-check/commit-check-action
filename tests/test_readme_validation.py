@@ -44,6 +44,7 @@ def _extract_subsection(md: str, heading: str) -> Optional[str]:
 
 def test_readme_exists(readme_text: str) -> None:
     assert isinstance(readme_text, str) and len(readme_text) > 50, "README should exist and be non-trivial"
+    return
 
 
 def test_top_badges_present(readme_text: str) -> None:
