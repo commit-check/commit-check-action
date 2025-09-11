@@ -3,7 +3,7 @@ import os
 import sys
 import subprocess
 import re
-from github import Github  # type: ignore
+from github import Github, Auth  # type: ignore
 
 
 # Constants for message titles
@@ -124,7 +124,10 @@ def add_pr_comments() -> int:
             raise ValueError("GITHUB_REF environment variable is not set")
 
         # Initialize GitHub client
-        g = Github(token)
+        # Use new Auth API to avoid deprecation warning
+        if not token:
+            raise ValueError("GITHUB_TOKEN is not set")
+        g = Github(auth=Auth.Token(token))
         repo = g.get_repo(repo_name)
         pull_request = repo.get_issue(int(pr_number))
 
