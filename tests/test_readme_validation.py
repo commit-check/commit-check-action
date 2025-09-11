@@ -26,6 +26,7 @@ def readme_text() -> str:
         if p.exists():
             return _normalize(p.read_text(encoding="utf-8"))
     pytest.skip("README not found at repository root")
+    return ""
 
 
 def _extract_code_blocks(md: str, lang: Optional[str] = None) -> List[str]:
@@ -44,7 +45,7 @@ def _extract_subsection(md: str, heading: str) -> Optional[str]:
 
 def test_readme_exists(readme_text: str) -> None:
     assert isinstance(readme_text, str) and len(readme_text) > 50, "README should exist and be non-trivial"
-    return
+    return None
 
 
 def test_top_badges_present(readme_text: str) -> None:
