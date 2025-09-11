@@ -34,7 +34,10 @@ def test_title_and_intro_present():
 def test_badges_section_contains_expected_badges():
     text = load_readme_text()
     # Key badges/links in the diff
-    assert "actions/workflow/status/commit-check/commit-check-action/commit-check.yml" in text
+    assert (
+        "actions/workflow/status/commit-check/commit-check-action/commit-check.yml"
+        in text
+    )
     assert "shields.io/github/v/release/commit-check/commit-check-action" in text
     assert "Used%20by" in text and "network/dependents" in text
     assert "marketplace/actions/commit-check-action" in text
@@ -98,12 +101,21 @@ def test_optional_inputs_section_and_defaults():
     text = load_readme_text()
     # Sub-headings for inputs
     inputs = [
-        "message", "branch", "author-name", "author-email",
-        "commit-signoff", "merge-base", "imperative",
-        "dry-run", "job-summary", "pr-comments",
+        "message",
+        "branch",
+        "author-name",
+        "author-email",
+        "commit-signoff",
+        "merge-base",
+        "imperative",
+        "dry-run",
+        "job-summary",
+        "pr-comments",
     ]
     for name in inputs:
-        assert re.search(rf"^###\s+`{re.escape(name)}`\s*$", text, re.M), f"Missing input heading for `{name}`"
+        assert re.search(
+            rf"^###\s+`{re.escape(name)}`\s*$", text, re.M
+        ), f"Missing input heading for `{name}`"
 
     # Representative default assertions (avoid overfitting to formatting)
     defaults = {
@@ -138,7 +150,10 @@ def test_job_summary_and_pr_comment_screenshots_present():
     assert "Success job summary" in text and "Failure job summary" in text
     assert "screenshot/success-job-summary.png" in text
     assert "screenshot/failure-job-summary.png" in text
-    assert "Success pull request comment" in text and "Failure pull request comment" in text
+    assert (
+        "Success pull request comment" in text
+        and "Failure pull request comment" in text
+    )
     assert "screenshot/success-pr-comments.png" in text
     assert "screenshot/failure-pr-comments.png" in text
 
@@ -155,7 +170,10 @@ def test_badging_section_contains_markdown_and_rst_examples():
     # reStructuredText example fenced block
     rst_block = re.search(r"(?s)reStructuredText\s+```[\s\S]*?```", text)
     assert rst_block, "Missing reStructuredText badging example fenced block"
-    assert ".. image:: https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg" in rst_block.group(0)
+    assert (
+        ".. image:: https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml/badge.svg"
+        in rst_block.group(0)
+    )
 
 
 def test_versioning_and_feedback_sections_present():
@@ -180,3 +198,4 @@ def test_top_badges_appear_near_top_of_file():
 
 # The tests above intentionally avoid asserting volatile values (like exact counts)
 # while thoroughly validating structure and key content introduced/changed in the diff.
+# End of file fixed
