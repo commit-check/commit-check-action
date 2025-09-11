@@ -23,7 +23,9 @@ README_PATH = next((p for p in README_CANDIDATES if p.exists()), None)
 
 
 def _require_readme() -> str:
-    assert README_PATH is not None, f"README file not found. Looked for: {', '.join(map(str, README_CANDIDATES))}"
+    assert README_PATH is not None, (
+        f"README file not found. Looked for: {', '.join(map(str, README_CANDIDATES))}"
+    )
     return README_PATH.read_text(encoding="utf-8", errors="replace")
 
 
@@ -55,7 +57,9 @@ def test_table_of_contents_contains_expected_sections_ordered():
     # Ensure each anchor has a corresponding header
     for label, anchor in anchors:
         header_pattern = rf"^##\s+{re.escape(label)}\s*$"
-        assert re.search(header_pattern, readme, flags=re.M), f"Header for TOC entry '{label}' not found"
+        assert re.search(header_pattern, readme, flags=re.M), (
+            f"Header for TOC entry '{label}' not found"
+        )
 
 
 def test_badges_and_links_are_well_formed_urls():
@@ -63,7 +67,7 @@ def test_badges_and_links_are_well_formed_urls():
     # Collect all markdown image and link URLs
     urls = []
     urls += re.findall(r"\!\[[^\]]*\]\((https?://[^)]+)\)", readme)  # images
-    urls += re.findall(r"\[[^\]]*\]\((https?://[^)]+)\)", readme)   # links
+    urls += re.findall(r"\[[^\]]*\]\((https?://[^)]+)\)", readme)  # links
 
     assert urls, "No URLs found in README; expected badges/links to be present"
 
@@ -76,7 +80,9 @@ def test_badges_and_links_are_well_formed_urls():
 
     # Spot-check expected badge providers/domains
     assert any("img.shields.io" in u for u in urls), "Shields.io badges should be present"
-    assert any("github.com/commit-check/commit-check-action" in u for u in urls), "Repository links should be present"
+    assert any("github.com/commit-check/commit-check-action" in u for u in urls), (
+        "Repository links should be present"
+    )
 
 
 def test_usage_yaml_snippet_contains_expected_github_actions_fields():
@@ -118,7 +124,9 @@ def test_usage_yaml_snippet_contains_expected_github_actions_fields():
         r"^\s+pr-comments:\s*\$\{\{\s*github\.event_name\s*==\s*'pull_request'\s*\}\}\s*$",
     ]
     for pattern in expected_lines:
-        assert re.search(pattern, yaml_text, flags=re.M), f"Missing or malformed line in Usage YAML matching: {pattern}"
+        assert re.search(pattern, yaml_text, flags=re.M), (
+            f"Missing or malformed line in Usage YAML matching: {pattern}"
+        )
 
 
 def test_optional_inputs_section_lists_all_expected_inputs_with_defaults():
@@ -146,20 +154,25 @@ def test_optional_inputs_section_lists_all_expected_inputs_with_defaults():
         section_match = re.search(header_pat + r"([\s\S]+?)(^###\s*`|\Z)", readme, flags=re.M)
         assert section_match, f"Section body for `{key}` not found"
         section_body = section_match.group(1)
-        assert re.search(default_pat, section_body, flags=re.M), f"Default for `{key}` should be `{default}`"
+        assert re.search(default_pat, section_body, flags=re.M), (
+            f"Default for `{key}` should be `{default}`"
+        )
 
 
 def test_merge_base_important_note_present_and_mentions_fetch_depth_zero():
     readme = _require_readme()
-    note_match = re.search(r"###\s*`merge-base`[\s\S]+?>\s*\[\!IMPORTANT\][\s\S]+?fetch-depth:\s*0", readme, flags=re.I)
+    note_match = re.search(
+        r"###\s*`merge-base`[\s\S]+?>\s*\[\!IMPORTANT\][\s\S]+?fetch-depth:\s*0", readme, flags=re.I
+    )
     assert note_match, "IMPORTANT note for `merge-base` with fetch-depth: 0 is missing"
 
 
 def test_pr_comments_important_note_mentions_github_token_and_issue_77():
     readme = _require_readme()
     assert "### `pr-comments`" in readme
-    assert re.search(r">\s*\[\!IMPORTANT\][\s\S]+GITHUB_TOKEN[\s\S]+#77", readme), \
-        "IMPORTANT note for `pr-comments` should mention GITHUB_TOKEN and issue #77"
+    assert re.search(
+        r">\s*\[\!IMPORTANT\][\s\S]+GITHUB_TOKEN[\s\S]+#77", readme
+    ), "IMPORTANT note for `pr-comments` should mention GITHUB_TOKEN and issue #77"
 
 
 def test_used_by_section_contains_expected_orgs_and_structure():
@@ -177,8 +190,9 @@ def test_used_by_section_contains_expected_orgs_and_structure():
         assert alt in readme, f"Expected org '{alt}' not mentioned"
         assert href in readme, f"Expected org link '{href}' not present"
     # Check that avatars come from GitHub's avatars CDN
-    assert re.search(r'src="https://avatars\.githubusercontent\.com/u/\d+\?s=200&v=4"', readme), \
-        "Org avatar images should use githubusercontent avatars"
+    assert re.search(
+        r'src="https://avatars\.githubusercontent\.com/u/\d+\?s=200&v=4"', readme
+    ), "Org avatar images should use githubusercontent avatars"
 
 
 def test_badging_section_contains_markdown_and_rst_snippets():
@@ -203,8 +217,9 @@ def test_versioning_and_feedback_sections_present_with_expected_links():
     readme = _require_readme()
     assert "Versioning follows" in readme and "Semantic Versioning" in readme
     # Feedback/issues link
-    assert re.search(r"\[issues\]\(https://github\.com/commit-check/commit-check/issues\)", readme), \
-        "Issues link in feedback section is missing"
+    assert re.search(
+        r"\[issues\]\(https://github\.com/commit-check/commit-check/issues\)", readme
+    ), "Issues link in feedback section is missing"
 
 
 def test_all_markdown_links_and_images_have_alt_text_or_label():
