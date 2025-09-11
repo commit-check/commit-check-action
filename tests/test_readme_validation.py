@@ -4,9 +4,9 @@
 
 from pathlib import Path
 import re
-import pytest
 from typing import List, Optional
 
+import pytest
 
 README_CANDIDATES = [
     Path("README.md"),
@@ -57,8 +57,7 @@ def test_top_badges_present(readme_text: str) -> None:
         t,
     ), "GitHub release (latest SemVer) badge should be present"
     assert re.search(
-        r"https://img\.shields\.io/static/v1\?label=Used%20by&message=\d+&color=informational",
-        t,
+        r"https://img\.shields\.io/static/v1\?label=Used%20by&message=\d+&color=informational", t
     ), "'Used by' shields.io badge should be present (do not assert specific count)"
     assert "https://img.shields.io/badge/Marketplace-commit--check--action-blue" in t, "Marketplace badge should be present"
     assert re.search(r"slsa\.dev/images/gh-badge-level3\.svg\?color=blue", t), "SLSA level 3 badge should be present"
@@ -75,7 +74,9 @@ def test_table_of_contents_has_expected_links(readme_text: str) -> None:
     ]
     for anchor in anchors:
         slug = anchor.lower().replace(" ", "-")
-        assert re.search(rf"^\* \[{re.escape(anchor)}\]\(#{re.escape(slug)}\)\s*$", readme_text, flags=re.MULTILINE), f"TOC entry for {anchor} should exist"
+        assert re.search(
+            rf"^\* \[{re.escape(anchor)}\]\(#{re.escape(slug)}\)\s*$", readme_text, flags=re.MULTILINE
+        ), f"TOC entry for {anchor} should exist"
 
 
 def test_usage_yaml_block_contains_required_items(readme_text: str) -> None:
@@ -104,7 +105,9 @@ def test_usage_yaml_block_contains_required_items(readme_text: str) -> None:
 
     # Validate GitHub expressions patterns
     assert re.search(r"\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\}\}", y), "PR head SHA expression must be present"
-    assert re.search(r"\$\{\{\s*github\.event_name\s*==\s*['\"]pull_request['\"]\s*\}\}", y), "Conditional pr-comments expression must be present"
+    assert re.search(
+        r"\$\{\{\s*github\.event_name\s*==\s*['\"]pull_request['\"]\s*\}\}", y
+    ), "Conditional pr-comments expression must be present"
 
 
 def test_commit_check_action_inputs_in_usage_block(readme_text: str) -> None:
@@ -212,7 +215,10 @@ def test_workflow_badge_consistency(readme_text: str) -> None:
     # Top badge and badging section should reference the same workflow path
     t = readme_text
     # Extract all commit-check workflow badge URLs
-    urls = re.findall(r"https://github\.com/commit-check/commit-check-action/actions/workflows/commit-check\.yml(?:/badge\.svg)?", t)
+    urls = re.findall(
+        r"https://github\.com/commit-check/commit-check-action/actions/workflows/commit-check\.yml(?:/badge\.svg)?",
+        t,
+    )
     assert urls, "Expected workflow badge/link URLs"
     # Ensure both base workflow URL and badge.svg appear
     assert any(u.endswith("badge.svg") for u in urls) or "actions/workflows/commit-check.yml/badge.svg" in t, "badge.svg URL should be present"
