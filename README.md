@@ -2,7 +2,7 @@
 
 [![Commit Check](https://img.shields.io/github/actions/workflow/status/commit-check/commit-check-action/commit-check.yml?branch=main&label=Commit%20Check&color=blue&logo=github)](https://github.com/commit-check/commit-check-action/actions/workflows/commit-check.yml)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action?color=blue)
-[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=68&color=informational&logo=slickpic?color=blue)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
+[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=72&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 [![slsa-badge](https://slsa.dev/images/gh-badge-level3.svg?color=blue)](https://github.com/commit-check/commit-check-action/blob/a2873ca0482dd505c93fb51861c953e82fd0a186/action.yml#L59-L69)
 
@@ -72,6 +72,8 @@ jobs:
   <strong>Chainlift</strong>&nbsp;&nbsp;
   <a href="https://github.com/mila-iqia"><img src="https://avatars.githubusercontent.com/u/11724251?s=200&v=4" alt="Mila" width="28"/></a>
   <strong>Mila</strong>&nbsp;&nbsp;
+  <a href="https://github.com/RLinf/RLinf"><img src="https://avatars.githubusercontent.com/u/226440105?s=200&v=4" alt="RLinf" width="28"/></a>
+  <strong>RLinf</strong>&nbsp;&nbsp;
   <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
 </p>
 
