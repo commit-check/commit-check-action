@@ -82,13 +82,13 @@ jobs:
 ### `message`
 
 - **Description**: check commit message formatting convention.
-  - By default, the rule follows [conventional commits](https://www.conventionalcommits.org/).
+  - By default, the rule follows [Conventional Commits](https://www.conventionalcommits.org/).
 - Default: `true`
 
 ### `branch`
 
 - **Description**: check git branch naming convention.
-  - By default, the rule follows [conventional branch](https://conventional-branch.github.io/).
+  - By default, the rule follows [Conventional Branch](https://conventional-branch.github.io/).
 - Default: `true`
 
 ### `author-name`
