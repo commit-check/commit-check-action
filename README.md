@@ -38,11 +38,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
-          fetch-depth: 0  # required for merge-base check
+          ref: ${{ github.event.pull_request.head.sha }}  # Checkout PR HEAD commit
+          fetch-depth: 0  # Required for merge-base checks
       - uses: commit-check/commit-check-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because use of pr-comments
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Needed for PR comments
         with:
           message: true
           branch: true

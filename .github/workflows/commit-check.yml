@@ -14,11 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
-          fetch-depth: 0  # fetch all history for all branches and tags
+          ref: ${{ github.event.pull_request.head.sha }}  # Checkout PR HEAD commit
+          fetch-depth: 0  # Required for merge-base checks
       - uses: ./ # self test
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because of use pr-comments
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Needed for PR comments
         with:
           message: true
           branch: true
