@@ -21,18 +21,6 @@ inputs:
     description: check committer author email
     required: false
     default: true
-  commit-signoff:
-    description: check committer commit signature
-    required: false
-    default: true
-  merge-base:
-    description: check current branch is rebased onto target branch
-    required: false
-    default: false
-  imperative:
-    description: check commit message is in imperative mood
-    required: false
-    default: false
   dry-run:
     description: run checks without failing
     required: false
@@ -78,9 +66,6 @@ runs:
         BRANCH: ${{ inputs.branch }}
         AUTHOR_NAME: ${{ inputs.author-name }}
         AUTHOR_EMAIL: ${{ inputs.author-email }}
-        COMMIT_SIGNOFF: ${{ inputs.commit-signoff }}
-        MERGE_BASE: ${{ inputs.merge-base }}
-        IMPERATIVE: ${{ inputs.imperative }}
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}

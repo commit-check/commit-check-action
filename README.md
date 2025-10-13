@@ -48,9 +48,6 @@ jobs:
           branch: true
           author-name: true
           author-email: true
-          commit-signoff: true
-          merge-base: false
-          imperative: false
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
@@ -100,26 +97,6 @@ jobs:
 
 - **Description**: check committer author email.
 - Default: `true`
-
-### `commit-signoff`
-
-- **Description**: check committer commit signature.
-- Default: `true`
-
-### `merge-base`
-
-- **Description**: check current branch is rebased onto the target branch.
-- Default: `false`
-
-> [!IMPORTANT]
-> `merge-base` is an experimental feature. By default, it's disabled.
->
-> To use this feature, you need to fetch all history for all branches by setting `fetch-depth: 0` in `actions/checkout`.
-
-### `imperative`
-
-- **Description**: check commit message is imperative mood.
-- Default: `false`
 
 ### `dry-run`
 
