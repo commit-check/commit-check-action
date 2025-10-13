@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}  # Checkout PR HEAD commit
+          ref: ${{ github.event.pull_request.head.ref }}  # Checkout PR branch
           fetch-depth: 0  # Required for merge-base checks
       - uses: commit-check/commit-check-action@v2
         env:
