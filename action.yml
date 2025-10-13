@@ -6,21 +6,21 @@ branding:
   color: "blue"
 inputs:
   message:
-    description: check commit message formatting convention
+    description: check git commit message following conventional commits
     required: false
     default: true
   branch:
-    description: check git branch naming convention
+    description: check git branch name following conventional branch
     required: false
     default: true
   author-name:
     description: check committer author name
     required: false
-    default: true
+    default: false
   author-email:
     description: check committer author email
     required: false
-    default: true
+    default: false
   dry-run:
     description: run checks without failing
     required: false

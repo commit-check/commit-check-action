@@ -8,6 +8,24 @@
 
 A GitHub Action for checking commit message formatting, branch naming, committer name, email, commit signoff, and more.
 
+## What's New?
+
+> [!NOTE]
+> **Version:** `v2.0.0` — *2025-10-20*
+
+> [!IMPORTANT]
+> This release introduces several **breaking changes**. Please review the [Breaking Changes](#breaking-changes) section before upgrading.
+
+### Breaking Changes
+
+- Dropped support for `commit-signoff`, `merge-base`, and `imperative` inputs which are moved to new config file `commit-check.toml`.
+- Dropped support for `.commit-check.yml` in favor of `commit-check.toml`.
+- Changed default values of `author-name` and `author-email` inputs to `false` to align with commit-check default configuration.
+- Updated core dependency [`commit-check`](https://github.com/commit-check/commit-check) to **v2.0.0**.
+
+> [!TIP]
+> For migration guidance, see the [v2.0.0 Upgrade Guide](https://commit-check.github.io/commit-check/migration.html).
+
 ## Table of Contents
 
 * [Usage](#usage)
@@ -46,8 +64,8 @@ jobs:
         with:
           message: true
           branch: true
-          author-name: true
-          author-email: true
+          author-name: false
+          author-email: false
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
@@ -78,25 +96,23 @@ jobs:
 
 ### `message`
 
-- **Description**: check commit message formatting convention.
-  - By default, the rule follows [Conventional Commits](https://www.conventionalcommits.org/).
+- **Description**: check git commit message following [Conventional Commits](https://www.conventionalcommits.org/).
 - Default: `true`
 
 ### `branch`
 
-- **Description**: check git branch naming convention.
-  - By default, the rule follows [Conventional Branch](https://conventional-branch.github.io/).
+- **Description**: check git branch name following [Conventional Branch](https://conventional-branch.github.io/).
 - Default: `true`
 
 ### `author-name`
 
 - **Description**: check committer author name.
-- Default: `true`
+- Default: `false`
 
 ### `author-email`
 
 - **Description**: check committer author email.
-- Default: `true`
+- Default: `false`
 
 ### `dry-run`
 
@@ -118,7 +134,7 @@ jobs:
 >
 > This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
 
-Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check/blob/main/.commit-check.yml). If you want to customize, just add your `.commit-check.yml` config file under your repository root directory.
+Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check-action/blob/main/commit-check.toml). If you want to customize, just add your [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html) config file under your repository root directory.
 
 ## GitHub Action Job Summary
 
