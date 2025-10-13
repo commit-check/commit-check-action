@@ -10,10 +10,9 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 
 ## What's New?
 
-> [!NOTE]
-> **Version:** `v2.0.0` — *2025-10-20*
-
 > [!IMPORTANT]
+> **Version:** `v2.0.0` — *2025-10-20*
+>
 > This release introduces several **breaking changes**. Please review the [Breaking Changes](#breaking-changes) section before upgrading.
 
 ### Breaking Changes
@@ -23,8 +22,7 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 - Changed default values of `author-name` and `author-email` inputs to `false` to align with commit-check default configuration.
 - Updated core dependency [`commit-check`](https://github.com/commit-check/commit-check) to **v2.0.0**.
 
-> [!TIP]
-> For migration guidance, see the [v2.0.0 Upgrade Guide](https://commit-check.github.io/commit-check/migration.html).
+More details can be found in the [release notes](https://github.com/commit-check/commit-check/releases/tag/v2.0.0).
 
 ## Table of Contents
 
