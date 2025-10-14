@@ -11,14 +11,14 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 ## What's New in v2
 
 > [!IMPORTANT]
-> This v2 release introduces several **breaking changes**. Please review the [Breaking Changes](#breaking-changes) section before upgrading.
+> This v2 release introduces several 🚨**breaking changes**. Please review the [Breaking Changes](#breaking-changes) section carefully before upgrading.
 
 ### Breaking Changes
 
-- Dropped support for `commit-signoff`, `merge-base`, and `imperative` inputs which are moved to new config file `commit-check.toml`.
-- Dropped support for `.commit-check.yml` in favor of `commit-check.toml`.
-- Changed default values of `author-name` and `author-email` inputs to `false` to align with commit-check default configuration.
-- Updated core dependency [`commit-check`](https://github.com/commit-check/commit-check) to [**v2.0.0**](https://github.com/commit-check/commit-check/releases/tag/v2.0.0).
+- Removed support for `commit-signoff`, `merge-base`, and `imperative` inputs — now configured via `commit-check.toml` or `cchk.toml`.
+- Deprecated `.commit-check.yml` in favor of `commit-check.toml` or `cchk.toml`.
+- Changed default values of `author-name` and `author-email` inputs to `false` to align with the default behavior in commit-check.
+- Upgraded core dependency [`commit-check`](https://github.com/commit-check/commit-check) to [**v2.0.0**](https://github.com/commit-check/commit-check/releases/tag/v2.0.0).
 
 ## Table of Contents
 
