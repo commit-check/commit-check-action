@@ -1,5 +1,5 @@
 # Install commit-check CLI
 # For details please see: https://github.com/commit-check/commit-check
-commit-check==2.1.1
+git+git@github.com:commit-check/commit-check.git@feature/support-github-user-to-get-env
 # Interact with the GitHub API.
 PyGithub==2.8.1
