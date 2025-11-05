@@ -48,17 +48,8 @@ runs:
         python3 -m venv venv
         source venv/bin/activate
 
-        # Download artifact
-        python3 -m pip download -r "$GITHUB_ACTION_PATH/requirements.txt"
-
-        # Verify artifact attestations
-        if ! gh attestation verify commit_check-*.whl -R commit-check/commit-check; then
-            echo "Artifact verification failed. Aborting installation."
-            exit 1
-        fi
-
-        # Install artifact
-        python3 -m pip install commit_check-*.whl pygithub-*.whl
+        # Install artifacts
+        python3 -m pip install -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         python3 "$GITHUB_ACTION_PATH/main.py"
       env:
