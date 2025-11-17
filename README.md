@@ -31,7 +31,7 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 
 ## Usage
 
-Create a new GitHub Actions workflow in your project, e.g. at [.github/workflows/commit-check.yml](.github/workflows/commit-check.yml)
+Create a new GitHub Actions workflow in your project, e.g., at [.github/workflows/commit-check.yml](.github/workflows/commit-check.yml)
 
 ```yaml
 name: Commit Check
