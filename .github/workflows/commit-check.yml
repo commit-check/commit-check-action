@@ -2,7 +2,7 @@ name: Commit Check
 
 on:
   pull_request:
-    branches: 'main'
+    branches: ['main']
   workflow_dispatch:
 
 jobs:
@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:  # use permissions because of use pr-comments
       contents: read
+      issues: read
       pull-requests: write
     steps:
       - uses: actions/checkout@v5

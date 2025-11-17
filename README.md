@@ -46,6 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:  # use permissions because use of pr-comments
       contents: read
+      issues: read
       pull-requests: write
     steps:
       - uses: actions/checkout@v5
@@ -123,7 +124,9 @@ jobs:
 - Default: `false`
 
 > [!IMPORTANT]
-> `pr-comments` is an experimental feature. By default, it's disabled. To use it, you need to set `GITHUB_TOKEN` in the GitHub Action.
+> `pr-comments` is an experimental feature. By default, it's disabled. To use it, you need to:
+> - Set `GITHUB_TOKEN` in the GitHub Action
+> - Add `issues: read` permission (required because PRs use the Issues API)
 >
 > This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
 
