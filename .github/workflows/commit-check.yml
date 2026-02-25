@@ -16,8 +16,6 @@ jobs:
         with:
           fetch-depth: 0  # Required for merge-base checks
       - uses: ./ # self test
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Needed for PR comments
         with:
           message: true
           branch: true

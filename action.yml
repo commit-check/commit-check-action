@@ -69,3 +69,4 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
+        GITHUB_TOKEN: ${{ github.token }}
