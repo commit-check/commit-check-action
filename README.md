@@ -52,8 +52,6 @@ jobs:
         with:
           fetch-depth: 0  # Required for merge-base checks
       - uses: commit-check/commit-check-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Needed for PR comments
         with:
           message: true
           branch: true
@@ -123,7 +121,7 @@ jobs:
 - Default: `false`
 
 > [!IMPORTANT]
-> `pr-comments` is an experimental feature. By default, it's disabled. To use it, you need to set `GITHUB_TOKEN` in the GitHub Action.
+> `pr-comments` is an experimental feature. By default, it's disabled.
 >
 > This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
 
