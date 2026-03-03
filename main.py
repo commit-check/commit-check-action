@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+import json
 import os
 import sys
 import subprocess
 import re
-from github import Github, Auth  # type: ignore
+from github import Github, Auth, GithubException  # type: ignore
 
 
 # Constants for message titles
@@ -96,9 +97,37 @@ def add_job_summary() -> int:
     return 0 if result_text is None else 1
 
 
+def is_fork_pr() -> bool:
+    """Returns True when the triggering PR originates from a forked repository."""
+    event_path = os.getenv("GITHUB_EVENT_PATH")
+    if not event_path:
+        return False
+    try:
+        with open(event_path, "r") as f:
+            event = json.load(f)
+        pr = event.get("pull_request", {})
+        head_full_name = pr.get("head", {}).get("repo", {}).get("full_name", "")
+        base_full_name = pr.get("base", {}).get("repo", {}).get("full_name", "")
+        return bool(head_full_name and base_full_name and head_full_name != base_full_name)
+    except Exception:
+        return False
+
+
 def add_pr_comments() -> int:
     """Posts the commit check result as a comment on the pull request."""
     if PR_COMMENTS == "false":
+        return 0
+
+    # Fork PRs triggered by the pull_request event receive a read-only token;
+    # the GitHub API will always reject comment writes with 403.
+    if is_fork_pr():
+        print(
+            "::warning::Skipping PR comment: pull requests from forked repositories "
+            "cannot write comments via the pull_request event (GITHUB_TOKEN is "
+            "read-only for forks). Use the pull_request_target event or the "
+            "two-workflow artifact pattern instead. "
+            "See https://github.com/commit-check/commit-check-action/issues/77"
+        )
         return 0
 
     try:
@@ -108,20 +137,18 @@ def add_pr_comments() -> int:
         if pr_number is not None:
             pr_number = pr_number.split("/")[-2]
         else:
-            # Handle the case where GITHUB_REF is not set
             raise ValueError("GITHUB_REF environment variable is not set")
 
-        # Initialize GitHub client
-        # Use new Auth API to avoid deprecation warning
         if not token:
             raise ValueError("GITHUB_TOKEN is not set")
+
         g = Github(auth=Auth.Token(token))
         repo = g.get_repo(repo_name)
         pull_request = repo.get_issue(int(pr_number))
 
         # Prepare comment content
         result_text = read_result_file()
-        pr_comments = (
+        pr_comment_body = (
             SUCCESS_TITLE
             if result_text is None
             else f"{FAILURE_TITLE}\n```\n{result_text}\n```"
@@ -129,40 +156,41 @@ def add_pr_comments() -> int:
 
         # Fetch all existing comments on the PR
         comments = pull_request.get_comments()
+        matching_comments = [
+            c
+            for c in comments
+            if c.body.startswith(SUCCESS_TITLE) or c.body.startswith(FAILURE_TITLE)
+        ]
 
-        # Track if we found a matching comment
-        matching_comments = []
-        last_comment = None
-
-        for comment in comments:
-            if comment.body.startswith(SUCCESS_TITLE) or comment.body.startswith(
-                FAILURE_TITLE
-            ):
-                matching_comments.append(comment)
         if matching_comments:
             last_comment = matching_comments[-1]
-
-            if last_comment.body == pr_comments:
+            if last_comment.body == pr_comment_body:
                 print(f"PR comment already up-to-date for PR #{pr_number}.")
                 return 0
-            else:
-                # If the last comment doesn't match, update it
-                print(f"Updating the last comment on PR #{pr_number}.")
-                last_comment.edit(pr_comments)
-
-            # Delete all older matching comments
+            print(f"Updating the last comment on PR #{pr_number}.")
+            last_comment.edit(pr_comment_body)
             for comment in matching_comments[:-1]:
                 print(f"Deleting an old comment on PR #{pr_number}.")
                 comment.delete()
         else:
-            # No matching comments, create a new one
             print(f"Creating a new comment on PR #{pr_number}.")
-            pull_request.create_comment(body=pr_comments)
+            pull_request.create_comment(body=pr_comment_body)
 
         return 0 if result_text is None else 1
+    except GithubException as e:
+        if e.status == 403:
+            print(
+                "::warning::Unable to post PR comment (403 Forbidden). "
+                "Ensure your workflow grants 'issues: write' permission. "
+                f"Error: {e.data.get('message', str(e))}",
+                file=sys.stderr,
+            )
+            return 0
+        print(f"Error posting PR comment: {e}", file=sys.stderr)
+        return 0
     except Exception as e:
         print(f"Error posting PR comment: {e}", file=sys.stderr)
-        return 1
+        return 0
 
 
 def log_error_and_exit(
