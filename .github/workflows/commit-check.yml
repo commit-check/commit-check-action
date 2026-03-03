@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Required for merge-base checks
-      - uses: ./ # self test
+      - uses: commit-check/commit-check-action@fix/post-comment-on-fork-repo
         with:
           message: true
           branch: true
