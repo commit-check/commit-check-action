@@ -108,7 +108,9 @@ def is_fork_pr() -> bool:
         pr = event.get("pull_request", {})
         head_full_name = pr.get("head", {}).get("repo", {}).get("full_name", "")
         base_full_name = pr.get("base", {}).get("repo", {}).get("full_name", "")
-        return bool(head_full_name and base_full_name and head_full_name != base_full_name)
+        return bool(
+            head_full_name and base_full_name and head_full_name != base_full_name
+        )
     except Exception:
         return False
 
