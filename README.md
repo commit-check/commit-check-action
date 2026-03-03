@@ -123,7 +123,7 @@ jobs:
 > [!IMPORTANT]
 > `pr-comments` is an experimental feature. By default, it's disabled.
 >
-> This feature currently doesn’t work with forked repositories. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
+> For forked repositories skip PR comment. For more details, refer to issue [#77](https://github.com/commit-check/commit-check-action/issues/77).
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check-action/blob/main/commit-check.toml). If you want to customize, just add your [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html) config file under your repository root directory.
 
