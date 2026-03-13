@@ -104,24 +104,24 @@ def run_commit_check() -> int:
                 # Non-PR context: let commit-check determine what to check from git.
                 command = ["commit-check", "--message"]
                 print(" ".join(command))
-                result = subprocess.run(
+                ret_code += subprocess.run(
                     command,
                     stdout=result_file,
                     stderr=subprocess.STDOUT,
+                    text=True,
                     check=False,
-                )
-                ret_code += result.returncode
+                ).returncode
 
         if other_args:
             command = ["commit-check"] + other_args
             print(" ".join(command))
-            result = subprocess.run(
+            ret_code += subprocess.run(
                 command,
                 stdout=result_file,
                 stderr=subprocess.STDOUT,
+                text=True,
                 check=False,
-            )
-            ret_code += result.returncode
+            ).returncode
 
     return ret_code
 
