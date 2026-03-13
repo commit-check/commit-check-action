@@ -35,35 +35,94 @@ def log_env_vars():
     print(f"PR_COMMENTS = {PR_COMMENTS}\n")
 
 
+def get_pr_commit_messages() -> list[str] | None:
+    """Get commit messages for all commits in a PR, excluding merge commits.
+
+    In a GitHub Actions PR context, HEAD points to an auto-generated merge commit
+    (refs/pull/{N}/merge), not the actual PR commits. This function retrieves the
+    real commit messages so they can be validated individually.
+
+    Returns None if not in a PR context or if no commits are found.
+    """
+    base_ref = os.getenv("GITHUB_BASE_REF", "")
+    if not base_ref:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "log",
+                "--no-merges",
+                f"origin/{base_ref}..HEAD",
+                "--format=%B%x00",
+                "--reverse",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        messages = [m.strip() for m in result.stdout.split("\x00") if m.strip()]
+        return messages if messages else None
+    except Exception:
+        return None
+
+
 def run_commit_check() -> int:
     """Runs the commit-check command and logs the result."""
-    args = [
-        "--message",
-        "--branch",
-        "--author-name",
-        "--author-email",
+    other_check_flags = [
+        ("--branch", BRANCH),
+        ("--author-name", AUTHOR_NAME),
+        ("--author-email", AUTHOR_EMAIL),
     ]
-    args = [
-        arg
-        for arg, value in zip(
-            args,
-            [
-                MESSAGE,
-                BRANCH,
-                AUTHOR_NAME,
-                AUTHOR_EMAIL,
-            ],
-        )
-        if value == "true"
-    ]
+    other_args = [arg for arg, value in other_check_flags if value == "true"]
 
-    command = ["commit-check"] + args
-    print(" ".join(command))
+    ret_code = 0
     with open("result.txt", "w") as result_file:
-        result = subprocess.run(
-            command, stdout=result_file, stderr=subprocess.PIPE, check=False
-        )
-        return result.returncode
+        if MESSAGE == "true":
+            commit_messages = get_pr_commit_messages()
+            if commit_messages:
+                # PR context: check each commit message individually to avoid
+                # only checking the auto-generated merge commit at HEAD.
+                for msg in commit_messages:
+                    command = ["commit-check", "--message"]
+                    print(" ".join(command))
+                    result = subprocess.run(
+                        command,
+                        input=msg,
+                        text=True,
+                        stdout=result_file,
+                        stderr=subprocess.STDOUT,
+                        check=False,
+                    )
+                    ret_code += result.returncode
+            else:
+                # Non-PR context: let commit-check determine what to check from git.
+                command = ["commit-check", "--message"]
+                print(" ".join(command))
+                result = subprocess.run(
+                    command,
+                    stdout=result_file,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                ret_code += result.returncode
+
+        if other_args:
+            command = ["commit-check"] + other_args
+            print(" ".join(command))
+            result = subprocess.run(
+                command,
+                stdout=result_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            ret_code += result.returncode
+
+    return ret_code
 
 
 def read_result_file() -> str | None:
