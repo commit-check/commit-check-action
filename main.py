@@ -45,6 +45,29 @@ def get_pr_commit_messages() -> list[str]:
     """
     if os.getenv("GITHUB_EVENT_NAME", "") != "pull_request":
         return []
+
+    # Verify HEAD is a merge commit with at least 2 parents before using HEAD^1..HEAD^2.
+    # A non-merge checkout (e.g. shallow fetch missing parents) would make the range query fail.
+    try:
+        parent_check = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD^2"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            check=False,
+        )
+        if parent_check.returncode != 0:
+            print(
+                "::warning::HEAD does not have a second parent; skipping per-commit "
+                "PR message validation. This is expected for non-merge checkouts or "
+                f"shallow fetches. Details: {parent_check.stderr.strip()}",
+                file=sys.stderr,
+            )
+            return []
+    except Exception as e:
+        print(f"::warning::Could not verify HEAD parents: {e}", file=sys.stderr)
+        return []
+
     try:
         result = subprocess.run(
             ["git", "log", "--pretty=format:%B%x00", "HEAD^1..HEAD^2"],
@@ -53,10 +76,15 @@ def get_pr_commit_messages() -> list[str]:
             encoding="utf-8",
             check=False,
         )
-        if result.returncode == 0 and result.stdout:
+        if result.returncode == 0:
             return [m.strip() for m in result.stdout.split("\x00") if m.strip()]
-    except Exception:
-        pass
+        print(
+            f"::warning::git log HEAD^1..HEAD^2 failed (exit {result.returncode}): "
+            f"{result.stderr.strip()}",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(f"::warning::Failed to retrieve PR commit messages: {e}", file=sys.stderr)
     return []
 
 
