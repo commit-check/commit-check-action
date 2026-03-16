@@ -36,6 +36,30 @@ def log_env_vars():
     print(f"PR_COMMENTS = {PR_COMMENTS}\n")
 
 
+def get_pr_commit_messages() -> list[str]:
+    """Get all commit messages for the current PR (pull_request event only).
+
+    In a pull_request event, actions/checkout checks out a synthetic merge
+    commit (HEAD = merge of PR branch into base). HEAD^1 is the base branch
+    tip, HEAD^2 is the PR branch tip. So HEAD^1..HEAD^2 gives all PR commits.
+    """
+    if os.getenv("GITHUB_EVENT_NAME", "") != "pull_request":
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "log", "--pretty=format:%B%x00", "HEAD^1..HEAD^2"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout:
+            return [m.strip() for m in result.stdout.split("\x00") if m.strip()]
+    except Exception:
+        pass
+    return []
+
+
 def run_commit_check() -> int:
     """Runs the commit-check command and logs the result."""
     args = [
@@ -58,9 +82,39 @@ def run_commit_check() -> int:
         if value == "true"
     ]
 
-    command = ["commit-check"] + args
-    print(" ".join(command))
+    total_rc = 0
     with open("result.txt", "w") as result_file:
+        if MESSAGE == "true":
+            pr_messages = get_pr_commit_messages()
+            if pr_messages:
+                # In PR context: check each commit message individually to avoid
+                # only validating the synthetic merge commit at HEAD.
+                for msg in pr_messages:
+                    result = subprocess.run(
+                        ["commit-check", "--message"],
+                        input=msg,
+                        stdout=result_file,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+                    total_rc += result.returncode
+
+                # Run non-message checks (branch, author) once
+                other_args = [a for a in args if a != "--message"]
+                if other_args:
+                    command = ["commit-check"] + other_args
+                    print(" ".join(command))
+                    result = subprocess.run(
+                        command, stdout=result_file, stderr=subprocess.PIPE, check=False
+                    )
+                    total_rc += result.returncode
+
+                return total_rc
+
+        # Non-PR context or message disabled: run all checks at once
+        command = ["commit-check"] + args
+        print(" ".join(command))
         result = subprocess.run(
             command, stdout=result_file, stderr=subprocess.PIPE, check=False
         )
