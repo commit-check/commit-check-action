@@ -105,20 +105,20 @@ def run_commit_check() -> int:
                 if other_args:
                     command = ["commit-check"] + other_args
                     print(" ".join(command))
-                    result = subprocess.run(
+                    other_result = subprocess.run(
                         command, stdout=result_file, stderr=subprocess.PIPE, check=False
                     )
-                    total_rc += result.returncode
+                    total_rc += other_result.returncode
 
                 return total_rc
 
         # Non-PR context or message disabled: run all checks at once
         command = ["commit-check"] + args
         print(" ".join(command))
-        result = subprocess.run(
+        default_result = subprocess.run(
             command, stdout=result_file, stderr=subprocess.PIPE, check=False
         )
-        return result.returncode
+        return default_result.returncode
 
 
 def read_result_file() -> str | None:
