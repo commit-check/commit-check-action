@@ -1,5 +1,6 @@
 # https://pre-commit.com/
 ci:
+    autofix_prs: true
     autofix_commit_msg: 'ci: auto fixes from pre-commit.com hooks'
     autoupdate_commit_msg: 'ci: pre-commit autoupdate'
 
