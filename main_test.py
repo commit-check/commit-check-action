@@ -1,4 +1,5 @@
 """Unit tests for main.py"""
+
 import io
 import json
 import os
@@ -16,7 +17,9 @@ import main  # noqa: E402
 class TestBuildCheckArgs(unittest.TestCase):
     def test_all_true(self):
         result = main.build_check_args("true", "true", "true", "true")
-        self.assertEqual(result, ["--message", "--branch", "--author-name", "--author-email"])
+        self.assertEqual(
+            result, ["--message", "--branch", "--author-name", "--author-email"]
+        )
 
     def test_all_false(self):
         result = main.build_check_args("false", "false", "false", "false")
@@ -62,7 +65,11 @@ class TestRunPrMessageChecks(unittest.TestCase):
         self.assertEqual(rc, 1)
 
     def test_multiple_messages_partial_failure(self):
-        results = [MagicMock(returncode=0), MagicMock(returncode=1), MagicMock(returncode=0)]
+        results = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
+        ]
         with patch("main.subprocess.run", side_effect=results):
             rc = main.run_pr_message_checks(["ok", "bad", "ok"], self._make_file())
         self.assertEqual(rc, 1)
@@ -125,7 +132,9 @@ class TestRunDefaultChecks(unittest.TestCase):
     def test_command_contains_all_args(self):
         mock_result = MagicMock(returncode=0)
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_default_checks(["--message", "--branch", "--author-name"], io.StringIO())
+            main.run_default_checks(
+                ["--message", "--branch", "--author-name"], io.StringIO()
+            )
         called_cmd = mock_run.call_args[0][0]
         self.assertEqual(
             called_cmd,
@@ -152,6 +161,7 @@ class TestRunCommitCheck(unittest.TestCase):
         # Ensure result.txt is written to a temp location
         self._orig_dir = os.getcwd()
         import tempfile
+
         self._tmpdir = tempfile.mkdtemp()
         os.chdir(self._tmpdir)
 
@@ -300,6 +310,7 @@ class TestGetPrCommitMessages(unittest.TestCase):
 class TestReadResultFile(unittest.TestCase):
     def setUp(self):
         import tempfile
+
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
         os.chdir(self._tmpdir)
@@ -335,6 +346,7 @@ class TestReadResultFile(unittest.TestCase):
 class TestAddJobSummary(unittest.TestCase):
     def setUp(self):
         import tempfile
+
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
         os.chdir(self._tmpdir)
@@ -387,6 +399,7 @@ class TestIsForkPr(unittest.TestCase):
 
     def test_same_repo_not_fork(self):
         import tempfile
+
         event = {
             "pull_request": {
                 "head": {"repo": {"full_name": "owner/repo"}},
@@ -403,6 +416,7 @@ class TestIsForkPr(unittest.TestCase):
 
     def test_different_repo_is_fork(self):
         import tempfile
+
         event = {
             "pull_request": {
                 "head": {"repo": {"full_name": "fork-owner/repo"}},
@@ -419,6 +433,7 @@ class TestIsForkPr(unittest.TestCase):
 
     def test_json_parse_failure_returns_false(self):
         import tempfile
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not valid json{{{")
             event_path = f.name
@@ -470,6 +485,7 @@ class TestLogErrorAndExit(unittest.TestCase):
 class TestMain(unittest.TestCase):
     def setUp(self):
         import tempfile
+
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
         os.chdir(self._tmpdir)

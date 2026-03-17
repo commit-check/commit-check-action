@@ -54,7 +54,9 @@ def get_pr_commit_messages() -> list[str]:
             check=False,
         )
         if result.returncode == 0 and result.stdout:
-            return [m.rstrip("\n") for m in result.stdout.split("\x00") if m.rstrip("\n")]
+            return [
+                m.rstrip("\n") for m in result.stdout.split("\x00") if m.rstrip("\n")
+            ]
     except Exception:
         pass
     return []
