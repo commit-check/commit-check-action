@@ -319,7 +319,7 @@ class TestReadResultFile(unittest.TestCase):
         os.chdir(self._orig_dir)
 
     def _write_result(self, content: str):
-        with open("result.txt", "w") as f:
+        with open("result.txt", "w", encoding="utf-8") as f:
             f.write(content)
 
     def test_empty_file_returns_none(self):
@@ -351,7 +351,8 @@ class TestAddJobSummary(unittest.TestCase):
         self._tmpdir = tempfile.mkdtemp()
         os.chdir(self._tmpdir)
         # Create an empty result.txt
-        open("result.txt", "w").close()
+        with open("result.txt", "w", encoding="utf-8"):
+            pass
 
     def tearDown(self):
         os.chdir(self._orig_dir)
@@ -370,7 +371,7 @@ class TestAddJobSummary(unittest.TestCase):
         ):
             rc = main.add_job_summary()
         self.assertEqual(rc, 0)
-        with open(summary_path) as f:
+        with open(summary_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn(main.SUCCESS_TITLE, content)
 
@@ -383,7 +384,7 @@ class TestAddJobSummary(unittest.TestCase):
         ):
             rc = main.add_job_summary()
         self.assertEqual(rc, 1)
-        with open(summary_path) as f:
+        with open(summary_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn(main.FAILURE_TITLE, content)
         self.assertIn("bad commit message", content)
@@ -489,7 +490,8 @@ class TestMain(unittest.TestCase):
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
         os.chdir(self._tmpdir)
-        open("result.txt", "w").close()
+        with open("result.txt", "w", encoding="utf-8"):
+            pass
 
     def tearDown(self):
         os.chdir(self._orig_dir)
