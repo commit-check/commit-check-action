@@ -60,28 +60,59 @@ def get_pr_commit_messages() -> list[str]:
     return []
 
 
+def build_check_args(
+    message: str, branch: str, author_name: str, author_email: str
+) -> list[str]:
+    """Maps 'true'/'false' flag values to CLI argument list."""
+    flags = ["--message", "--branch", "--author-name", "--author-email"]
+    values = [message, branch, author_name, author_email]
+    return [flag for flag, value in zip(flags, values) if value == "true"]
+
+
+def run_pr_message_checks(pr_messages: list[str], result_file) -> int:  # type: ignore[type-arg]
+    """Checks each PR commit message individually via commit-check --message.
+
+    Returns cumulative returncode across all messages.
+    """
+    total_rc = 0
+    for msg in pr_messages:
+        result = subprocess.run(
+            ["commit-check", "--message"],
+            input=msg,
+            stdout=result_file,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        total_rc += result.returncode
+    return total_rc
+
+
+def run_other_checks(args: list[str], result_file) -> int:  # type: ignore[type-arg]
+    """Runs non-message checks (branch, author) once. Returns 0 if args is empty."""
+    if not args:
+        return 0
+    command = ["commit-check"] + args
+    print(" ".join(command))
+    result = subprocess.run(
+        command, stdout=result_file, stderr=subprocess.PIPE, check=False
+    )
+    return result.returncode
+
+
+def run_default_checks(args: list[str], result_file) -> int:  # type: ignore[type-arg]
+    """Runs all checks at once (non-PR context or message disabled)."""
+    command = ["commit-check"] + args
+    print(" ".join(command))
+    result = subprocess.run(
+        command, stdout=result_file, stderr=subprocess.PIPE, check=False
+    )
+    return result.returncode
+
+
 def run_commit_check() -> int:
     """Runs the commit-check command and logs the result."""
-    args = [
-        "--message",
-        "--branch",
-        "--author-name",
-        "--author-email",
-    ]
-    args = [
-        arg
-        for arg, value in zip(
-            args,
-            [
-                MESSAGE,
-                BRANCH,
-                AUTHOR_NAME,
-                AUTHOR_EMAIL,
-            ],
-        )
-        if value == "true"
-    ]
-
+    args = build_check_args(MESSAGE, BRANCH, AUTHOR_NAME, AUTHOR_EMAIL)
     total_rc = 0
     with open("result.txt", "w") as result_file:
         if MESSAGE == "true":
@@ -89,36 +120,13 @@ def run_commit_check() -> int:
             if pr_messages:
                 # In PR context: check each commit message individually to avoid
                 # only validating the synthetic merge commit at HEAD.
-                for msg in pr_messages:
-                    result = subprocess.run(
-                        ["commit-check", "--message"],
-                        input=msg,
-                        stdout=result_file,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        check=False,
-                    )
-                    total_rc += result.returncode
-
-                # Run non-message checks (branch, author) once
+                total_rc += run_pr_message_checks(pr_messages, result_file)
                 other_args = [a for a in args if a != "--message"]
-                if other_args:
-                    command = ["commit-check"] + other_args
-                    print(" ".join(command))
-                    other_result = subprocess.run(
-                        command, stdout=result_file, stderr=subprocess.PIPE, check=False
-                    )
-                    total_rc += other_result.returncode
-
+                total_rc += run_other_checks(other_args, result_file)
                 return total_rc
-
         # Non-PR context or message disabled: run all checks at once
-        command = ["commit-check"] + args
-        print(" ".join(command))
-        default_result = subprocess.run(
-            command, stdout=result_file, stderr=subprocess.PIPE, check=False
-        )
-        return default_result.returncode
+        total_rc += run_default_checks(args, result_file)
+    return total_rc
 
 
 def read_result_file() -> str | None:
