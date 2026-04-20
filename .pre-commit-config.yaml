@@ -1,12 +1,12 @@
 # https://pre-commit.com/
 ci:
     autofix_prs: true
-    autofix_commit_msg: 'ci: auto fixes from pre-commit.com hooks'
-    autoupdate_commit_msg: 'ci: pre-commit autoupdate'
+    autofix_commit_msg: 'chore: auto fixes from pre-commit.com hooks'
+    autoupdate_commit_msg: 'chore: pre-commit autoupdate'
 
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
     -   id: check-yaml
     -   id: check-toml
@@ -15,15 +15,15 @@ repos:
     -   id: name-tests-test
     -   id: requirements-txt-fixer
 -   repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 24.10.0
+    rev: 26.3.1
     hooks:
       - id: black
 -   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.12.0
+    rev: v1.20.1
     hooks:
     -   id: mypy
 -   repo: https://github.com/codespell-project/codespell
-    rev: v2.3.0
+    rev: v2.4.2
     hooks:
     -   id: codespell
         args: [--ignore-words-list=assertin]

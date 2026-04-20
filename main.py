@@ -6,7 +6,6 @@ import subprocess
 import re
 from github import Github, Auth, GithubException  # type: ignore
 
-
 # Constants for message titles
 SUCCESS_TITLE = "# Commit-Check ✔️"
 FAILURE_TITLE = "# Commit-Check ❌"
