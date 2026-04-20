@@ -57,8 +57,11 @@ def get_pr_commit_messages() -> list[str]:
             return [
                 m.rstrip("\n") for m in result.stdout.split("\x00") if m.rstrip("\n")
             ]
-    except Exception:
-        pass
+    except Exception as e:
+        print(
+            f"::warning::Failed to retrieve PR commit messages: {e}",
+            file=sys.stderr,
+        )
     return []
 
 
@@ -74,9 +77,9 @@ def build_check_args(
 def run_pr_message_checks(pr_messages: list[str], result_file) -> int:  # type: ignore[type-arg]
     """Checks each PR commit message individually via commit-check --message.
 
-    Returns cumulative returncode across all messages.
+    Returns 1 if any message fails, 0 if all pass.
     """
-    total_rc = 0
+    has_failure = False
     for msg in pr_messages:
         result = subprocess.run(
             ["commit-check", "--message"],
@@ -86,8 +89,8 @@ def run_pr_message_checks(pr_messages: list[str], result_file) -> int:  # type: 
             text=True,
             check=False,
         )
-        total_rc += result.returncode
-    return total_rc
+        has_failure = has_failure or (result.returncode != 0)
+    return 1 if has_failure else 0
 
 
 def run_other_checks(args: list[str], result_file) -> int:  # type: ignore[type-arg]
@@ -97,7 +100,7 @@ def run_other_checks(args: list[str], result_file) -> int:  # type: ignore[type-
     command = ["commit-check"] + args
     print(" ".join(command))
     result = subprocess.run(
-        command, stdout=result_file, stderr=subprocess.PIPE, check=False
+        command, stdout=result_file, stderr=subprocess.PIPE, text=True, check=False
     )
     return result.returncode
 
@@ -107,7 +110,7 @@ def run_default_checks(args: list[str], result_file) -> int:  # type: ignore[typ
     command = ["commit-check"] + args
     print(" ".join(command))
     result = subprocess.run(
-        command, stdout=result_file, stderr=subprocess.PIPE, check=False
+        command, stdout=result_file, stderr=subprocess.PIPE, text=True, check=False
     )
     return result.returncode
 

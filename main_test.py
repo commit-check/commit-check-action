@@ -78,7 +78,7 @@ class TestRunPrMessageChecks(unittest.TestCase):
         results = [MagicMock(returncode=1), MagicMock(returncode=1)]
         with patch("main.subprocess.run", side_effect=results):
             rc = main.run_pr_message_checks(["bad1", "bad2"], self._make_file())
-        self.assertEqual(rc, 2)
+        self.assertEqual(rc, 1)
 
     def test_empty_list(self):
         with patch("main.subprocess.run") as mock_run:
@@ -191,11 +191,11 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_NAME", "false"),
             patch("main.AUTHOR_EMAIL", "false"),
             patch("main.get_pr_commit_messages", return_value=["bad msg"]),
-            patch("main.run_pr_message_checks", return_value=2),
+            patch("main.run_pr_message_checks", return_value=1),
             patch("main.run_other_checks", return_value=1),
         ):
             rc = main.run_commit_check()
-        self.assertEqual(rc, 3)
+        self.assertEqual(rc, 2)
 
     def test_non_pr_path_uses_default_checks(self):
         with (
