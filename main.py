@@ -156,19 +156,12 @@ def run_pr_message_checks(pr_messages: list[str], result_file: TextIO) -> int:
     """
     has_failure = False
     emitted_failure_output = False
-    total_messages = len(pr_messages)
-    for index, msg in enumerate(pr_messages, start=1):
-        subject = msg.splitlines()[0] if msg else "<empty commit message>"
+    for msg in pr_messages:
         command_args = ["--message"]
         if emitted_failure_output:
             command_args.append("--no-banner")
 
-        output_prefix = f"--- Commit {index}/{total_messages}: {subject}\n"
-        if emitted_failure_output:
-            output_prefix = (
-                f"{COMMIT_SECTION_SEPARATOR}"
-                f"--- Commit {index}/{total_messages}: {subject}\n"
-            )
+        output_prefix = COMMIT_SECTION_SEPARATOR if emitted_failure_output else None
 
         return_code = run_check_command(
             command_args,

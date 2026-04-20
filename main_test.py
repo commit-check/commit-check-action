@@ -101,13 +101,12 @@ class TestRunPrMessageChecks(unittest.TestCase):
         self.assertEqual(mock_run.call_args[1]["input"], "fix: something")
         self.assertEqual(result_file.getvalue(), "")
 
-    def test_failed_message_writes_header_and_output(self):
+    def test_failed_message_writes_output(self):
         mock_result = MagicMock(returncode=1, stdout="Commit rejected.\n")
         result_file = io.StringIO()
         with patch("main.subprocess.run", return_value=mock_result):
             rc = main.run_pr_message_checks(["fix: something"], result_file)
         self.assertEqual(rc, 1)
-        self.assertIn("--- Commit 1/1: fix: something", result_file.getvalue())
         self.assertIn("Commit rejected.", result_file.getvalue())
 
     def test_multiple_messages_partial_failure(self):
@@ -169,9 +168,9 @@ class TestRunPrMessageChecks(unittest.TestCase):
             )
 
         output = result_file.getvalue()
-        self.assertIn("--- Commit 2/3: bad second\nCommit rejected.\n", output)
+        self.assertIn("Commit rejected.\n", output)
         self.assertIn(
-            f"{main.COMMIT_SECTION_SEPARATOR}--- Commit 3/3: bad third\n",
+            f"{main.COMMIT_SECTION_SEPARATOR}Type subject_imperative check failed ==> bad third\n",
             output,
         )
         self.assertNotIn(
