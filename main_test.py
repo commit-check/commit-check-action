@@ -170,7 +170,7 @@ class TestRunPrMessageChecks(unittest.TestCase):
         output = result_file.getvalue()
         self.assertIn("Commit rejected.\n", output)
         self.assertIn(
-            f"{main.COMMIT_SECTION_SEPARATOR}Type subject_imperative check failed ==> bad third\n",
+            "\n--- Commit 3/3:\nType subject_imperative check failed ==> bad third\n",
             output,
         )
         self.assertNotIn(

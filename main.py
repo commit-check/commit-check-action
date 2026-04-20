@@ -156,12 +156,16 @@ def run_pr_message_checks(pr_messages: list[str], result_file: TextIO) -> int:
     """
     has_failure = False
     emitted_failure_output = False
-    for msg in pr_messages:
+    total = len(pr_messages)
+    for index, msg in enumerate(pr_messages, start=1):
         command_args = ["--message"]
         if emitted_failure_output:
             command_args.append("--no-banner")
 
-        output_prefix = COMMIT_SECTION_SEPARATOR if emitted_failure_output else None
+        if emitted_failure_output:
+            output_prefix = f"\n--- Commit {index}/{total}:\n"
+        else:
+            output_prefix = None
 
         return_code = run_check_command(
             command_args,
