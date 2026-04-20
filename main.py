@@ -10,6 +10,7 @@ from typing import TextIO
 SUCCESS_TITLE = "# Commit-Check ✔️"
 FAILURE_TITLE = "# Commit-Check ❌"
 COMMIT_MESSAGE_DELIMITER = "\x00"
+COMMIT_SECTION_SEPARATOR = "\n" + ("-" * 72) + "\n"
 
 # Environment variables
 MESSAGE = os.getenv("MESSAGE", "false")
@@ -156,12 +157,23 @@ def run_pr_message_checks(pr_messages: list[str], result_file: TextIO) -> int:
     total_messages = len(pr_messages)
     for index, msg in enumerate(pr_messages, start=1):
         subject = msg.splitlines()[0] if msg else "<empty commit message>"
+        command_args = ["--message"]
+        if index > 1:
+            command_args.append("--no-banner")
+
+        output_prefix = f"\n--- Commit {index}/{total_messages}: {subject}\n"
+        if index > 1:
+            output_prefix = (
+                f"{COMMIT_SECTION_SEPARATOR}"
+                f"--- Commit {index}/{total_messages}: {subject}\n"
+            )
+
         has_failure = (
             run_check_command(
-                ["--message"],
+                command_args,
                 result_file,
                 input_text=msg,
-                output_prefix=f"\n--- Commit {index}/{total_messages}: {subject}\n",
+                output_prefix=output_prefix,
             )
             != 0
             or has_failure
