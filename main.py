@@ -10,7 +10,7 @@ from typing import TextIO
 SUCCESS_TITLE = "# Commit-Check ✔️"
 FAILURE_TITLE = "# Commit-Check ❌"
 COMMIT_MESSAGE_DELIMITER = "\x00"
-COMMIT_SECTION_SEPARATOR = "\n" + ("-" * 72) + "\n"
+COMMIT_SECTION_SEPARATOR = "\n---\n"
 
 # Environment variables
 MESSAGE = os.getenv("MESSAGE", "false")
@@ -144,7 +144,8 @@ def run_check_command(
     if result.stdout:
         if output_prefix:
             result_file.write(output_prefix)
-        result_file.write(result.stdout)
+        result_file.write(result.stdout.rstrip("\n"))
+        result_file.write("\n")
     return result.returncode
 
 
@@ -154,30 +155,30 @@ def run_pr_message_checks(pr_messages: list[str], result_file: TextIO) -> int:
     Returns 1 if any message fails, 0 if all pass.
     """
     has_failure = False
+    emitted_failure_output = False
     total_messages = len(pr_messages)
     for index, msg in enumerate(pr_messages, start=1):
         subject = msg.splitlines()[0] if msg else "<empty commit message>"
         command_args = ["--message"]
-        if index > 1:
+        if emitted_failure_output:
             command_args.append("--no-banner")
 
-        output_prefix = f"\n--- Commit {index}/{total_messages}: {subject}\n"
-        if index > 1:
+        output_prefix = f"--- Commit {index}/{total_messages}: {subject}\n"
+        if emitted_failure_output:
             output_prefix = (
                 f"{COMMIT_SECTION_SEPARATOR}"
                 f"--- Commit {index}/{total_messages}: {subject}\n"
             )
 
-        has_failure = (
-            run_check_command(
-                command_args,
-                result_file,
-                input_text=msg,
-                output_prefix=output_prefix,
-            )
-            != 0
-            or has_failure
+        return_code = run_check_command(
+            command_args,
+            result_file,
+            input_text=msg,
+            output_prefix=output_prefix,
         )
+        if return_code != 0:
+            has_failure = True
+            emitted_failure_output = True
     return 1 if has_failure else 0
 
 

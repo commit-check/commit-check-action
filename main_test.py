@@ -126,38 +126,52 @@ class TestRunPrMessageChecks(unittest.TestCase):
         self.assertEqual(rc, 0)
         mock_run.assert_not_called()
 
-    def test_second_and_later_messages_use_no_banner(self):
+    def test_first_failure_keeps_banner_and_later_failures_use_no_banner(self):
         results = [
+            MagicMock(returncode=0, stdout=""),
             MagicMock(returncode=1, stdout="Commit rejected.\n"),
             MagicMock(returncode=1, stdout="Type subject_imperative check failed\n"),
         ]
         with patch("main.subprocess.run", side_effect=results) as mock_run:
-            main.run_pr_message_checks(["bad first", "bad second"], io.StringIO())
+            main.run_pr_message_checks(["ok first", "bad second", "bad third"], io.StringIO())
 
         self.assertEqual(
             mock_run.call_args_list[0][0][0], ["commit-check", "--message"]
         )
         self.assertEqual(
             mock_run.call_args_list[1][0][0],
+            ["commit-check", "--message"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[2][0][0],
             ["commit-check", "--message", "--no-banner"],
         )
 
-    def test_second_message_prefix_uses_separator(self):
+    def test_later_failure_prefix_uses_short_separator_without_extra_blank_lines(self):
         results = [
+            MagicMock(returncode=0, stdout=""),
             MagicMock(returncode=1, stdout="Commit rejected.\n"),
-            MagicMock(returncode=1, stdout="Type subject_imperative check failed\n"),
+            MagicMock(
+                returncode=1,
+                stdout=(
+                    "Type subject_imperative check failed ==> bad third\n"
+                    "Commit message should use imperative mood\n"
+                    "Suggest: Use imperative mood\n\n"
+                ),
+            ),
         ]
         result_file = io.StringIO()
         with patch("main.subprocess.run", side_effect=results):
-            main.run_pr_message_checks(["bad first", "bad second"], result_file)
+            main.run_pr_message_checks(["ok first", "bad second", "bad third"], result_file)
 
         output = result_file.getvalue()
-        self.assertIn("\n--- Commit 1/2: bad first\nCommit rejected.\n", output)
+        self.assertIn("--- Commit 2/3: bad second\nCommit rejected.\n", output)
         self.assertIn(
-            f"{main.COMMIT_SECTION_SEPARATOR}--- Commit 2/2: bad second\n",
+            f"{main.COMMIT_SECTION_SEPARATOR}--- Commit 3/3: bad third\n",
             output,
         )
-        self.assertIn("Type subject_imperative check failed\n", output)
+        self.assertNotIn("------------------------------------------------------------------------", output)
+        self.assertNotIn("\n\n\n", output)
 
 
 class TestRunOtherChecks(unittest.TestCase):
