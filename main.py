@@ -150,9 +150,10 @@ def run_pr_message_checks(pr_messages: list[str], result_file: TextIO) -> int:
     for index, msg in enumerate(pr_messages, start=1):
         subject = msg.splitlines()[0] if msg else "<empty commit message>"
         result_file.write(f"\n--- Commit {index}/{total_messages}: {subject}\n")
-        has_failure = run_check_command(
-            ["--message"], result_file, input_text=msg
-        ) != 0 or has_failure
+        has_failure = (
+            run_check_command(["--message"], result_file, input_text=msg) != 0
+            or has_failure
+        )
     return 1 if has_failure else 0
 
 
