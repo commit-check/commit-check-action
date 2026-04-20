@@ -333,7 +333,7 @@ class TestReadResultFile(unittest.TestCase):
         self.assertEqual(result, "some output")
 
     def test_ansi_codes_are_stripped(self):
-        self._write_result("\x1B[31mError\x1B[0m: bad commit")
+        self._write_result("\x1b[31mError\x1b[0m: bad commit")
         result = main.read_result_file()
         self.assertEqual(result, "Error: bad commit")
 
