@@ -62,28 +62,28 @@ class TestBuildCheckArgs(unittest.TestCase):
 
 
 class TestParseCommitMessages(unittest.TestCase):
-    def test_splits_messages_and_trims_trailing_newlines(self):
-        result = main.parse_commit_messages("fix: first\n\x00feat: second\n\n\x00")
+    def test_splits_messages_and_trims_surrounding_newlines(self):
+        result = main.parse_commit_messages("\nfix: first\n\x00\nfeat: second\n\n\x00")
         self.assertEqual(result, ["fix: first", "feat: second"])
 
 
 class TestRunCheckCommand(unittest.TestCase):
     def test_with_args_calls_subprocess(self):
-        mock_result = MagicMock(returncode=0)
+        mock_result = MagicMock(returncode=0, stdout="")
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
             rc = main.run_check_command(["--branch"], io.StringIO())
         self.assertEqual(rc, 0)
         self.assertEqual(mock_run.call_args[0][0], ["commit-check", "--branch"])
 
     def test_with_input_uses_text_mode(self):
-        mock_result = MagicMock(returncode=0)
+        mock_result = MagicMock(returncode=0, stdout="")
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
             main.run_check_command(["--message"], io.StringIO(), input_text="fix: demo")
         self.assertEqual(mock_run.call_args[1]["input"], "fix: demo")
         self.assertTrue(mock_run.call_args[1]["text"])
 
     def test_prints_command(self):
-        mock_result = MagicMock(returncode=0)
+        mock_result = MagicMock(returncode=0, stdout="")
         with patch("main.subprocess.run", return_value=mock_result):
             with patch("builtins.print") as mock_print:
                 main.run_check_command(["--branch"], io.StringIO())
@@ -92,20 +92,29 @@ class TestRunCheckCommand(unittest.TestCase):
 
 class TestRunPrMessageChecks(unittest.TestCase):
     def test_single_message_pass(self):
-        mock_result = MagicMock(returncode=0)
+        mock_result = MagicMock(returncode=0, stdout="")
         result_file = io.StringIO()
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
             rc = main.run_pr_message_checks(["fix: something"], result_file)
         self.assertEqual(rc, 0)
         self.assertEqual(mock_run.call_args[0][0], ["commit-check", "--message"])
         self.assertEqual(mock_run.call_args[1]["input"], "fix: something")
+        self.assertEqual(result_file.getvalue(), "")
+
+    def test_failed_message_writes_header_and_output(self):
+        mock_result = MagicMock(returncode=1, stdout="Commit rejected.\n")
+        result_file = io.StringIO()
+        with patch("main.subprocess.run", return_value=mock_result):
+            rc = main.run_pr_message_checks(["fix: something"], result_file)
+        self.assertEqual(rc, 1)
         self.assertIn("--- Commit 1/1: fix: something", result_file.getvalue())
+        self.assertIn("Commit rejected.", result_file.getvalue())
 
     def test_multiple_messages_partial_failure(self):
         results = [
-            MagicMock(returncode=0),
-            MagicMock(returncode=1),
-            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout=""),
+            MagicMock(returncode=1, stdout="Commit rejected.\n"),
+            MagicMock(returncode=0, stdout=""),
         ]
         with patch("main.subprocess.run", side_effect=results):
             rc = main.run_pr_message_checks(["ok", "bad", "ok"], io.StringIO())
@@ -126,7 +135,7 @@ class TestRunOtherChecks(unittest.TestCase):
         mock_run.assert_not_called()
 
     def test_with_args_returns_returncode(self):
-        mock_result = MagicMock(returncode=1)
+        mock_result = MagicMock(returncode=1, stdout="branch check failed\n")
         with patch("main.subprocess.run", return_value=mock_result):
             rc = main.run_other_checks(["--branch", "--author-name"], io.StringIO())
         self.assertEqual(rc, 1)
@@ -182,9 +191,7 @@ class TestGetPrCommitMessages(unittest.TestCase):
     def test_exception_returns_empty(self):
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch(
-                "main.get_messages_from_merge_ref", side_effect=Exception("git failed")
-            ),
+            patch("main.get_messages_from_merge_ref", side_effect=Exception("git failed")),
         ):
             result = main.get_pr_commit_messages()
         self.assertEqual(result, [])
@@ -192,9 +199,7 @@ class TestGetPrCommitMessages(unittest.TestCase):
 
 class TestGitMessageReaders(unittest.TestCase):
     def test_get_messages_from_merge_ref(self):
-        mock_result = MagicMock(
-            returncode=0, stdout="fix: first\n\x00feat: second\n\x00"
-        )
+        mock_result = MagicMock(returncode=0, stdout="fix: first\n\x00feat: second\n\x00")
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
             result = main.get_messages_from_merge_ref()
         self.assertEqual(result, ["fix: first", "feat: second"])
@@ -421,9 +426,7 @@ class TestIsForkPr(unittest.TestCase):
                 "base": {"repo": {"full_name": "owner/repo"}},
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as file_obj:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as file_obj:
             json.dump(event, file_obj)
             event_path = file_obj.name
         with patch.dict(os.environ, {"GITHUB_EVENT_PATH": event_path}):
@@ -440,9 +443,7 @@ class TestIsForkPr(unittest.TestCase):
                 "base": {"repo": {"full_name": "owner/repo"}},
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as file_obj:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as file_obj:
             json.dump(event, file_obj)
             event_path = file_obj.name
         with patch.dict(os.environ, {"GITHUB_EVENT_PATH": event_path}):

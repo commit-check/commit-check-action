@@ -55,9 +55,9 @@ def is_pr_event() -> bool:
 def parse_commit_messages(output: str) -> list[str]:
     """Split git log output into individual commit messages."""
     return [
-        message.rstrip("\n")
+        message.strip("\n")
         for message in output.split(COMMIT_MESSAGE_DELIMITER)
-        if message.rstrip("\n")
+        if message.strip("\n")
     ]
 
 
@@ -124,7 +124,10 @@ def get_pr_commit_messages() -> list[str]:
 
 
 def run_check_command(
-    args: list[str], result_file: TextIO, input_text: str | None = None
+    args: list[str],
+    result_file: TextIO,
+    input_text: str | None = None,
+    output_prefix: str | None = None,
 ) -> int:
     """Run commit-check and write both stdout and stderr to the result file."""
     command = ["commit-check"] + args
@@ -132,11 +135,15 @@ def run_check_command(
     result = subprocess.run(
         command,
         input=input_text,
-        stdout=result_file,
+        stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         check=False,
     )
+    if result.stdout:
+        if output_prefix:
+            result_file.write(output_prefix)
+        result_file.write(result.stdout)
     return result.returncode
 
 
@@ -149,11 +156,12 @@ def run_pr_message_checks(pr_messages: list[str], result_file: TextIO) -> int:
     total_messages = len(pr_messages)
     for index, msg in enumerate(pr_messages, start=1):
         subject = msg.splitlines()[0] if msg else "<empty commit message>"
-        result_file.write(f"\n--- Commit {index}/{total_messages}: {subject}\n")
-        has_failure = (
-            run_check_command(["--message"], result_file, input_text=msg) != 0
-            or has_failure
-        )
+        has_failure = run_check_command(
+            ["--message"],
+            result_file,
+            input_text=msg,
+            output_prefix=f"\n--- Commit {index}/{total_messages}: {subject}\n",
+        ) != 0 or has_failure
     return 1 if has_failure else 0
 
 
