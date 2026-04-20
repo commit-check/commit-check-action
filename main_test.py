@@ -133,7 +133,9 @@ class TestRunPrMessageChecks(unittest.TestCase):
             MagicMock(returncode=1, stdout="Type subject_imperative check failed\n"),
         ]
         with patch("main.subprocess.run", side_effect=results) as mock_run:
-            main.run_pr_message_checks(["ok first", "bad second", "bad third"], io.StringIO())
+            main.run_pr_message_checks(
+                ["ok first", "bad second", "bad third"], io.StringIO()
+            )
 
         self.assertEqual(
             mock_run.call_args_list[0][0][0], ["commit-check", "--message"]
@@ -162,7 +164,9 @@ class TestRunPrMessageChecks(unittest.TestCase):
         ]
         result_file = io.StringIO()
         with patch("main.subprocess.run", side_effect=results):
-            main.run_pr_message_checks(["ok first", "bad second", "bad third"], result_file)
+            main.run_pr_message_checks(
+                ["ok first", "bad second", "bad third"], result_file
+            )
 
         output = result_file.getvalue()
         self.assertIn("--- Commit 2/3: bad second\nCommit rejected.\n", output)
@@ -170,7 +174,10 @@ class TestRunPrMessageChecks(unittest.TestCase):
             f"{main.COMMIT_SECTION_SEPARATOR}--- Commit 3/3: bad third\n",
             output,
         )
-        self.assertNotIn("------------------------------------------------------------------------", output)
+        self.assertNotIn(
+            "------------------------------------------------------------------------",
+            output,
+        )
         self.assertNotIn("\n\n\n", output)
 
 
