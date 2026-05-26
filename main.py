@@ -11,8 +11,8 @@ SUCCESS_TITLE = "# Commit-Check ✔️"
 FAILURE_TITLE = "# Commit-Check ❌"
 STAR_CTA = (
     "\n---\n"
-    "<p align=\"center\">\n"
-    "  ⭐ <strong><a href=\"https://github.com/commit-check/commit-check-action\">"
+    '<p align="center">\n'
+    '  ⭐ <strong><a href="https://github.com/commit-check/commit-check-action">'
     "Star commit-check/commit-check-action</a>"
     " &mdash; if this saved you time, help others find it!</strong>\n"
     "</p>\n"
