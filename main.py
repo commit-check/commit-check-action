@@ -9,6 +9,14 @@ from typing import TextIO
 # Constants for message titles
 SUCCESS_TITLE = "# Commit-Check ✔️"
 FAILURE_TITLE = "# Commit-Check ❌"
+STAR_CTA = (
+    "\n---\n"
+    "<p align=\"center\">\n"
+    "  ⭐ <strong><a href=\"https://github.com/commit-check/commit-check-action\">"
+    "Star commit-check/commit-check-action</a>"
+    " &mdash; if this saved you time, help others find it!</strong>\n"
+    "</p>\n"
+)
 COMMIT_MESSAGE_DELIMITER = "\x00"
 COMMIT_SECTION_SEPARATOR = "\n---\n"
 
@@ -228,8 +236,8 @@ def read_result_file() -> str | None:
 def build_result_body(result_text: str | None) -> str:
     """Create the human-readable result body used in summaries and PR comments."""
     if result_text is None:
-        return SUCCESS_TITLE
-    return f"{FAILURE_TITLE}\n```\n{result_text}\n```"
+        return f"{SUCCESS_TITLE}\n{STAR_CTA}"
+    return f"{FAILURE_TITLE}\n```\n{result_text}\n```\n{STAR_CTA}"
 
 
 def add_job_summary() -> int:
