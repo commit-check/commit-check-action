@@ -439,32 +439,249 @@ class TestAddJobSummary(unittest.TestCase):
             rc = main.add_job_summary()
         self.assertEqual(rc, 0)
 
-    def test_success_writes_success_title(self):
+    def test_success_writes_policy_report(self):
         summary_path = os.path.join(self._tmpdir, "summary.txt")
         with (
             patch("main.JOB_SUMMARY_ENABLED", True),
             patch("main.GITHUB_STEP_SUMMARY", summary_path),
             patch("main.read_result_file", return_value=None),
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", True),
         ):
             rc = main.add_job_summary()
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn(main.SUCCESS_TITLE, content)
+        self.assertIn("# Commit Check Policy Report", content)
+        self.assertIn("Commit message | ✅ Pass", content)
+        self.assertIn("Branch naming | ✅ Pass", content)
+        self.assertIn("### ✅ All checks passed", content)
 
-    def test_failure_writes_failure_title(self):
+    def test_failure_writes_policy_report(self):
         summary_path = os.path.join(self._tmpdir, "summary.txt")
         with (
             patch("main.JOB_SUMMARY_ENABLED", True),
             patch("main.GITHUB_STEP_SUMMARY", summary_path),
             patch("main.read_result_file", return_value="bad commit message"),
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", True),
+            patch("main.determine_check_results") as mock_determine,
         ):
+            from dataclasses import dataclass
+
+            mock_determine.return_value = [
+                main.CheckResult("Commit message", False),
+                main.CheckResult("Branch naming", True),
+            ]
             rc = main.add_job_summary()
         self.assertEqual(rc, 1)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn(main.FAILURE_TITLE, content)
+        self.assertIn("# Commit Check Policy Report", content)
+        self.assertIn("Commit message | ❌ Fail", content)
+        self.assertIn("Branch naming | ✅ Pass", content)
+        self.assertIn("### ❌ Some checks failed", content)
         self.assertIn("bad commit message", content)
+
+
+class TestRunCheckJson(unittest.TestCase):
+    def test_pass_returns_empty_checks(self):
+        mock_result = MagicMock(returncode=0, stdout='{"status": "pass", "checks": []}')
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            rc, data = main.run_check_json("--message")
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "pass")
+        call_args = mock_run.call_args[0][0]
+        self.assertIn("--format", call_args)
+        self.assertIn("json", call_args)
+        self.assertIn("--no-banner", call_args)
+
+    def test_fail_returns_failed_checks(self):
+        mock_result = MagicMock(
+            returncode=1,
+            stdout='{"status": "fail", "checks": [{"check": "message", "status": "fail", "value": "bad", "error": "Bad msg", "suggest": "Fix it"}]}',
+        )
+        with patch("main.subprocess.run", return_value=mock_result):
+            rc, data = main.run_check_json("--message")
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "fail")
+        self.assertEqual(len(data["checks"]), 1)
+
+    def test_passes_input_text_to_stdin(self):
+        mock_result = MagicMock(returncode=0, stdout="{}")
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            main.run_check_json("--message", input_text="fix: test")
+        self.assertEqual(mock_run.call_args[1]["input"], "fix: test")
+
+    def test_empty_stdout_treated_as_pass(self):
+        mock_result = MagicMock(returncode=0, stdout="")
+        with patch("main.subprocess.run", return_value=mock_result):
+            rc, data = main.run_check_json("--branch")
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "pass")
+
+    def test_invalid_json_treated_as_fail(self):
+        mock_result = MagicMock(returncode=1, stdout="not json")
+        with patch("main.subprocess.run", return_value=mock_result):
+            rc, data = main.run_check_json("--branch")
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "fail")
+
+
+class TestGetPolicyFile(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self._orig_dir = os.getcwd()
+        self._tmpdir = tempfile.mkdtemp()
+        os.chdir(self._tmpdir)
+
+    def tearDown(self):
+        os.chdir(self._orig_dir)
+
+    def test_finds_commit_check_toml(self):
+        with open("commit-check.toml", "w") as f:
+            f.write("[commit]\n")
+        self.assertEqual(main.get_policy_file(), "commit-check.toml")
+
+    def test_finds_cchk_toml(self):
+        with open("cchk.toml", "w") as f:
+            f.write("[commit]\n")
+        self.assertEqual(main.get_policy_file(), "cchk.toml")
+
+    def test_prefers_commit_check_toml_over_cchk(self):
+        with open("commit-check.toml", "w") as f:
+            f.write("[commit]\n")
+        with open("cchk.toml", "w") as f:
+            f.write("[commit]\n")
+        self.assertEqual(main.get_policy_file(), "commit-check.toml")
+
+    def test_returns_default_when_no_config(self):
+        self.assertEqual(main.get_policy_file(), "commit-check.toml (default)")
+
+
+class TestBuildPolicyReport(unittest.TestCase):
+    def test_all_pass_report(self):
+        results = [
+            main.CheckResult("Commit message", True),
+            main.CheckResult("Branch naming", True),
+        ]
+        report = main.build_policy_report(results)
+        self.assertIn("# Commit Check Policy Report", report)
+        self.assertIn("Commit message | ✅ Pass", report)
+        self.assertIn("Branch naming | ✅ Pass", report)
+        self.assertIn("### ✅ All checks passed", report)
+        self.assertNotIn("❌", report)
+
+    def test_mixed_result_report(self):
+        results = [
+            main.CheckResult("Commit message", False),
+            main.CheckResult("Branch naming", True),
+        ]
+        report = main.build_policy_report(results)
+        self.assertIn("Commit message | ❌ Fail", report)
+        self.assertIn("Branch naming | ✅ Pass", report)
+        self.assertIn("### ❌ Some checks failed", report)
+
+    def test_includes_repository_and_policy_file(self):
+        with patch.dict(
+            os.environ,
+            {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_EVENT_NAME": "push"},
+        ):
+            results = [main.CheckResult("Commit message", True)]
+            report = main.build_policy_report(results)
+        self.assertIn("`owner/repo`", report)
+        self.assertIn("`push`", report)
+
+    def test_empty_results_shows_all_pass(self):
+        report = main.build_policy_report([])
+        self.assertIn("### ✅ All checks passed", report)
+
+
+class TestBuildPassResults(unittest.TestCase):
+    def test_all_disabled_returns_empty(self):
+        with (
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+        ):
+            results = main.build_pass_results()
+        self.assertEqual(results, [])
+
+    def test_message_and_branch_enabled(self):
+        with (
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", True),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+        ):
+            results = main.build_pass_results()
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(r.passed for r in results))
+        labels = [r.label for r in results]
+        self.assertIn("Commit message", labels)
+        self.assertIn("Branch naming", labels)
+
+
+class TestDetermineCheckResults(unittest.TestCase):
+    def test_all_checks_pass(self):
+        with (
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", True),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.get_pr_commit_messages", return_value=[]),
+            patch("main.run_check_json", return_value=(0, {"status": "pass"})),
+        ):
+            results = main.determine_check_results()
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(r.passed for r in results))
+
+    def test_message_fails_branch_passes(self):
+        call_count = [0]
+
+        def mock_run_json(flag, input_text=None):
+            call_count[0] += 1
+            if flag == "--message":
+                return 1, {"status": "fail"}
+            return 0, {"status": "pass"}
+
+        with (
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", True),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.get_pr_commit_messages", return_value=[]),
+            patch("main.run_check_json", side_effect=mock_run_json),
+        ):
+            results = main.determine_check_results()
+        self.assertEqual(len(results), 2)
+        self.assertFalse(results[0].passed)  # message
+        self.assertTrue(results[1].passed)  # branch
+
+    def test_pr_context_checks_all_messages(self):
+        with (
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch(
+                "main.get_pr_commit_messages",
+                return_value=["fix: one", "bad two", "feat: three"],
+            ),
+            patch("main.run_check_json") as mock_run,
+        ):
+            # Second message fails
+            mock_run.side_effect = [
+                (0, {"status": "pass"}),  # fix: one
+                (1, {"status": "fail"}),  # bad two  <-- fails here, stops
+            ]
+            results = main.determine_check_results()
+        # Should have stopped after first failure
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].passed)
+        self.assertEqual(mock_run.call_count, 2)
 
 
 class TestIsForkPr(unittest.TestCase):

@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from typing import TextIO
 
 # Constants for message titles
@@ -11,6 +12,14 @@ SUCCESS_TITLE = "# Commit-Check ✔️"
 FAILURE_TITLE = "# Commit-Check ❌"
 COMMIT_MESSAGE_DELIMITER = "\x00"
 COMMIT_SECTION_SEPARATOR = "\n---\n"
+
+# Map CLI flags to human-readable check labels for the policy report
+CHECK_LABEL_MAP = {
+    "--message": "Commit message",
+    "--branch": "Branch naming",
+    "--author-name": "Author name",
+    "--author-email": "Author email",
+}
 
 # Environment variables
 MESSAGE = os.getenv("MESSAGE", "false")
@@ -232,17 +241,155 @@ def build_result_body(result_text: str | None) -> str:
     return f"{FAILURE_TITLE}\n```\n{result_text}\n```"
 
 
+@dataclass
+class CheckResult:
+    """Per-check result for the policy report."""
+
+    label: str
+    passed: bool
+
+
+def run_check_json(flag: str, input_text: str | None = None) -> tuple[int, dict]:
+    """Run commit-check with --format json and return (returncode, parsed_json)."""
+    command = ["commit-check", flag, "--format", "json", "--no-banner"]
+    result = subprocess.run(
+        command,
+        input=input_text,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    try:
+        data = (
+            json.loads(result.stdout)
+            if result.stdout.strip()
+            else {"status": "pass", "checks": []}
+        )
+    except json.JSONDecodeError:
+        data = {"status": "fail", "checks": []}
+    return result.returncode, data
+
+
+def get_policy_file() -> str:
+    """Detect which commit-check config file exists in the repository."""
+    for filename in ["commit-check.toml", "cchk.toml", ".commit-check.yml"]:
+        if os.path.exists(filename):
+            return filename
+    return "commit-check.toml (default)"
+
+
+def _run_all_message_checks(pr_messages: list[str]) -> bool:
+    """Check all PR commit messages individually via JSON.
+
+    Returns True if all messages pass, False if any fails.
+    """
+    for msg in pr_messages:
+        rc, _ = run_check_json("--message", input_text=msg)
+        if rc != 0:
+            return False
+    return True
+
+
+def determine_check_results() -> list[CheckResult]:
+    """Run each enabled check with --format json to determine per-check pass/fail."""
+    results: list[CheckResult] = []
+
+    if MESSAGE_ENABLED:
+        pr_messages = get_pr_commit_messages()
+        if pr_messages:
+            passed = _run_all_message_checks(pr_messages)
+        else:
+            rc, _ = run_check_json("--message")
+            passed = rc == 0
+        results.append(CheckResult("Commit message", passed))
+
+    if BRANCH_ENABLED:
+        rc, _ = run_check_json("--branch")
+        results.append(CheckResult("Branch naming", rc == 0))
+
+    if AUTHOR_NAME_ENABLED:
+        rc, _ = run_check_json("--author-name")
+        results.append(CheckResult("Author name", rc == 0))
+
+    if AUTHOR_EMAIL_ENABLED:
+        rc, _ = run_check_json("--author-email")
+        results.append(CheckResult("Author email", rc == 0))
+
+    return results
+
+
+def build_pass_results() -> list[CheckResult]:
+    """Build all-pass results for enabled checks (shortcut for success case)."""
+    results: list[CheckResult] = []
+    if MESSAGE_ENABLED:
+        results.append(CheckResult("Commit message", True))
+    if BRANCH_ENABLED:
+        results.append(CheckResult("Branch naming", True))
+    if AUTHOR_NAME_ENABLED:
+        results.append(CheckResult("Author name", True))
+    if AUTHOR_EMAIL_ENABLED:
+        results.append(CheckResult("Author email", True))
+    return results
+
+
+def build_policy_report(results: list[CheckResult]) -> str:
+    """Build a structured compliance report in Markdown format."""
+    repo = os.getenv("GITHUB_REPOSITORY", "unknown")
+    policy_file = get_policy_file()
+    event = os.getenv("GITHUB_EVENT_NAME", "unknown")
+
+    lines = [
+        "# Commit Check Policy Report",
+        "",
+        f"**Repository**: `{repo}`  ",
+        f"**Policy file**: `{policy_file}`  ",
+        f"**Trigger**: `{event}`  ",
+        "",
+        "| Check | Result |",
+        "|---|---|",
+    ]
+
+    all_passed = True
+    for r in results:
+        status = "✅ Pass" if r.passed else "❌ Fail"
+        if not r.passed:
+            all_passed = False
+        lines.append(f"| {r.label} | {status} |")
+
+    lines.append("")
+    if all_passed:
+        lines.append("### ✅ All checks passed")
+    else:
+        lines.append("### ❌ Some checks failed")
+
+    return "\n".join(lines)
+
+
 def add_job_summary() -> int:
     """Adds the commit check result to the GitHub job summary."""
     if not JOB_SUMMARY_ENABLED:
         return 0
 
     result_text = read_result_file()
+    overall_pass = result_text is None
+
+    if overall_pass:
+        report_results = build_pass_results()
+    else:
+        report_results = determine_check_results()
+
+    report = build_policy_report(report_results)
 
     with open(GITHUB_STEP_SUMMARY, "a") as summary_file:
-        summary_file.write(build_result_body(result_text))
+        summary_file.write(report)
+        if result_text:
+            summary_file.write(
+                "\n\n<details>\n<summary>Details</summary>\n\n```\n"
+                f"{result_text}\n```\n</details>\n"
+            )
 
-    return 0 if result_text is None else 1
+    return 0 if overall_pass else 1
 
 
 def is_fork_pr() -> bool:
