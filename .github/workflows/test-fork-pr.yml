@@ -1,0 +1,22 @@
+name: Test Fork PR
+
+on:
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: commit-check/commit-check-action@feature/fork-pr-comments-workflow-run
+        with:
+          message: true
+          branch: true
+          pr-comments: true
+          job-summary: true
