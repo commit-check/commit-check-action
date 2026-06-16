@@ -315,7 +315,7 @@ def add_pr_comments() -> int:
             "Skipping PR comment: pull requests from forked repositories "
             "cannot write comments via the pull_request event (GITHUB_TOKEN is "
             "read-only for forks). "
-            "See https://github.com/commit-check/commit-check-action#fork-pr-comments "
+            "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md "
             "for how to enable PR comments on fork PRs."
         )
         print(f"::warning::{msg}")
@@ -329,7 +329,7 @@ def add_pr_comments() -> int:
                     "read-only permissions.\n\n"
                     "> **\U0001f4a1 Tip:** To enable PR comments on fork PRs, see "
                     "[Enabling PR Comments on Fork Pull Requests]"
-                    "(https://github.com/commit-check/commit-check-action#fork-pr-comments).\n"
+                    "(https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md).\n"
                 )
         return 0
 
