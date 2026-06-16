@@ -290,12 +290,16 @@ def get_pr_number() -> int:
         try:
             with open(event_path, "r") as f:
                 event = json.load(f)
-            number = event.get("number") or (event.get("pull_request", {}) or {}).get("number")
+            number = event.get("number") or (event.get("pull_request", {}) or {}).get(
+                "number"
+            )
             if number:
                 return int(number)
         except Exception:
             pass
-    raise ValueError("Unable to determine PR number from GITHUB_REF or GITHUB_EVENT_PATH")
+    raise ValueError(
+        "Unable to determine PR number from GITHUB_REF or GITHUB_EVENT_PATH"
+    )
 
 
 def add_pr_comments() -> int:
