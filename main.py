@@ -20,6 +20,7 @@ AUTHOR_EMAIL = os.getenv("AUTHOR_EMAIL", "false")
 DRY_RUN = os.getenv("DRY_RUN", "false")
 JOB_SUMMARY = os.getenv("JOB_SUMMARY", "false")
 PR_COMMENTS = os.getenv("PR_COMMENTS", "false")
+PR_TITLE = os.getenv("PR_TITLE", "false")
 GITHUB_STEP_SUMMARY = os.environ["GITHUB_STEP_SUMMARY"]
 
 
@@ -35,6 +36,7 @@ AUTHOR_EMAIL_ENABLED = env_flag("AUTHOR_EMAIL")
 DRY_RUN_ENABLED = env_flag("DRY_RUN")
 JOB_SUMMARY_ENABLED = env_flag("JOB_SUMMARY")
 PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
+PR_TITLE_ENABLED = env_flag("PR_TITLE")
 
 
 def log_env_vars():
@@ -45,12 +47,31 @@ def log_env_vars():
     print(f"AUTHOR_EMAIL = {AUTHOR_EMAIL}")
     print(f"DRY_RUN = {DRY_RUN}")
     print(f"JOB_SUMMARY = {JOB_SUMMARY}")
-    print(f"PR_COMMENTS = {PR_COMMENTS}\n")
+    print(f"PR_COMMENTS = {PR_COMMENTS}")
+    print(f"PR_TITLE = {PR_TITLE}\n")
 
 
 def is_pr_event() -> bool:
     """Return whether the workflow was triggered by a PR-style event."""
     return os.getenv("GITHUB_EVENT_NAME", "") in {"pull_request", "pull_request_target"}
+
+
+def get_pr_title() -> str | None:
+    """Read PR title from GitHub event payload."""
+    if not is_pr_event():
+        return None
+    event_path = os.getenv("GITHUB_EVENT_PATH")
+    if not event_path:
+        return None
+    try:
+        with open(event_path, "r") as f:
+            event = json.load(f)
+        return event.get("pull_request", {}).get("title")
+    except Exception as e:
+        print(
+            f"::warning::Failed to read PR title from event: {e}", file=sys.stderr
+        )
+        return None
 
 
 def parse_commit_messages(output: str) -> list[str]:
@@ -149,13 +170,23 @@ def run_check_command(
     return result.returncode
 
 
-def run_pr_message_checks(pr_messages: list[str], result_file: TextIO) -> int:
+def run_pr_message_checks(
+    pr_messages: list[str],
+    result_file: TextIO,
+    initial_emitted: bool = False,
+) -> int:
     """Checks each PR commit message individually via commit-check --message.
+
+    Parameters
+    ----------
+    initial_emitted : bool
+        Whether another check (e.g. PR title) has already produced banner output,
+        so the first failing commit should use --no-banner.
 
     Returns 1 if any message fails, 0 if all pass.
     """
     has_failure = False
-    emitted_failure_output = False
+    emitted_failure_output = initial_emitted
     total = len(pr_messages)
     for index, msg in enumerate(pr_messages, start=1):
         command_args = ["--message"]
@@ -198,20 +229,59 @@ def build_check_args() -> list[str]:
 
 
 def run_commit_check() -> int:
-    """Runs the commit-check command and logs the result."""
+    """Runs all enabled checks and returns the overall exit code.
+
+    Checks are evaluated in order:
+      1. PR title (when ``pr-title: true`` and in a PR event)
+      2. Individual PR commit messages (when ``message: true`` and in a PR event)
+      3. All remaining checks (branch, author name/email, etc.)
+
+    Outside of a PR event all enabled checks are handed to the CLI at once.
+    """
     args = build_check_args()
+    exit_code = 0
+    emitted_failure_output = False
+
     with open("result.txt", "w") as result_file:
+        # ---- 1. PR title check ------------------------------------------------
+        if PR_TITLE_ENABLED and is_pr_event():
+            pr_title = get_pr_title()
+            if pr_title:
+                cmd_args = ["--message"]
+                output_prefix = None
+                if emitted_failure_output:
+                    cmd_args.append("--no-banner")
+                    output_prefix = "\n---\n# PR Title\n"
+                rc = run_check_command(
+                    cmd_args,
+                    result_file,
+                    input_text=pr_title,
+                    output_prefix=output_prefix,
+                )
+                if rc != 0:
+                    exit_code = max(exit_code, rc)
+                    emitted_failure_output = True
+
+        # ---- 2. Commit message checks -----------------------------------------
         if MESSAGE_ENABLED:
             pr_messages = get_pr_commit_messages()
             if pr_messages:
-                # In PR context: check each commit message individually to avoid
+                # In PR context: check each commit individually to avoid
                 # only validating the synthetic merge commit at HEAD.
-                message_rc = run_pr_message_checks(pr_messages, result_file)
-                other_args = [a for a in args if a != "--message"]
-                other_rc = run_other_checks(other_args, result_file)
-                return 1 if message_rc or other_rc else 0
-        # Non-PR context or message disabled: run all checks at once
-        return 1 if run_check_command(args, result_file) else 0
+                rc = run_pr_message_checks(
+                    pr_messages, result_file, initial_emitted=emitted_failure_output
+                )
+                if rc != 0:
+                    exit_code = max(exit_code, rc)
+                args = [a for a in args if a != "--message"]
+
+        # ---- 3. Remaining checks (branch, author, etc.) -----------------------
+        if args:
+            rc = run_other_checks(args, result_file)
+            if rc != 0:
+                exit_code = max(exit_code, rc)
+
+    return 1 if exit_code else 0
 
 
 def read_result_file() -> str | None:

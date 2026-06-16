@@ -67,6 +67,70 @@ class TestParseCommitMessages(unittest.TestCase):
         self.assertEqual(result, ["fix: first", "feat: second"])
 
 
+class TestGetPrTitle(unittest.TestCase):
+    def test_non_pr_event_returns_none(self):
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
+            self.assertIsNone(main.get_pr_title())
+
+    def test_pr_event_returns_title(self):
+        import tempfile
+
+        event = {
+            "pull_request": {"title": "feat: add login page"},
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            json.dump(event, f)
+            event_path = f.name
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event_path}),
+        ):
+            self.assertEqual(main.get_pr_title(), "feat: add login page")
+        os.unlink(event_path)
+
+    def test_pull_request_target_event(self):
+        import tempfile
+
+        event = {
+            "pull_request": {"title": "fix: resolve timeout"},
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            json.dump(event, f)
+            event_path = f.name
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_EVENT_PATH": event_path}),
+        ):
+            self.assertEqual(main.get_pr_title(), "fix: resolve timeout")
+        os.unlink(event_path)
+
+    def test_missing_event_path_returns_none(self):
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            os.environ["GITHUB_EVENT_NAME"] = "pull_request"
+            os.environ.pop("GITHUB_EVENT_PATH", None)
+            self.assertIsNone(main.get_pr_title())
+
+    def test_invalid_json_returns_none(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            f.write("not valid json")
+            event_path = f.name
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event_path}),
+            patch("builtins.print"),
+        ):
+            self.assertIsNone(main.get_pr_title())
+        os.unlink(event_path)
+
+
 class TestRunCheckCommand(unittest.TestCase):
     def test_with_args_calls_subprocess(self):
         mock_result = MagicMock(returncode=0, stdout="")
@@ -146,6 +210,32 @@ class TestRunPrMessageChecks(unittest.TestCase):
         self.assertEqual(
             mock_run.call_args_list[2][0][0],
             ["commit-check", "--message", "--no-banner"],
+        )
+
+    def test_initial_emitted_suppresses_banner_for_first_failure(self):
+        results = [
+            MagicMock(returncode=1, stdout="Commit rejected.\n"),
+        ]
+        with patch("main.subprocess.run", side_effect=results) as mock_run:
+            main.run_pr_message_checks(
+                ["bad commit"], io.StringIO(), initial_emitted=True
+            )
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["commit-check", "--message", "--no-banner"],
+        )
+
+    def test_initial_not_emitted_allows_banner(self):
+        results = [
+            MagicMock(returncode=1, stdout="Commit rejected.\n"),
+        ]
+        with patch("main.subprocess.run", side_effect=results) as mock_run:
+            main.run_pr_message_checks(
+                ["bad commit"], io.StringIO(), initial_emitted=False
+            )
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["commit-check", "--message"],
         )
 
     def test_later_failure_prefix_uses_short_separator_without_extra_blank_lines(self):
@@ -321,6 +411,75 @@ class TestRunCommitCheck(unittest.TestCase):
         ):
             rc = main.run_commit_check()
         self.assertEqual(rc, 1)
+
+    def test_pr_title_check_runs_when_enabled(self):
+        with (
+            patch("main.PR_TITLE_ENABLED", True),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_title", return_value="feat: a feature"),
+            patch("main.run_check_command", return_value=0) as mock_cmd,
+            patch("main.run_other_checks", return_value=0),
+        ):
+            rc = main.run_commit_check()
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            mock_cmd.call_args[0][0], ["--message"],
+        )
+        self.assertEqual(mock_cmd.call_args[1]["input_text"], "feat: a feature")
+
+    def test_pr_title_failure_propagates(self):
+        with (
+            patch("main.PR_TITLE_ENABLED", True),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_title", return_value="bad title"),
+            patch("main.run_check_command", return_value=1),
+            patch("main.run_other_checks", return_value=0),
+        ):
+            rc = main.run_commit_check()
+        self.assertEqual(rc, 1)
+
+    def test_pr_title_skipped_outside_pr_context(self):
+        with (
+            patch("main.PR_TITLE_ENABLED", True),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=False),
+            patch("main.get_pr_title") as mock_title,
+            patch("main.run_check_command", return_value=0),
+            patch("main.run_other_checks", return_value=0),
+        ):
+            rc = main.run_commit_check()
+        self.assertEqual(rc, 0)
+        mock_title.assert_not_called()
+
+    def test_pr_title_and_message_both_run(self):
+        with (
+            patch("main.PR_TITLE_ENABLED", True),
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_title", return_value="feat: nice pr"),
+            patch("main.get_pr_commit_messages", return_value=["fix: first", "feat: second"]),
+            patch("main.run_check_command", return_value=0) as mock_cmd,
+            patch("main.run_pr_message_checks", return_value=0) as mock_pr,
+            patch("main.run_other_checks", return_value=0),
+        ):
+            rc = main.run_commit_check()
+        self.assertEqual(rc, 0)
+        mock_cmd.assert_called_once()  # PR title check
+        mock_pr.assert_called_once()  # commit message checks
 
     def test_non_pr_path_uses_direct_command(self):
         with (
