@@ -33,6 +33,10 @@ inputs:
     description: post results to the pull request comments
     required: false
     default: false
+  pr-title:
+    description: check pull request title following conventional commits
+    required: false
+    default: false
 runs:
   using: "composite"
   steps:
@@ -69,4 +73,5 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
+        PR_TITLE: ${{ inputs.pr-title }}
         GITHUB_TOKEN: ${{ github.token }}

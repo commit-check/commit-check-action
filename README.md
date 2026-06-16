@@ -121,8 +121,8 @@ jobs:
 - **Description**: post results to the pull request comments.
 - Default: `false`
 
-> [!IMPORTANT]
-> `pr-comments` is an experimental feature. By default, it's disabled.
+> [!NOTE]
+> `pr-comments` is disabled by default.
 >
 > PR comments are skipped for pull requests from forked repositories. See
 > [docs/fork-pr-comments.md](docs/fork-pr-comments.md) for details on how to enable
@@ -130,6 +130,34 @@ jobs:
 >
 > Note: write-access to pull-requests requires the `pull-requests: write` permission.
 > See [usage example](#usage).
+
+### `pr-title`
+
+- **Description**: check pull request title following [Conventional Commits](https://www.conventionalcommits.org/).
+- Default: `false`
+
+> [!TIP]
+> This is especially useful for teams using **Squash & Merge**, where the PR title
+> becomes the final commit message in the main branch. When enabled, the action
+> validates the PR title against your Conventional Commits configuration, giving
+> early feedback at PR time rather than after merge.
+>
+> `pr-title` works alongside `message` — you can enable both to validate the PR
+> title and individual commits, or just one depending on your workflow.
+>
+> This setting only applies to `pull_request` and `pull_request_target` events;
+> it is silently ignored on `push` events.
+
+> [!IMPORTANT]
+> By default, `pull_request` does **not** trigger on title changes.
+> To validate the PR title immediately when updated, add `edited` to your
+> workflow's event types:
+> ```yaml
+> on:
+>   pull_request:
+>     types: [opened, synchronize, reopened, edited]
+> ```
+> Without `edited`, only the initial title (at PR creation) is validated.
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check-action/blob/main/commit-check.toml). If you want to customize, just add your [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html) config file under your repository root directory.
 

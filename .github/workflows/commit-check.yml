@@ -3,6 +3,7 @@ name: Commit Check
 on:
   pull_request:
     branches: 'main'
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 jobs:
@@ -23,3 +24,4 @@ jobs:
           author-email: true
           job-summary: true
           pr-comments: ${{ github.event_name == 'pull_request' }}
+          pr-title: true
