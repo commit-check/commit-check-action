@@ -467,6 +467,55 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertIn("bad commit message", content)
 
 
+class TestAddPrComments(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self._orig_dir = os.getcwd()
+        self._tmpdir = tempfile.mkdtemp()
+        os.chdir(self._tmpdir)
+        with open("result.txt", "w", encoding="utf-8"):
+            pass
+
+    def tearDown(self):
+        os.chdir(self._orig_dir)
+
+    def test_disabled_returns_zero(self):
+        with patch("main.PR_COMMENTS_ENABLED", False):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+
+    def test_fork_pr_skips_comment_and_warns(self):
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=True),
+            patch("main.JOB_SUMMARY_ENABLED", False),
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+        printed = mock_print.call_args[0][0]
+        self.assertIn("::warning::", printed)
+        self.assertIn("read-only", printed)
+
+    def test_fork_pr_writes_job_summary_hint(self):
+        summary_path = os.path.join(self._tmpdir, "summary.txt")
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=True),
+            patch("main.JOB_SUMMARY_ENABLED", True),
+            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+        with open(summary_path, encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("PR Comment Skipped", content)
+        self.assertIn("read-only", content)
+        self.assertIn("fork-pr-comments", content)
+
+
 class TestIsForkPr(unittest.TestCase):
     def test_no_event_path(self):
         with patch.dict(os.environ, {}, clear=True):

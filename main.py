@@ -271,13 +271,26 @@ def add_pr_comments() -> int:
     # Fork PRs triggered by the pull_request event receive a read-only token;
     # the GitHub API will always reject comment writes with 403.
     if is_fork_pr():
-        print(
-            "::warning::Skipping PR comment: pull requests from forked repositories "
+        msg = (
+            "Skipping PR comment: pull requests from forked repositories "
             "cannot write comments via the pull_request event (GITHUB_TOKEN is "
-            "read-only for forks). Use the pull_request_target event or the "
-            "two-workflow artifact pattern instead. "
-            "See https://github.com/commit-check/commit-check-action/issues/77"
+            "read-only for forks). "
+            "See https://github.com/commit-check/commit-check-action#fork-pr-comments "
+            "for how to enable PR comments on fork PRs."
         )
+        print(f"::warning::{msg}")
+        if JOB_SUMMARY_ENABLED:
+            with open(GITHUB_STEP_SUMMARY, "a") as f:
+                f.write(
+                    "\n---\n"
+                    "### \u2139\ufe0f PR Comment Skipped\n\n"
+                    "Pull requests from forked repositories cannot write comments "
+                    "using the `pull_request` event because `GITHUB_TOKEN` has "
+                    "read-only permissions.\n\n"
+                    "> **\U0001f4a1 Tip:** To enable PR comments on fork PRs, see "
+                    "[Enabling PR Comments on Fork Pull Requests]"
+                    "(https://github.com/commit-check/commit-check-action#fork-pr-comments).\n"
+                )
         return 0
 
     try:
