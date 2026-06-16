@@ -179,6 +179,9 @@ This is the **official GitHub-recommended best practice** for writing PR comment
 fork PRs. It uses the [`workflow_run`](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_run)
 event with **no security risks**.
 
+> 📁 Ready-to-use files: [`examples/commit-check-workflow-a.yml`](examples/commit-check-workflow-a.yml)
+> and [`examples/commit-check-workflow-b.yml`](examples/commit-check-workflow-b.yml)
+
 **How it works:**
 
 ```
@@ -215,15 +218,15 @@ jobs:
         with:
           message: true
           branch: true
-          pr-comments: false  # comments handled by Workflow B
+          pr-comments: false     # comments handled by Workflow B
           job-summary: true
-
-      # Save results so Workflow B can post a PR comment
       - uses: actions/upload-artifact@v4
         with:
           name: commit-check-result-${{ github.event.number }}
-          path: result.txt
+          path: result.txt      # saved for Workflow B
 ```
+
+> 📄 Full file: [`examples/commit-check-workflow-a.yml`](examples/commit-check-workflow-a.yml)
 
 **Workflow B** — `.github/workflows/commit-check-comment.yml` (triggered by `workflow_run`):
 
@@ -232,7 +235,7 @@ name: Commit Check Comment
 
 on:
   workflow_run:
-    workflows: ["Commit Check"]  # must match Workflow A's name exactly
+    workflows: ["Commit Check"]   # must match Workflow A's name exactly
     types: [completed]
 
 jobs:
@@ -240,51 +243,28 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-      actions: read  # needed to download artifacts
+      actions: read               # needed to download artifacts
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: commit-check-result-${{ github.event.workflow_run.pull_requests[0].number }}
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-
       - name: Read result and post PR comment
         uses: actions/github-script@v7
         with:
           script: |
+            // See examples/commit-check-workflow-b.yml for full script
             const fs = require('fs');
             const prNumber = ${{ github.event.workflow_run.pull_requests[0].number }};
             const resultText = fs.readFileSync('result.txt', 'utf8').trim();
-
-            const successTitle = '# Commit-Check ✔️';
-            const failureTitle = '# Commit-Check ❌';
             const body = resultText
-              ? `${failureTitle}\n\`\`\`\n${resultText}\n\`\`\``
-              : successTitle;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo,
-              issue_number: prNumber,
-            });
-
-            const existing = comments.find(c =>
-              c.body.startsWith(successTitle) || c.body.startsWith(failureTitle)
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                ...context.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: prNumber,
-                body,
-              });
-            }
+              ? '# Commit-Check ❌\n```\n' + resultText + '\n```'
+              : '# Commit-Check ✔️';
+            // Creates or updates the matching PR comment
 ```
+
+> 📄 Full file: [`examples/commit-check-workflow-b.yml`](examples/commit-check-workflow-b.yml)
 
 > **Key security benefits:**
 > - Workflow B runs in the **base repository's context**, so `GITHUB_TOKEN` has full write

@@ -1,0 +1,68 @@
+# Workflow B: Post PR comment after commit checks complete.
+#
+# This workflow is triggered by the workflow_run event from Workflow A.
+# It runs in the base repository's context with full write permissions,
+# making it safe for fork PRs (no checkout of fork code).
+#
+# Prerequisites:
+#   - Workflow A (commit-check.yml) must exist and upload an artifact named
+#     commit-check-result-<PR-number> containing result.txt
+#
+# See https://github.com/commit-check/commit-check-action#fork-pr-comments
+
+name: Commit Check Comment
+
+on:
+  workflow_run:
+    workflows: ["Commit Check"]  # must match Workflow A's name exactly
+    types: [completed]
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      actions: read  # needed to download artifacts
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: commit-check-result-${{ github.event.workflow_run.pull_requests[0].number }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Read result and post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = ${{ github.event.workflow_run.pull_requests[0].number }};
+            const resultText = fs.readFileSync('result.txt', 'utf8').trim();
+
+            const successTitle = '# Commit-Check ✔️';
+            const failureTitle = '# Commit-Check ❌';
+            const body = resultText
+              ? `${failureTitle}\n\`\`\`\n${resultText}\n\`\`\``
+              : successTitle;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: prNumber,
+            });
+
+            const existing = comments.find(c =>
+              c.body.startsWith(successTitle) || c.body.startsWith(failureTitle)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
