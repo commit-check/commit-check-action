@@ -253,7 +253,9 @@ def run_commit_check() -> int:
             pr_title = get_pr_title()
             if pr_title:
                 rc = run_check_command(
-                    ["--message"], result_file, input_text=pr_title,
+                    ["--message"],
+                    result_file,
+                    input_text=pr_title,
                 )
                 if rc != 0:
                     exit_code = max(exit_code, rc)
