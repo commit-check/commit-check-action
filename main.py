@@ -40,15 +40,15 @@ PR_TITLE_ENABLED = env_flag("PR_TITLE")
 
 
 def log_env_vars():
-    """Logs the environment variables for debugging purposes."""
-    print(f"MESSAGE = {MESSAGE}")
-    print(f"BRANCH = {BRANCH}")
-    print(f"AUTHOR_NAME = {AUTHOR_NAME}")
-    print(f"AUTHOR_EMAIL = {AUTHOR_EMAIL}")
-    print(f"DRY_RUN = {DRY_RUN}")
-    print(f"JOB_SUMMARY = {JOB_SUMMARY}")
-    print(f"PR_COMMENTS = {PR_COMMENTS}")
-    print(f"PR_TITLE = {PR_TITLE}\n")
+    """Logs the environment variables for debugging purposes.
+
+    Uses the ``::debug::`` workflow command so these only appear in the
+    action log when ``ACTIONS_STEP_DEBUG`` is set to ``true``.
+    """
+    for name in ("MESSAGE", "BRANCH", "AUTHOR_NAME", "AUTHOR_EMAIL",
+                  "DRY_RUN", "JOB_SUMMARY", "PR_COMMENTS", "PR_TITLE"):
+        value = os.getenv(name, "false")
+        print(f"::debug::{name}={value}")
 
 
 def is_pr_event() -> bool:
