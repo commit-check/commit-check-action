@@ -78,13 +78,14 @@ class TestGetPrTitle(unittest.TestCase):
         event = {
             "pull_request": {"title": "feat: add login page"},
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(event, f)
             event_path = f.name
         with (
-            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event_path}),
+            patch.dict(
+                os.environ,
+                {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event_path},
+            ),
         ):
             self.assertEqual(main.get_pr_title(), "feat: add login page")
         os.unlink(event_path)
@@ -95,13 +96,17 @@ class TestGetPrTitle(unittest.TestCase):
         event = {
             "pull_request": {"title": "fix: resolve timeout"},
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(event, f)
             event_path = f.name
         with (
-            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_EVENT_PATH": event_path}),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_EVENT_NAME": "pull_request_target",
+                    "GITHUB_EVENT_PATH": event_path,
+                },
+            ),
         ):
             self.assertEqual(main.get_pr_title(), "fix: resolve timeout")
         os.unlink(event_path)
@@ -118,13 +123,14 @@ class TestGetPrTitle(unittest.TestCase):
     def test_invalid_json_returns_none(self):
         import tempfile
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not valid json")
             event_path = f.name
         with (
-            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event_path}),
+            patch.dict(
+                os.environ,
+                {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event_path},
+            ),
             patch("builtins.print"),
         ):
             self.assertIsNone(main.get_pr_title())
@@ -427,7 +433,8 @@ class TestRunCommitCheck(unittest.TestCase):
             rc = main.run_commit_check()
         self.assertEqual(rc, 0)
         self.assertEqual(
-            mock_cmd.call_args[0][0], ["--message"],
+            mock_cmd.call_args[0][0],
+            ["--message"],
         )
         self.assertEqual(mock_cmd.call_args[1]["input_text"], "feat: a feature")
 
@@ -471,7 +478,10 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.is_pr_event", return_value=True),
             patch("main.get_pr_title", return_value="feat: nice pr"),
-            patch("main.get_pr_commit_messages", return_value=["fix: first", "feat: second"]),
+            patch(
+                "main.get_pr_commit_messages",
+                return_value=["fix: first", "feat: second"],
+            ),
             patch("main.run_check_command", return_value=0) as mock_cmd,
             patch("main.run_pr_message_checks", return_value=0) as mock_pr,
             patch("main.run_other_checks", return_value=0),

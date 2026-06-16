@@ -68,9 +68,7 @@ def get_pr_title() -> str | None:
             event = json.load(f)
         return event.get("pull_request", {}).get("title")
     except Exception as e:
-        print(
-            f"::warning::Failed to read PR title from event: {e}", file=sys.stderr
-        )
+        print(f"::warning::Failed to read PR title from event: {e}", file=sys.stderr)
         return None
 
 
