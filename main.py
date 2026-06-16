@@ -252,16 +252,8 @@ def run_commit_check() -> int:
         if PR_TITLE_ENABLED and is_pr_event():
             pr_title = get_pr_title()
             if pr_title:
-                cmd_args = ["--message"]
-                output_prefix = None
-                if emitted_failure_output:
-                    cmd_args.append("--no-banner")
-                    output_prefix = "\n--- PR Title ---\n"
                 rc = run_check_command(
-                    cmd_args,
-                    result_file,
-                    input_text=pr_title,
-                    output_prefix=output_prefix,
+                    ["--message"], result_file, input_text=pr_title,
                 )
                 if rc != 0:
                     exit_code = max(exit_code, rc)
