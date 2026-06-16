@@ -121,8 +121,8 @@ jobs:
 - **Description**: post results to the pull request comments.
 - Default: `false`
 
-> [!IMPORTANT]
-> `pr-comments` is an experimental feature. By default, it's disabled.
+> [!NOTE]
+> `pr-comments` is disabled by default.
 >
 > PR comments are skipped for pull requests from forked repositories. See
 > [docs/fork-pr-comments.md](docs/fork-pr-comments.md) for details on how to enable
