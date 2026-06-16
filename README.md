@@ -148,6 +148,17 @@ jobs:
 > This setting only applies to `pull_request` and `pull_request_target` events;
 > it is silently ignored on `push` events.
 
+> [!IMPORTANT]
+> By default, `pull_request` does **not** trigger on title changes.
+> To validate the PR title immediately when updated, add `edited` to your
+> workflow's event types:
+> ```yaml
+> on:
+>   pull_request:
+>     types: [opened, synchronize, reopened, edited]
+> ```
+> Without `edited`, only the initial title (at PR creation) is validated.
+
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check-action/blob/main/commit-check.toml). If you want to customize, just add your [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html) config file under your repository root directory.
 
 ## GitHub Action Job Summary
