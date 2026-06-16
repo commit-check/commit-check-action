@@ -263,6 +263,45 @@ def is_fork_pr() -> bool:
         return False
 
 
+def is_fork_pr_with_readonly_token() -> bool:
+    """Returns True when the PR is from a fork AND the event has a read-only token.
+
+    Under the pull_request event, GITHUB_TOKEN is read-only for fork PRs.
+    Under pull_request_target, GITHUB_TOKEN has the workflow's configured
+    permissions regardless of whether the PR is from a fork.
+    """
+    return is_fork_pr() and os.getenv("GITHUB_EVENT_NAME", "") != "pull_request_target"
+
+
+def get_pr_number() -> int:
+    """Extract the pull request number from event payload or GITHUB_REF.
+
+    For pull_request: GITHUB_REF is refs/pull/<number>/merge
+    For pull_request_target: GITHUB_REF is refs/heads/<branch> (not useful),
+    so we fall back to the event payload.
+    """
+    ref = os.getenv("GITHUB_REF", "")
+    parts = ref.split("/")
+    if len(parts) >= 4 and parts[1] == "pull":
+        return int(parts[2])
+    # Fallback: read PR number from event payload
+    event_path = os.getenv("GITHUB_EVENT_PATH")
+    if event_path:
+        try:
+            with open(event_path, "r") as f:
+                event = json.load(f)
+            number = event.get("number") or (event.get("pull_request", {}) or {}).get(
+                "number"
+            )
+            if number:
+                return int(number)
+        except Exception:
+            pass
+    raise ValueError(
+        "Unable to determine PR number from GITHUB_REF or GITHUB_EVENT_PATH"
+    )
+
+
 def add_pr_comments() -> int:
     """Posts the commit check result as a comment on the pull request."""
     if not PR_COMMENTS_ENABLED:
@@ -270,14 +309,28 @@ def add_pr_comments() -> int:
 
     # Fork PRs triggered by the pull_request event receive a read-only token;
     # the GitHub API will always reject comment writes with 403.
-    if is_fork_pr():
-        print(
-            "::warning::Skipping PR comment: pull requests from forked repositories "
+    # pull_request_target events always have the configured token permissions.
+    if is_fork_pr_with_readonly_token():
+        msg = (
+            "Skipping PR comment: pull requests from forked repositories "
             "cannot write comments via the pull_request event (GITHUB_TOKEN is "
-            "read-only for forks). Use the pull_request_target event or the "
-            "two-workflow artifact pattern instead. "
-            "See https://github.com/commit-check/commit-check-action/issues/77"
+            "read-only for forks). "
+            "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md "
+            "for how to enable PR comments on fork PRs."
         )
+        print(f"::warning::{msg}")
+        if JOB_SUMMARY_ENABLED:
+            with open(GITHUB_STEP_SUMMARY, "a") as f:
+                f.write(
+                    "\n---\n"
+                    "### \u2139\ufe0f PR Comment Skipped\n\n"
+                    "Pull requests from forked repositories cannot write comments "
+                    "using the `pull_request` event because `GITHUB_TOKEN` has "
+                    "read-only permissions.\n\n"
+                    "> **\U0001f4a1 Tip:** To enable PR comments on fork PRs, see "
+                    "[Enabling PR Comments on Fork Pull Requests]"
+                    "(https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md).\n"
+                )
         return 0
 
     try:
@@ -285,18 +338,14 @@ def add_pr_comments() -> int:
 
         token = os.getenv("GITHUB_TOKEN")
         repo_name = os.getenv("GITHUB_REPOSITORY")
-        pr_number = os.getenv("GITHUB_REF")
-        if pr_number is not None:
-            pr_number = pr_number.split("/")[-2]
-        else:
-            raise ValueError("GITHUB_REF environment variable is not set")
+        pr_number = get_pr_number()
 
         if not token:
             raise ValueError("GITHUB_TOKEN is not set")
 
         g = Github(auth=Auth.Token(token))
         repo = g.get_repo(repo_name)
-        pull_request = repo.get_issue(int(pr_number))
+        pull_request = repo.get_issue(pr_number)
 
         result_text = read_result_file()
         pr_comment_body = build_result_body(result_text)

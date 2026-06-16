@@ -26,6 +26,7 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 * [Optional Inputs](#optional-inputs)
 * [GitHub Action Job Summary](#github-action-job-summary)
 * [GitHub Pull Request Comments](#github-pull-request-comments)
+* [Fork PR Comments](docs/fork-pr-comments.md)
 * [Badging Your Repository](#badging-your-repository)
 * [Versioning](#versioning)
 
@@ -123,7 +124,12 @@ jobs:
 > [!IMPORTANT]
 > `pr-comments` is an experimental feature. By default, it's disabled.
 >
-> PR comments are skipped for pull requests from forked repositories. For more details, refer to issue [`#143`](https://github.com/commit-check/commit-check-action/issues/143).
+> PR comments are skipped for pull requests from forked repositories. See
+> [docs/fork-pr-comments.md](docs/fork-pr-comments.md) for details on how to enable
+> this feature for fork contributions.
+>
+> Note: write-access to pull-requests requires the `pull-requests: write` permission.
+> See [usage example](#usage).
 
 Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check-action/blob/main/commit-check.toml). If you want to customize, just add your [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html) config file under your repository root directory.
 
@@ -148,6 +154,23 @@ By default, commit-check-action results are shown on the job summary page of the
 ### Failure Pull Request Comment
 
 ![Failure pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/failure-pr-comments.png)
+
+## Fork PR Comments
+
+When a pull request is opened from a **forked repository**, the `GITHUB_TOKEN` used by the
+`pull_request` event has **read-only** permissions by design (GitHub security policy).
+This means `pr-comments: true` cannot write a comment back to the PR.
+
+By default, commit-check-action handles this gracefully:
+
+- PR comment writing is **skipped** with a `::warning::` message in the logs
+- A **notice is added to the Job Summary** explaining why and how to fix it
+- The commit checks themselves **still run normally**
+
+> **For most projects, this is sufficient** — contributors can see check results in the
+> action Job Summary. But if you *must* have PR comments on fork contributions, see
+> the **[Fork PR Comments](docs/fork-pr-comments.md)** documentation for
+> two recommended approaches with ready-to-use workflow examples.
 
 ## Badging Your Repository
 

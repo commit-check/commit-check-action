@@ -1,0 +1,33 @@
+# Workflow A: Run commit checks on pull_request events.
+#
+# This workflow is triggered by pull_request and runs commit checks.
+# It uploads the result as an artifact so Workflow B (commit-check-comment.yml)
+# can read it and post a PR comment with full write permissions.
+#
+# See https://github.com/commit-check/commit-check-action#fork-pr-comments
+
+name: Commit Check
+
+on:
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: commit-check/commit-check-action@v2
+        with:
+          message: true
+          branch: true
+          pr-comments: false  # comments handled by Workflow B
+          job-summary: true
+
+      # Save results so Workflow B can post a PR comment
+      - uses: actions/upload-artifact@v4
+        with:
+          name: commit-check-result-${{ github.event.number }}
+          path: result.txt
