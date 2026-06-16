@@ -273,6 +273,31 @@ def is_fork_pr_with_readonly_token() -> bool:
     return is_fork_pr() and os.getenv("GITHUB_EVENT_NAME", "") != "pull_request_target"
 
 
+def get_pr_number() -> int:
+    """Extract the pull request number from event payload or GITHUB_REF.
+
+    For pull_request: GITHUB_REF is refs/pull/<number>/merge
+    For pull_request_target: GITHUB_REF is refs/heads/<branch> (not useful),
+    so we fall back to the event payload.
+    """
+    ref = os.getenv("GITHUB_REF", "")
+    parts = ref.split("/")
+    if len(parts) >= 4 and parts[1] == "pull":
+        return int(parts[2])
+    # Fallback: read PR number from event payload
+    event_path = os.getenv("GITHUB_EVENT_PATH")
+    if event_path:
+        try:
+            with open(event_path, "r") as f:
+                event = json.load(f)
+            number = event.get("number") or (event.get("pull_request", {}) or {}).get("number")
+            if number:
+                return int(number)
+        except Exception:
+            pass
+    raise ValueError("Unable to determine PR number from GITHUB_REF or GITHUB_EVENT_PATH")
+
+
 def add_pr_comments() -> int:
     """Posts the commit check result as a comment on the pull request."""
     if not PR_COMMENTS_ENABLED:
@@ -309,18 +334,14 @@ def add_pr_comments() -> int:
 
         token = os.getenv("GITHUB_TOKEN")
         repo_name = os.getenv("GITHUB_REPOSITORY")
-        pr_number = os.getenv("GITHUB_REF")
-        if pr_number is not None:
-            pr_number = pr_number.split("/")[-2]
-        else:
-            raise ValueError("GITHUB_REF environment variable is not set")
+        pr_number = get_pr_number()
 
         if not token:
             raise ValueError("GITHUB_TOKEN is not set")
 
         g = Github(auth=Auth.Token(token))
         repo = g.get_repo(repo_name)
-        pull_request = repo.get_issue(int(pr_number))
+        pull_request = repo.get_issue(pr_number)
 
         result_text = read_result_file()
         pr_comment_body = build_result_body(result_text)
