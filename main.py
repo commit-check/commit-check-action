@@ -246,10 +246,10 @@ def run_commit_check() -> int:
             pr_title = get_pr_title()
             if pr_title:
                 cmd_args = ["--message"]
-                output_prefix = "# PR Title Validation\n"
+                output_prefix = None
                 if emitted_failure_output:
                     cmd_args.append("--no-banner")
-                    output_prefix = "\n---\n# PR Title Validation\n"
+                    output_prefix = "\n--- PR Title ---\n"
                 print("--- PR title check ---")
                 rc = run_check_command(
                     cmd_args,
