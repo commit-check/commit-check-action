@@ -263,6 +263,16 @@ def is_fork_pr() -> bool:
         return False
 
 
+def is_fork_pr_with_readonly_token() -> bool:
+    """Returns True when the PR is from a fork AND the event has a read-only token.
+
+    Under the pull_request event, GITHUB_TOKEN is read-only for fork PRs.
+    Under pull_request_target, GITHUB_TOKEN has the workflow's configured
+    permissions regardless of whether the PR is from a fork.
+    """
+    return is_fork_pr() and os.getenv("GITHUB_EVENT_NAME", "") != "pull_request_target"
+
+
 def add_pr_comments() -> int:
     """Posts the commit check result as a comment on the pull request."""
     if not PR_COMMENTS_ENABLED:
@@ -270,7 +280,8 @@ def add_pr_comments() -> int:
 
     # Fork PRs triggered by the pull_request event receive a read-only token;
     # the GitHub API will always reject comment writes with 403.
-    if is_fork_pr():
+    # pull_request_target events always have the configured token permissions.
+    if is_fork_pr_with_readonly_token():
         msg = (
             "Skipping PR comment: pull requests from forked repositories "
             "cannot write comments via the pull_request event (GITHUB_TOKEN is "

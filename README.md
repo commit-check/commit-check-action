@@ -310,6 +310,10 @@ jobs:
           pr-comments: true
 ```
 
+> ✅ With `pull_request_target`, `pr-comments: true` **does work** on fork PRs —
+> the token has the workflow's configured permissions regardless of whether the PR
+> is from a fork.
+>
 > **When to use this:** Only if the two-workflow pattern is too complex for your setup
 > and you have thoroughly reviewed the security implications.
 

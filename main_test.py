@@ -516,6 +516,30 @@ class TestAddPrComments(unittest.TestCase):
         self.assertIn("fork-pr-comments", content)
 
 
+class TestIsForkPrWithReadonlyToken(unittest.TestCase):
+    def test_fork_pr_with_pull_request_event(self):
+        with (
+            patch("main.is_fork_pr", return_value=True),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+        ):
+            self.assertTrue(main.is_fork_pr_with_readonly_token())
+
+    def test_fork_pr_with_pull_request_target_event(self):
+        """pull_request_target has write token — not considered read-only."""
+        with (
+            patch("main.is_fork_pr", return_value=True),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target"}),
+        ):
+            self.assertFalse(main.is_fork_pr_with_readonly_token())
+
+    def test_same_repo_not_fork(self):
+        with (
+            patch("main.is_fork_pr", return_value=False),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+        ):
+            self.assertFalse(main.is_fork_pr_with_readonly_token())
+
+
 class TestIsForkPr(unittest.TestCase):
     def test_no_event_path(self):
         with patch.dict(os.environ, {}, clear=True):
