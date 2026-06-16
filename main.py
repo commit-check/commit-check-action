@@ -151,7 +151,6 @@ def run_check_command(
 ) -> int:
     """Run commit-check and write both stdout and stderr to the result file."""
     command = ["commit-check"] + args
-    print(" ".join(command))
     result = subprocess.run(
         command,
         input=input_text,
@@ -250,7 +249,6 @@ def run_commit_check() -> int:
                 if emitted_failure_output:
                     cmd_args.append("--no-banner")
                     output_prefix = "\n--- PR Title ---\n"
-                print("--- PR title check ---")
                 rc = run_check_command(
                     cmd_args,
                     result_file,

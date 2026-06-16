@@ -152,12 +152,11 @@ class TestRunCheckCommand(unittest.TestCase):
         self.assertEqual(mock_run.call_args[1]["input"], "fix: demo")
         self.assertTrue(mock_run.call_args[1]["text"])
 
-    def test_prints_command(self):
+    def test_success_returns_zero(self):
         mock_result = MagicMock(returncode=0, stdout="")
         with patch("main.subprocess.run", return_value=mock_result):
-            with patch("builtins.print") as mock_print:
-                main.run_check_command(["--branch"], io.StringIO())
-        mock_print.assert_called_once_with("commit-check --branch")
+            rc = main.run_check_command(["--branch"], io.StringIO())
+        self.assertEqual(rc, 0)
 
 
 class TestRunPrMessageChecks(unittest.TestCase):
