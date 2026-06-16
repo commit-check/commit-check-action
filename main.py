@@ -45,8 +45,16 @@ def log_env_vars():
     Uses the ``::debug::`` workflow command so these only appear in the
     action log when ``ACTIONS_STEP_DEBUG`` is set to ``true``.
     """
-    for name in ("MESSAGE", "BRANCH", "AUTHOR_NAME", "AUTHOR_EMAIL",
-                  "DRY_RUN", "JOB_SUMMARY", "PR_COMMENTS", "PR_TITLE"):
+    for name in (
+        "MESSAGE",
+        "BRANCH",
+        "AUTHOR_NAME",
+        "AUTHOR_EMAIL",
+        "DRY_RUN",
+        "JOB_SUMMARY",
+        "PR_COMMENTS",
+        "PR_TITLE",
+    ):
         value = os.getenv(name, "false")
         print(f"::debug::{name}={value}")
 
