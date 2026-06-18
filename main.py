@@ -165,6 +165,7 @@ def run_check_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     if result.stdout:
