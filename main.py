@@ -72,7 +72,7 @@ def get_pr_title() -> str | None:
     if not event_path:
         return None
     try:
-        with open(event_path, "r") as f:
+        with open(event_path, "r", encoding="utf-8") as f:
             event = json.load(f)
         return event.get("pull_request", {}).get("title")
     except Exception as e:
@@ -247,7 +247,7 @@ def run_commit_check() -> int:
     exit_code = 0
     emitted_failure_output = False
 
-    with open("result.txt", "w") as result_file:
+    with open("result.txt", "w", encoding="utf-8") as result_file:
         # ---- 1. PR title check ------------------------------------------------
         if PR_TITLE_ENABLED and is_pr_event():
             pr_title = get_pr_title()
@@ -286,7 +286,7 @@ def run_commit_check() -> int:
 def read_result_file() -> str | None:
     """Reads the result.txt file and removes ANSI color codes."""
     if os.path.getsize("result.txt") > 0:
-        with open("result.txt", "r") as result_file:
+        with open("result.txt", "r", encoding="utf-8") as result_file:
             result_text = re.sub(
                 r"\x1B\[[0-9;]*[a-zA-Z]", "", result_file.read()
             )  # Remove ANSI colors
@@ -308,7 +308,7 @@ def add_job_summary() -> int:
 
     result_text = read_result_file()
 
-    with open(GITHUB_STEP_SUMMARY, "a") as summary_file:
+    with open(GITHUB_STEP_SUMMARY, "a", encoding="utf-8") as summary_file:
         summary_file.write(build_result_body(result_text))
 
     return 0 if result_text is None else 1
@@ -320,7 +320,7 @@ def is_fork_pr() -> bool:
     if not event_path:
         return False
     try:
-        with open(event_path, "r") as f:
+        with open(event_path, "r", encoding="utf-8") as f:
             event = json.load(f)
         pr = event.get("pull_request", {})
         head_full_name = pr.get("head", {}).get("repo", {}).get("full_name", "")
@@ -357,7 +357,7 @@ def get_pr_number() -> int:
     event_path = os.getenv("GITHUB_EVENT_PATH")
     if event_path:
         try:
-            with open(event_path, "r") as f:
+            with open(event_path, "r", encoding="utf-8") as f:
                 event = json.load(f)
             number = event.get("number") or (event.get("pull_request", {}) or {}).get(
                 "number"
@@ -389,7 +389,7 @@ def add_pr_comments() -> int:
         )
         print(f"::warning::{msg}")
         if JOB_SUMMARY_ENABLED:
-            with open(GITHUB_STEP_SUMMARY, "a") as f:
+            with open(GITHUB_STEP_SUMMARY, "a", encoding="utf-8") as f:
                 f.write(
                     "\n---\n"
                     "### \u2139\ufe0f PR Comment Skipped\n\n"
