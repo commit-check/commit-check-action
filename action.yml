@@ -43,17 +43,25 @@ runs:
     - name: Install dependencies and run commit-check
       shell: bash
       run: |
-        if [[ "$RUNNER_OS" == "Linux" ]]; then
-          # https://github.com/pypa/setuptools/issues/3269
-          export DEB_PYTHON_INSTALL_LAYOUT=deb
+        # Platform-specific settings
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          PYTHON_CMD="python"
+          VENV_ACTIVATE="venv/Scripts/activate"
+        else
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            # https://github.com/pypa/setuptools/issues/3269
+            export DEB_PYTHON_INSTALL_LAYOUT=deb
+          fi
+          PYTHON_CMD="python3"
+          VENV_ACTIVATE="venv/bin/activate"
         fi
 
         # Set up virtual environment
-        python3 -m venv venv
-        source venv/bin/activate
+        $PYTHON_CMD -m venv venv
+        source "$VENV_ACTIVATE"
 
         # Download artifact
-        python3 -m pip download -r "$GITHUB_ACTION_PATH/requirements.txt"
+        $PYTHON_CMD -m pip download -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         # Verify artifact attestations
         if ! gh attestation verify commit_check-*.whl -R commit-check/commit-check; then
@@ -62,9 +70,9 @@ runs:
         fi
 
         # Install artifact
-        python3 -m pip install commit_check-*.whl pygithub-*.whl
+        $PYTHON_CMD -m pip install commit_check-*.whl pygithub-*.whl
 
-        python3 "$GITHUB_ACTION_PATH/main.py"
+        $PYTHON_CMD "$GITHUB_ACTION_PATH/main.py"
       env:
         MESSAGE: ${{ inputs.message }}
         BRANCH: ${{ inputs.branch }}
