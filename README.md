@@ -62,6 +62,9 @@ jobs:
           pr-comments: ${{ github.event_name == 'pull_request' }}
 ```
 
+> [!NOTE]
+> This action runs on Linux, macOS, and Windows runners (`ubuntu-latest`, `macos-latest`, `windows-latest`).
+
 ## Used By
 
 <p align="center">
