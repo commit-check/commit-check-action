@@ -63,7 +63,7 @@ jobs:
 ```
 
 > [!NOTE]
-> This action runs on Linux, macOS, and Windows runners (`ubuntu-latest`, `macos-latest`, `windows-latest`).
+> This action supports running on Linux, macOS, and Windows (`ubuntu-latest`, `macos-latest`, `windows-latest`).
 
 ## Used By
 
