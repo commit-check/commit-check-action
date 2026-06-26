@@ -250,13 +250,21 @@ def run_commit_check() -> int:
 
     with open("result.txt", "w", encoding="utf-8") as result_file:
         # ---- 1. PR title check ------------------------------------------------
+        # Always label the PR title section and suppress its banner so the
+        # output flows consistently with the commit-message section labels:
+        #
+        #   --- PR Title:
+        #   <error details>
+        #   --- Commit 1/1:
+        #   <error details>
         if PR_TITLE_ENABLED and is_pr_event():
             pr_title = get_pr_title()
             if pr_title:
                 rc = run_check_command(
-                    ["--message"],
+                    ["--message", "--no-banner"],
                     result_file,
                     input_text=pr_title,
+                    output_prefix=f"--- PR Title:\n",
                 )
                 if rc != 0:
                     exit_code = max(exit_code, rc)
