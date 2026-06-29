@@ -383,10 +383,12 @@ class TestRunCommitCheck(unittest.TestCase):
         import tempfile
 
         self._tmpdir = tempfile.mkdtemp()
+        os.environ["RUNNER_TEMP"] = self._tmpdir
         os.chdir(self._tmpdir)
 
     def tearDown(self):
         os.chdir(self._orig_dir)
+        os.environ.pop("RUNNER_TEMP", None)
 
     def test_pr_path_calls_pr_message_checks(self):
         with (
@@ -433,7 +435,7 @@ class TestRunCommitCheck(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(
             mock_cmd.call_args[0][0],
-            ["--message"],
+            ["--message", "--no-banner"],
         )
         self.assertEqual(mock_cmd.call_args[1]["input_text"], "feat: a feature")
 
@@ -528,7 +530,7 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.run_check_command", return_value=0),
         ):
             main.run_commit_check()
-        self.assertTrue(os.path.exists(os.path.join(self._tmpdir, "result.txt")))
+        self.assertTrue(os.path.exists(main.get_result_path()))
 
     def test_other_args_excludes_message(self):
         captured_args = []
@@ -557,13 +559,15 @@ class TestReadResultFile(unittest.TestCase):
 
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
+        os.environ["RUNNER_TEMP"] = self._tmpdir
         os.chdir(self._tmpdir)
 
     def tearDown(self):
         os.chdir(self._orig_dir)
+        os.environ.pop("RUNNER_TEMP", None)
 
     def _write_result(self, content: str):
-        with open("result.txt", "w", encoding="utf-8") as file_obj:
+        with open(main.get_result_path(), "w", encoding="utf-8") as file_obj:
             file_obj.write(content)
 
     def test_empty_file_returns_none(self):
@@ -595,12 +599,14 @@ class TestAddJobSummary(unittest.TestCase):
 
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
+        os.environ["RUNNER_TEMP"] = self._tmpdir
         os.chdir(self._tmpdir)
-        with open("result.txt", "w", encoding="utf-8"):
+        with open(main.get_result_path(), "w", encoding="utf-8"):
             pass
 
     def tearDown(self):
         os.chdir(self._orig_dir)
+        os.environ.pop("RUNNER_TEMP", None)
 
     def test_false_skips(self):
         with patch("main.JOB_SUMMARY_ENABLED", False):
@@ -641,12 +647,14 @@ class TestAddPrComments(unittest.TestCase):
 
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
+        os.environ["RUNNER_TEMP"] = self._tmpdir
         os.chdir(self._tmpdir)
-        with open("result.txt", "w", encoding="utf-8"):
+        with open(main.get_result_path(), "w", encoding="utf-8"):
             pass
 
     def tearDown(self):
         os.chdir(self._orig_dir)
+        os.environ.pop("RUNNER_TEMP", None)
 
     def test_disabled_returns_zero(self):
         with patch("main.PR_COMMENTS_ENABLED", False):
@@ -777,12 +785,14 @@ class TestMain(unittest.TestCase):
 
         self._orig_dir = os.getcwd()
         self._tmpdir = tempfile.mkdtemp()
+        os.environ["RUNNER_TEMP"] = self._tmpdir
         os.chdir(self._tmpdir)
-        with open("result.txt", "w", encoding="utf-8"):
+        with open(main.get_result_path(), "w", encoding="utf-8"):
             pass
 
     def tearDown(self):
         os.chdir(self._orig_dir)
+        os.environ.pop("RUNNER_TEMP", None)
 
     def test_success_path(self):
         with (
