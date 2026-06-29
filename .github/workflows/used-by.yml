@@ -14,8 +14,8 @@ jobs:
   used-by:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: shenxianpeng/used-by@v0.1.5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: shenxianpeng/used-by@4c0501cd4b6370c275b50d46400538ae90b8e7a9 # v0.1.5
         with:
           repo: '${{ github.repository }}'
           update-badge: 'true'
