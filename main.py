@@ -13,15 +13,6 @@ FAILURE_TITLE = "# Commit-Check ❌"
 COMMIT_MESSAGE_DELIMITER = "\x00"
 COMMIT_SECTION_SEPARATOR = "\n---\n"
 
-# Environment variables
-MESSAGE = os.getenv("MESSAGE", "false")
-BRANCH = os.getenv("BRANCH", "false")
-AUTHOR_NAME = os.getenv("AUTHOR_NAME", "false")
-AUTHOR_EMAIL = os.getenv("AUTHOR_EMAIL", "false")
-DRY_RUN = os.getenv("DRY_RUN", "false")
-JOB_SUMMARY = os.getenv("JOB_SUMMARY", "false")
-PR_COMMENTS = os.getenv("PR_COMMENTS", "false")
-PR_TITLE = os.getenv("PR_TITLE", "false")
 GITHUB_STEP_SUMMARY = os.environ["GITHUB_STEP_SUMMARY"]
 
 
