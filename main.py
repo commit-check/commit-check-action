@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from typing import TextIO
 
 # Constants for message titles
@@ -234,6 +235,17 @@ def build_check_args() -> list[str]:
     return [flag for flag, enabled in flags if enabled]
 
 
+def get_result_path() -> str:
+    """Return a safe path for the result file using a temp directory.
+
+    In GitHub Actions this uses ``RUNNER_TEMP`` which is cleaned up
+    automatically after the job.  Falls back to ``tempfile.gettempdir()``
+    for local testing.
+    """
+    base = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return os.path.join(base, "commit-check-result.txt")
+
+
 def run_commit_check() -> int:
     """Runs all enabled checks and returns the overall exit code.
 
@@ -248,7 +260,7 @@ def run_commit_check() -> int:
     exit_code = 0
     emitted_failure_output = False
 
-    with open("result.txt", "w", encoding="utf-8") as result_file:
+    with open(get_result_path(), "w", encoding="utf-8") as result_file:
         # ---- 1. PR title check ------------------------------------------------
         # Always label the PR title section and suppress its banner so the
         # output flows consistently with the commit-message section labels:
@@ -294,8 +306,8 @@ def run_commit_check() -> int:
 
 def read_result_file() -> str | None:
     """Reads the result.txt file and removes ANSI color codes."""
-    if os.path.getsize("result.txt") > 0:
-        with open("result.txt", "r", encoding="utf-8") as result_file:
+    if os.path.getsize(get_result_path()) > 0:
+        with open(get_result_path(), "r", encoding="utf-8") as result_file:
             result_text = re.sub(
                 r"\x1B\[[0-9;]*[a-zA-Z]", "", result_file.read()
             )  # Remove ANSI colors
