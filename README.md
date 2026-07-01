@@ -84,6 +84,8 @@ jobs:
   <strong>Mila</strong>&nbsp;&nbsp;
   <a href="https://github.com/RLinf/RLinf"><img src="https://avatars.githubusercontent.com/u/226440105?s=200&v=4" alt="RLinf" width="28"/></a>
   <strong>RLinf</strong>&nbsp;&nbsp;
+  <a href="https://github.com/collective"><img src="https://avatars.githubusercontent.com/u/362867?s=200&v=4" alt="Collective" width="28"/></a>
+  <strong>Collective</strong>&nbsp;&nbsp;
   <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
 </p>
 
