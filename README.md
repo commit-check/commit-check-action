@@ -26,6 +26,7 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 * [Optional Inputs](#optional-inputs)
 * [GitHub Action Job Summary](#github-action-job-summary)
 * [GitHub Pull Request Comments](#github-pull-request-comments)
+* [Advanced Configuration](#advanced-configuration)
 * [Fork PR Comments](docs/fork-pr-comments.md)
 * [Badging Your Repository](#badging-your-repository)
 * [Versioning](#versioning)
@@ -164,31 +165,41 @@ jobs:
 > ```
 > Without `edited`, only the initial title (at PR creation) is validated.
 
-> [!TIP]
-> All the inputs above are just the most common options. For advanced configuration
-> (e.g., `subject-capitalized`, `require-signed-off-by`, `ai-attribution`, custom
-> `allow-commit-types`, etc.), you have **two options**:
->
-> **Option 1 — Environment variables** (no config file needed):
->
-> Set any `CCHK_*` environment variable in your workflow step. For example:
->
-> ```yaml
-> - uses: commit-check/commit-check-action@v2
->   env:
->     CCHK_SUBJECT_CAPITALIZED: "true"
->     CCHK_REQUIRE_SIGNED_OFF_BY: "true"
->     CCHK_AI_ATTRIBUTION: "forbid"
->     CCHK_ALLOW_COMMIT_TYPES: "feat,fix,docs,chore"
-> ```
->
-> **Option 2 — Configuration file:**
->
-> Add a [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html)
-> or `cchk.toml` to the root of your repository.
->
-> The two approaches follow the same priority rule as commit-check itself:
-> **CLI args > env vars > config file > defaults**.
+## Advanced Configuration
+
+The [Optional Inputs](#optional-inputs) above cover the most common settings.
+For everything else (e.g., `subject-capitalized`, `require-signed-off-by`,
+`ai-attribution`, custom `allow-commit-types`, etc.), you have two approaches:
+
+### Via Environment Variables
+
+Set any `CCHK_*` environment variable in your workflow step — no config file required:
+
+```yaml
+- uses: commit-check/commit-check-action@v2
+  env:
+    CCHK_SUBJECT_CAPITALIZED: "true"
+    CCHK_REQUIRE_SIGNED_OFF_BY: "true"
+    CCHK_AI_ATTRIBUTION: "forbid"
+    CCHK_ALLOW_COMMIT_TYPES: "feat,fix,docs,chore"
+```
+
+All available environment variables follow the naming convention:
+`CCHK_` + uppercase option name with underscores instead of hyphens. See the
+[full mapping](https://commit-check.github.io/commit-check/configuration.html#environment-variables)
+in the commit-check documentation.
+
+### Via Configuration File
+
+Add a `commit-check.toml` or `cchk.toml` to the root of your repository.
+Refer to the [configuration guide](https://commit-check.github.io/commit-check/configuration.html)
+for all available options.
+
+> [!NOTE]
+> Configuration priority: **CLI args > environment variables > config file > defaults**.
+> The action itself doesn't set any CLI flags beyond those in
+> [Optional Inputs](#optional-inputs), so env vars and config files are the
+> recommended way to customize.
 
 ## GitHub Action Job Summary
 
