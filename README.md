@@ -164,7 +164,31 @@ jobs:
 > ```
 > Without `edited`, only the initial title (at PR creation) is validated.
 
-Note: the default rule of above inputs is following [this configuration](https://github.com/commit-check/commit-check-action/blob/main/commit-check.toml). If you want to customize, just add your [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html) config file under your repository root directory.
+> [!TIP]
+> All the inputs above are just the most common options. For advanced configuration
+> (e.g., `subject-capitalized`, `require-signed-off-by`, `ai-attribution`, custom
+> `allow-commit-types`, etc.), you have **two options**:
+>
+> **Option 1 — Environment variables** (no config file needed):
+>
+> Set any `CCHK_*` environment variable in your workflow step. For example:
+>
+> ```yaml
+> - uses: commit-check/commit-check-action@v2
+>   env:
+>     CCHK_SUBJECT_CAPITALIZED: "true"
+>     CCHK_REQUIRE_SIGNED_OFF_BY: "true"
+>     CCHK_AI_ATTRIBUTION: "forbid"
+>     CCHK_ALLOW_COMMIT_TYPES: "feat,fix,docs,chore"
+> ```
+>
+> **Option 2 — Configuration file:**
+>
+> Add a [`commit-check.toml`](https://commit-check.github.io/commit-check/configuration.html)
+> or `cchk.toml` to the root of your repository.
+>
+> The two approaches follow the same priority rule as commit-check itself:
+> **CLI args > env vars > config file > defaults**.
 
 ## GitHub Action Job Summary
 
