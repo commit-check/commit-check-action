@@ -267,4 +267,4 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## Have questions or feedback?
 
-To provide feedback (requesting a feature or reporting a bug), please post to [issues](https://github.com/commit-check/commit-check/issues).
+To provide feedback (requesting a feature or reporting a bug), please post to [issues](https://github.com/commit-check/commit-check/issues) or start a [discussion](https://github.com/commit-check/commit-check/discussions).
