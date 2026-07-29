@@ -1,0 +1,21 @@
+.github/workflows/coverage.yml
+  s_0fbbb66a7e8f2a::t_5e24c6b5ff18ec 16-17,28,33
+.github/workflows/commit-check.yml
+  s_0fbbb66a7e8f2a::t_dc6ea6615479fd 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "e69fedd890515c030c076630616ee801891d07ac",
+  "prompts": {},
+  "sessions": {
+    "s_0fbbb66a7e8f2a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fafd5-9111-7fee-9c7e-1b72b56fa1fd",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "shenxianpeng <xianpeng.shen@gmail.com>"
+    }
+  }
+}
