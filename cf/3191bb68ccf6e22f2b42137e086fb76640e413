@@ -1,0 +1,21 @@
+.github/workflows/coverage.yml
+  s_242699324a30e5::t_2bc38077b32801 1-30
+README.md
+  s_242699324a30e5::t_5caa8cd9f30a84 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "cf3191bb68ccf6e22f2b42137e086fb76640e413",
+  "prompts": {},
+  "sessions": {
+    "s_242699324a30e5": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019faf83-da50-71e9-91d4-5def1797fab0",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "shenxianpeng <xianpeng.shen@gmail.com>"
+    }
+  }
+}
