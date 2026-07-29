@@ -691,6 +691,182 @@ class TestAddPrComments(unittest.TestCase):
         self.assertIn("read-only", content)
         self.assertIn("fork-pr-comments", content)
 
+    # --- PyGithub interaction tests ---
+
+    def _mock_github_chain(self):
+        """Set up mocked PyGithub objects for comment interaction tests."""
+        mock_github = MagicMock()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        mock_github.get_repo.return_value = mock_repo
+        mock_repo.get_issue.return_value = mock_issue
+        return mock_github, mock_repo, mock_issue
+
+    def _patch_github_env(self, token="fake-token", repo="test/repo"):
+        return patch.dict(
+            os.environ,
+            {"GITHUB_TOKEN": token, "GITHUB_REPOSITORY": repo},
+        )
+
+    def test_new_comment_created_when_failure(self):
+        """No existing comment: creates a new comment, returns 1 when result has content."""
+        mock_github, _, mock_issue = self._mock_github_chain()
+        mock_issue.get_comments.return_value = []
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("github.Github", return_value=mock_github),
+            patch("main.get_pr_number", return_value=42),
+            patch("main.read_result_file", return_value="bad commit message"),
+            self._patch_github_env(),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 1)
+        mock_issue.create_comment.assert_called_once()
+        body = mock_issue.create_comment.call_args[1]["body"]
+        self.assertIn(main.FAILURE_TITLE, body)
+        self.assertIn("bad commit message", body)
+
+    def test_new_comment_created_when_success(self):
+        """No existing comment: creates a new success comment, returns 0."""
+        mock_github, _, mock_issue = self._mock_github_chain()
+        mock_issue.get_comments.return_value = []
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("github.Github", return_value=mock_github),
+            patch("main.get_pr_number", return_value=42),
+            patch("main.read_result_file", return_value=None),
+            self._patch_github_env(),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+        mock_issue.create_comment.assert_called_once()
+        body = mock_issue.create_comment.call_args[1]["body"]
+        self.assertEqual(body, main.SUCCESS_TITLE)
+
+    def test_comment_up_to_date_skips(self):
+        """Existing comment with same body: no edit/create, returns 0."""
+        mock_github, _, mock_issue = self._mock_github_chain()
+        existing = MagicMock()
+        existing.body = main.SUCCESS_TITLE
+        mock_issue.get_comments.return_value = [existing]
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("github.Github", return_value=mock_github),
+            patch("main.get_pr_number", return_value=42),
+            patch("main.read_result_file", return_value=None),
+            self._patch_github_env(),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+        existing.edit.assert_not_called()
+        existing.delete.assert_not_called()
+        mock_issue.create_comment.assert_not_called()
+
+    def test_comment_updated_old_deleted(self):
+        """Multiple existing comments with stale body: update last, delete rest."""
+        mock_github, _, mock_issue = self._mock_github_chain()
+        old_comment = MagicMock()
+        old_comment.body = main.FAILURE_TITLE + "\n```\nold message\n```"
+        last_comment = MagicMock()
+        last_comment.body = main.FAILURE_TITLE + "\n```\nolder message\n```"
+        mock_issue.get_comments.return_value = [old_comment, last_comment]
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("github.Github", return_value=mock_github),
+            patch("main.get_pr_number", return_value=42),
+            patch("main.read_result_file", return_value="new error"),
+            self._patch_github_env(),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 1)
+        last_comment.edit.assert_called_once()
+        old_comment.delete.assert_called_once()
+        mock_issue.create_comment.assert_not_called()
+        edited_body = last_comment.edit.call_args[0][0]
+        self.assertIn("new error", edited_body)
+
+    def test_missing_token_returns_zero(self):
+        """GITHUB_TOKEN not set: catches ValueError, returns 0."""
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("main.get_pr_number", return_value=42),
+            patch.dict(os.environ, {"GITHUB_REPOSITORY": "test/repo"}),
+            patch("os.getenv", return_value=None),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+
+    def test_403_forbidden_returns_warning(self):
+        """GithubException(403): prints warning, returns 0."""
+        from github import GithubException
+
+        mock_github, mock_repo, _ = self._mock_github_chain()
+        mock_repo.get_issue.side_effect = GithubException(
+            403, {"message": "Resource not accessible by integration"}
+        )
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("github.Github", return_value=mock_github),
+            patch("main.get_pr_number", return_value=42),
+            self._patch_github_env(),
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+        warning_text = mock_print.call_args_list[-1][0][0]
+        self.assertIn("warning", warning_text)
+        self.assertIn("403", warning_text)
+
+    def test_github_exception_returns_zero(self):
+        """GithubException(non-403): prints error, returns 0."""
+        from github import GithubException
+
+        mock_github, mock_repo, _ = self._mock_github_chain()
+        mock_repo.get_issue.side_effect = GithubException(
+            500, {"message": "Internal Server Error"}
+        )
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("github.Github", return_value=mock_github),
+            patch("main.get_pr_number", return_value=42),
+            self._patch_github_env(),
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+        error_text = mock_print.call_args_list[-1][0][0]
+        self.assertIn("Error posting PR comment", error_text)
+        self.assertIn("500", error_text)
+
+    def test_generic_exception_returns_zero(self):
+        """Generic Exception: prints error, returns 0."""
+        mock_github, mock_repo, _ = self._mock_github_chain()
+        mock_repo.get_issue.side_effect = ValueError("unexpected error")
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr", return_value=False),
+            patch("github.Github", return_value=mock_github),
+            patch("main.get_pr_number", return_value=42),
+            self._patch_github_env(),
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments()
+        self.assertEqual(rc, 0)
+        error_text = mock_print.call_args_list[-1][0][0]
+        self.assertIn("Error posting PR comment", error_text)
+
 
 class TestIsForkPrWithReadonlyToken(unittest.TestCase):
     def test_fork_pr_with_pull_request_event(self):
