@@ -1,4 +1,4 @@
-venv/
-.venv/
+.coverage
+.coverage.*
+*.pyc
 __pycache__/
-result.txt
