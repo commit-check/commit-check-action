@@ -186,13 +186,13 @@ Set any `CCHK_*` environment variable in your workflow step — no config file r
 
 All available environment variables follow the naming convention:
 `CCHK_` + uppercase option name with underscores instead of hyphens. See the
-[full mapping](https://commit-check.github.io/commit-check/configuration.html#environment-variables)
+[full mapping](https://docs.commit-check.com/configuration.html#environment-variables)
 in the commit-check documentation.
 
 ### Via Configuration File
 
 Add a `commit-check.toml` or `cchk.toml` to the root of your repository.
-Refer to the [configuration guide](https://commit-check.github.io/commit-check/configuration.html)
+Refer to the [configuration guide](https://docs.commit-check.com/configuration.html)
 for all available options.
 
 > [!NOTE]
