@@ -416,18 +416,18 @@ def _markdown_details(results: list[ScopeResult]) -> str:
 
 
 def _markdown_passed_details(results: list[ScopeResult]) -> str:
-    """Render the collapsible section listing which checks passed per scope."""
-    rows = ["| Scope | Passed checks |", "|---|---|"]
-    for scope in results:
-        passed = [c for c in scope.checks if c["status"] == "pass"]
-        if passed:
-            links = ", ".join(_rule_markdown_link(c) for c in passed)
-        else:
-            links = "\u2014"
-        rows.append(f"| {scope.label} | {links} |")
-    return "\n".join(
-        ["<details>", "<summary>Show details</summary>", "", *rows, "", "</details>"]
-    )
+    """Render the collapsible section listing passed checks per scope.
+
+    Mirrors the step log layout (group name followed by indented ✔ scope
+    lines) inside a fenced block so it reads like the action log.
+    """
+    lines = ["<details>", "<summary>Show details</summary>", "", "```text"]
+    for group_name, scopes in _grouped(results):
+        lines.append(group_name)
+        for scope in scopes:
+            lines.append(f"  ✔ {scope.label}")
+    lines.extend(["```", "", "</details>"])
+    return "\n".join(lines)
 
 
 def render_report(results: list[ScopeResult], include_footer: bool = True) -> str:

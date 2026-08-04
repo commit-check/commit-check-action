@@ -635,8 +635,25 @@ class TestRenderJobSummary(unittest.TestCase):
         self.assertIn("All checks passed (1 scope)", body)
         self.assertIn("<details>", body)
         self.assertIn("<summary>Show details</summary>", body)
-        self.assertIn("| Scope | Passed checks |", body)
-        self.assertIn("| Branch | CC001 branch |", body)
+        self.assertIn("```text", body)
+        self.assertIn("Branch", body)
+        self.assertIn("  ✔ Branch", body)
+
+    def test_all_pass_groups_scopes_like_step_log(self):
+        results = [
+            pass_scope("PR title"),
+            pass_scope("Commit 1/2"),
+            pass_scope("Commit 2/2"),
+            pass_scope("Branch"),
+            pass_scope("Author name"),
+            pass_scope("Author email"),
+        ]
+        body = main.render_job_summary(results)
+        # Group headers in the details block mirror the step log ordering.
+        self.assertLess(body.index("Commit message"), body.index("Branch"))
+        self.assertLess(body.index("Branch"), body.index("Author"))
+        for scope in results:
+            self.assertIn(f"  ✔ {scope.label}", body)
 
     def test_failure_renders_table_with_rule_links(self):
         body = main.render_job_summary([fail_scope("Commit 1/1")])
