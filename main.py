@@ -19,9 +19,8 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
-# Constants for message titles
-SUCCESS_TITLE = "# Commit Check ✔️"
-FAILURE_TITLE = "# Commit Check ❌"
+# Constant for the report title
+REPORT_TITLE = "# Commit Check"
 COMMIT_MESSAGE_DELIMITER = "\x00"
 RULES_URL = "https://commit-check.com/rules/"
 
@@ -419,20 +418,22 @@ def _markdown_details(results: list[ScopeResult]) -> str:
 def render_report(results: list[ScopeResult], include_footer: bool = True) -> str:
     """Render the Markdown report shared by the job summary and PR comment.
 
-    All checks passing collapses to a single success line; failures render
-    a scope table with rule links plus collapsible failure details.
+    The report opens with the plain title line followed by the status line:
+    ``✅ All checks passed (N scopes)`` on success, or the failure count on
+    failure, followed by a scope table with rule links and collapsible
+    failure details.
     """
     if all(scope.status == "pass" for scope in results):
         scopes = "scope" if len(results) == 1 else "scopes"
-        return f"{SUCCESS_TITLE} All checks passed ({len(results)} {scopes})"
+        return f"{REPORT_TITLE}\n\n✅ All checks passed ({len(results)} {scopes})"
 
     failures = _failure_count(results)
     unit = "failure" if failures == 1 else "failures"
     scopes = "scope" if len(results) == 1 else "scopes"
     lines = [
-        FAILURE_TITLE,
+        REPORT_TITLE,
         "",
-        f"**{failures} {unit}** across {len(results)} {scopes}",
+        f"❌ **{failures} {unit}** across {len(results)} {scopes}",
         "",
         _markdown_table(results),
         "",
@@ -456,8 +457,8 @@ def render_pr_comment(results: list[ScopeResult]) -> str:
 def build_result_body(result_text: str | None) -> str:
     """Legacy helper kept for backward compatibility with existing callers."""
     if result_text is None:
-        return SUCCESS_TITLE
-    return f"{FAILURE_TITLE}\n```\n{result_text}\n```"
+        return REPORT_TITLE
+    return f"{REPORT_TITLE}\n```\n{result_text}\n```"
 
 
 # ---------------------------------------------------------------------------
@@ -605,7 +606,7 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         matching_comments = [
             c
             for c in comments
-            if c.body.startswith(SUCCESS_TITLE) or c.body.startswith(FAILURE_TITLE)
+            if c.body.startswith(REPORT_TITLE)
             # Match comments from older versions that used a hyphenated title.
             or c.body.startswith("# Commit-Check")
         ]

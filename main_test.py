@@ -631,12 +631,12 @@ class TestRenderStepLog(unittest.TestCase):
 class TestRenderJobSummary(unittest.TestCase):
     def test_all_pass(self):
         body = main.render_job_summary([pass_scope("Branch")])
-        self.assertTrue(body.startswith(main.SUCCESS_TITLE))
+        self.assertTrue(body.startswith(main.REPORT_TITLE))
         self.assertIn("All checks passed (1 scope)", body)
 
     def test_failure_renders_table_with_rule_links(self):
         body = main.render_job_summary([fail_scope("Commit 1/1")])
-        self.assertTrue(body.startswith(main.FAILURE_TITLE))
+        self.assertTrue(body.startswith(main.REPORT_TITLE))
         self.assertIn("**1 failure** across 1 scope", body)
         self.assertIn("| Scope | Failed checks | Result |", body)
         self.assertIn(
@@ -658,25 +658,25 @@ class TestRenderPrComment(unittest.TestCase):
         comment = main.render_pr_comment([pass_scope("Branch")])
         summary = main.render_job_summary([pass_scope("Branch")])
         self.assertEqual(comment, summary)
-        self.assertTrue(comment.startswith(main.SUCCESS_TITLE))
+        self.assertTrue(comment.startswith(main.REPORT_TITLE))
         self.assertIn("All checks passed (1 scope)", comment)
 
     def test_failure_matches_job_summary(self):
         comment = main.render_pr_comment([fail_scope("Commit 1/1")])
         summary = main.render_job_summary([fail_scope("Commit 1/1")])
         self.assertEqual(comment, summary)
-        self.assertTrue(comment.startswith(main.FAILURE_TITLE))
+        self.assertTrue(comment.startswith(main.REPORT_TITLE))
         self.assertIn("**1 failure** across 1 scope", comment)
         self.assertIn("| Scope | Failed checks | Result |", comment)
 
 
 class TestBuildResultBody(unittest.TestCase):
     def test_success_body(self):
-        self.assertEqual(main.build_result_body(None), main.SUCCESS_TITLE)
+        self.assertEqual(main.build_result_body(None), main.REPORT_TITLE)
 
     def test_failure_body(self):
         result = main.build_result_body("bad commit")
-        self.assertIn(main.FAILURE_TITLE, result)
+        self.assertIn(main.REPORT_TITLE, result)
         self.assertIn("bad commit", result)
 
 
@@ -800,7 +800,7 @@ class TestAddPrComments(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(mock_pull_request.create_comment.call_count, 1)
         body = mock_pull_request.create_comment.call_args[1]["body"]
-        self.assertTrue(body.startswith(main.FAILURE_TITLE))
+        self.assertTrue(body.startswith(main.REPORT_TITLE))
         self.assertIn("| Scope | Failed checks | Result |", body)
 
     def test_updates_existing_comment_when_changed(self):
