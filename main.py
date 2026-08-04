@@ -40,6 +40,14 @@ def env_flag(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).lower() == "true"
 
 
+def _reconfigure_io() -> None:
+    """Reconfigure stdout/stderr to UTF-8 so emoji and check marks never
+    crash on runners with legacy encodings (e.g. cp1252 on Windows)."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 MESSAGE_ENABLED = env_flag("MESSAGE")
 BRANCH_ENABLED = env_flag("BRANCH")
 AUTHOR_NAME_ENABLED = env_flag("AUTHOR_NAME")
@@ -646,6 +654,7 @@ def log_error_and_exit(ret_code: int, results: list[ScopeResult]) -> None:
 
 def main():
     """Main function to run commit-check and render all output surfaces."""
+    _reconfigure_io()
     log_env_vars()
 
     ret_code, results = run_commit_check()

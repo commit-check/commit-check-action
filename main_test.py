@@ -81,6 +81,40 @@ class TestEnvFlag(unittest.TestCase):
             self.assertTrue(main.env_flag("FEATURE_FLAG", default="true"))
 
 
+class TestReconfigureIo(unittest.TestCase):
+    def test_reconfigures_streams_to_utf8(self):
+        class FakeStream:
+            def __init__(self):
+                self.reconfigured = None
+
+            def reconfigure(self, **kwargs):
+                self.reconfigured = kwargs
+
+        fake_out = FakeStream()
+        fake_err = FakeStream()
+        with (
+            patch.object(sys, "stdout", fake_out),
+            patch.object(sys, "stderr", fake_err),
+        ):
+            main._reconfigure_io()
+        self.assertEqual(
+            fake_out.reconfigured, {"encoding": "utf-8", "errors": "replace"}
+        )
+        self.assertEqual(
+            fake_err.reconfigured, {"encoding": "utf-8", "errors": "replace"}
+        )
+
+    def test_streams_without_reconfigure_are_ignored(self):
+        class NoopStream:
+            pass
+
+        with (
+            patch.object(sys, "stdout", NoopStream()),
+            patch.object(sys, "stderr", NoopStream()),
+        ):
+            main._reconfigure_io()  # should not raise
+
+
 class TestBuildCheckArgs(unittest.TestCase):
     def test_all_true(self):
         with (
