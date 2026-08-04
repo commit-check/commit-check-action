@@ -633,6 +633,10 @@ class TestRenderJobSummary(unittest.TestCase):
         body = main.render_job_summary([pass_scope("Branch")])
         self.assertTrue(body.startswith(main.REPORT_TITLE))
         self.assertIn("All checks passed (1 scope)", body)
+        self.assertIn("<details>", body)
+        self.assertIn("<summary>Show details</summary>", body)
+        self.assertIn("| Scope | Passed checks |", body)
+        self.assertIn("| Branch | CC001 branch |", body)
 
     def test_failure_renders_table_with_rule_links(self):
         body = main.render_job_summary([fail_scope("Commit 1/1")])

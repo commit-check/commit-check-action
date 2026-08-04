@@ -415,6 +415,21 @@ def _markdown_details(results: list[ScopeResult]) -> str:
     return "\n".join(sections)
 
 
+def _markdown_passed_details(results: list[ScopeResult]) -> str:
+    """Render the collapsible section listing which checks passed per scope."""
+    rows = ["| Scope | Passed checks |", "|---|---|"]
+    for scope in results:
+        passed = [c for c in scope.checks if c["status"] == "pass"]
+        if passed:
+            links = ", ".join(_rule_markdown_link(c) for c in passed)
+        else:
+            links = "\u2014"
+        rows.append(f"| {scope.label} | {links} |")
+    return "\n".join(
+        ["<details>", "<summary>Show details</summary>", "", *rows, "", "</details>"]
+    )
+
+
 def render_report(results: list[ScopeResult], include_footer: bool = True) -> str:
     """Render the Markdown report shared by the job summary and PR comment.
 
@@ -425,7 +440,14 @@ def render_report(results: list[ScopeResult], include_footer: bool = True) -> st
     """
     if all(scope.status == "pass" for scope in results):
         scopes = "scope" if len(results) == 1 else "scopes"
-        return f"{REPORT_TITLE}\n\n✅ All checks passed ({len(results)} {scopes})"
+        lines = [
+            REPORT_TITLE,
+            "",
+            f"✅ All checks passed ({len(results)} {scopes})",
+            "",
+            _markdown_passed_details(results),
+        ]
+        return "\n".join(lines)
 
     failures = _failure_count(results)
     unit = "failure" if failures == 1 else "failures"
