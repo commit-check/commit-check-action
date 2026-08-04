@@ -659,7 +659,7 @@ class TestRenderJobSummary(unittest.TestCase):
     def test_all_pass_truncates_long_values(self):
         long_value = "x" * 200
         body = main.render_job_summary([pass_scope("Commit 1/1", value=long_value)])
-        self.assertIn(f"  ✔ Commit 1/1 ({'x' * 77}...)", body)
+        self.assertIn(f"  ✔ Commit 1/1 ({'x' * 57}...)", body)
 
     def test_all_pass_without_value_shows_plain_label(self):
         body = main.render_job_summary([pass_scope("Branch")])

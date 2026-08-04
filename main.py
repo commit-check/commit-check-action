@@ -415,12 +415,14 @@ def _markdown_details(results: list[ScopeResult]) -> str:
     return "\n".join(sections)
 
 
-def _scope_value(scope: ScopeResult, max_len: int = 80) -> str:
+def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
     """First non-empty check value for a scope, trimmed to a single line.
 
     The value is the concrete thing that was checked (PR title, commit
     subject, branch name, author name/email) and reads naturally next to
-    the scope label in the success details.
+    the scope label in the success details. The 60-character cap keeps the
+    full line (prefix + value + parentheses) short enough to avoid wrapping
+    in the fenced details block.
     """
     for check in scope.checks:
         value = check.get("value", "")
