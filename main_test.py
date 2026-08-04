@@ -3,6 +3,8 @@
 import io
 import json
 import os
+import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +13,58 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("GITHUB_STEP_SUMMARY", "/tmp/step_summary.txt")
 
 import main  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def make_check(
+    check: str,
+    status: str = "pass",
+    rule_id: str = "CC001",
+    value: str = "",
+    error: str = "",
+    suggest: str = "",
+    docs_url: str = "",
+) -> dict[str, str]:
+    """Build a single check outcome dict as produced by commit-check JSON."""
+    return {
+        "rule_id": rule_id,
+        "check": check,
+        "status": status,
+        "value": value,
+        "error": error,
+        "suggest": suggest,
+        "docs_url": docs_url,
+    }
+
+
+def json_output(*checks) -> str:
+    """Serialize checks to the CLI JSON output shape."""
+    status = "fail" if any(c["status"] == "fail" for c in checks) else "pass"
+    return json.dumps({"status": status, "checks": list(checks)})
+
+
+def pass_scope(label: str = "Branch") -> main.ScopeResult:
+    return main.ScopeResult(label=label, checks=[make_check("branch")])
+
+
+def fail_scope(label: str = "Commit 1/1") -> main.ScopeResult:
+    return main.ScopeResult(
+        label=label,
+        checks=[
+            make_check(
+                "message",
+                status="fail",
+                rule_id="CC001",
+                value="bad message",
+                error="The commit message should follow Conventional Commits.",
+                suggest="Use <type>(<scope>): <description>",
+                docs_url="https://commit-check.com/rules/#cc001",
+            )
+        ],
+    )
 
 
 class TestEnvFlag(unittest.TestCase):
@@ -73,8 +127,6 @@ class TestGetPrTitle(unittest.TestCase):
             self.assertIsNone(main.get_pr_title())
 
     def test_pr_event_returns_title(self):
-        import tempfile
-
         event = {
             "pull_request": {"title": "feat: add login page"},
         }
@@ -91,8 +143,6 @@ class TestGetPrTitle(unittest.TestCase):
         os.unlink(event_path)
 
     def test_pull_request_target_event(self):
-        import tempfile
-
         event = {
             "pull_request": {"title": "fix: resolve timeout"},
         }
@@ -112,17 +162,12 @@ class TestGetPrTitle(unittest.TestCase):
         os.unlink(event_path)
 
     def test_missing_event_path_returns_none(self):
-        with (
-            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch.dict(os.environ, {}, clear=True),
-        ):
+        with patch.dict(os.environ, {}, clear=True):
             os.environ["GITHUB_EVENT_NAME"] = "pull_request"
             os.environ.pop("GITHUB_EVENT_PATH", None)
             self.assertIsNone(main.get_pr_title())
 
     def test_invalid_json_returns_none(self):
-        import tempfile
-
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not valid json")
             event_path = f.name
@@ -137,156 +182,165 @@ class TestGetPrTitle(unittest.TestCase):
         os.unlink(event_path)
 
 
-class TestRunCheckCommand(unittest.TestCase):
-    def test_with_args_calls_subprocess(self):
-        mock_result = MagicMock(returncode=0, stdout="")
+class TestRunCheckJson(unittest.TestCase):
+    def test_parses_json_output(self):
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("branch")))
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            rc = main.run_check_command(["--branch"], io.StringIO())
+            rc, data, raw = main.run_check_json(["--branch"])
         self.assertEqual(rc, 0)
-        self.assertEqual(mock_run.call_args[0][0], ["commit-check", "--branch"])
+        self.assertEqual(data["status"], "pass")
+        self.assertEqual(len(data["checks"]), 1)
+        self.assertIn("checks", raw)
 
-    def test_with_input_uses_text_mode(self):
-        mock_result = MagicMock(returncode=0, stdout="")
+    def test_command_includes_format_json(self):
+        mock_result = MagicMock(returncode=0, stdout="{}")
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_check_command(["--message"], io.StringIO(), input_text="fix: demo")
+            main.run_check_json(["--branch"])
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["commit-check", "--format", "json", "--branch"],
+        )
+
+    def test_input_text_is_passed_through(self):
+        mock_result = MagicMock(returncode=0, stdout="{}")
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            main.run_check_json(["--message"], input_text="fix: demo")
         self.assertEqual(mock_run.call_args[1]["input"], "fix: demo")
         self.assertTrue(mock_run.call_args[1]["text"])
 
-    def test_success_returns_zero(self):
-        mock_result = MagicMock(returncode=0, stdout="")
+    def test_invalid_json_returns_none_with_raw_output(self):
+        mock_result = MagicMock(returncode=1, stdout="Commit rejected.\n")
         with patch("main.subprocess.run", return_value=mock_result):
-            rc = main.run_check_command(["--branch"], io.StringIO())
-        self.assertEqual(rc, 0)
+            rc, data, raw = main.run_check_json(["--branch"])
+        self.assertEqual(rc, 1)
+        self.assertIsNone(data)
+        self.assertEqual(raw, "Commit rejected.\n")
+
+
+class TestScopeResult(unittest.TestCase):
+    def test_status_pass_when_all_checks_pass(self):
+        scope = main.ScopeResult(
+            label="Branch", checks=[make_check("branch"), make_check("merge_base")]
+        )
+        self.assertEqual(scope.status, "pass")
+        self.assertEqual(scope.failures, [])
+
+    def test_status_fail_when_any_check_fails(self):
+        scope = main.ScopeResult(
+            label="Branch",
+            checks=[
+                make_check("branch", status="fail"),
+                make_check("merge_base"),
+            ],
+        )
+        self.assertEqual(scope.status, "fail")
+        self.assertEqual(len(scope.failures), 1)
+
+    def test_raw_text_fallback_is_failure(self):
+        scope = main.ScopeResult(label="Branch", raw_text="unexpected output")
+        self.assertEqual(scope.status, "fail")
+
+
+class TestCheckScope(unittest.TestCase):
+    def test_parses_checks_into_scope(self):
+        mock_result = MagicMock(
+            returncode=1, stdout=json_output(make_check("branch", status="fail"))
+        )
+        with patch("main.subprocess.run", return_value=mock_result):
+            scope = main.check_scope("Branch", ["--branch"])
+        self.assertEqual(scope.label, "Branch")
+        self.assertEqual(scope.status, "fail")
+        self.assertEqual(scope.failures[0]["rule_id"], "CC001")
+
+    def test_invalid_json_falls_back_to_raw_text(self):
+        mock_result = MagicMock(returncode=1, stdout="unexpected output")
+        with patch("main.subprocess.run", return_value=mock_result):
+            scope = main.check_scope("Branch", ["--branch"])
+        self.assertEqual(scope.label, "Branch")
+        self.assertEqual(scope.raw_text, "unexpected output")
+        self.assertEqual(scope.status, "fail")
 
 
 class TestRunPrMessageChecks(unittest.TestCase):
     def test_single_message_pass(self):
-        mock_result = MagicMock(returncode=0, stdout="")
-        result_file = io.StringIO()
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            rc = main.run_pr_message_checks(["fix: something"], result_file)
-        self.assertEqual(rc, 0)
-        self.assertEqual(mock_run.call_args[0][0], ["commit-check", "--message"])
+            scopes = main.run_pr_message_checks(["fix: something"])
+        self.assertEqual(len(scopes), 1)
+        self.assertEqual(scopes[0].status, "pass")
+        self.assertEqual(scopes[0].label, "Commit 1/1")
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["commit-check", "--format", "json", "--message"],
+        )
         self.assertEqual(mock_run.call_args[1]["input"], "fix: something")
-        self.assertEqual(result_file.getvalue(), "")
 
-    def test_failed_message_writes_output(self):
-        mock_result = MagicMock(returncode=1, stdout="Commit rejected.\n")
-        result_file = io.StringIO()
+    def test_failed_message_marks_scope_failed(self):
+        mock_result = MagicMock(
+            returncode=1,
+            stdout=json_output(make_check("message", status="fail")),
+        )
         with patch("main.subprocess.run", return_value=mock_result):
-            rc = main.run_pr_message_checks(["fix: something"], result_file)
-        self.assertEqual(rc, 1)
-        self.assertIn("Commit rejected.", result_file.getvalue())
+            scopes = main.run_pr_message_checks(["bad commit"])
+        self.assertEqual(scopes[0].status, "fail")
+        self.assertEqual(len(scopes[0].failures), 1)
 
-    def test_multiple_messages_partial_failure(self):
+    def test_labels_commits_in_order(self):
         results = [
-            MagicMock(returncode=0, stdout=""),
-            MagicMock(returncode=1, stdout="Commit rejected.\n"),
-            MagicMock(returncode=0, stdout=""),
+            MagicMock(returncode=0, stdout=json_output(make_check("message"))),
+            MagicMock(
+                returncode=1,
+                stdout=json_output(make_check("message", status="fail")),
+            ),
+            MagicMock(returncode=0, stdout=json_output(make_check("message"))),
         ]
         with patch("main.subprocess.run", side_effect=results):
-            rc = main.run_pr_message_checks(["ok", "bad", "ok"], io.StringIO())
-        self.assertEqual(rc, 1)
+            scopes = main.run_pr_message_checks(["ok", "bad", "ok"])
+        self.assertEqual(
+            [s.label for s in scopes], ["Commit 1/3", "Commit 2/3", "Commit 3/3"]
+        )
+        self.assertEqual(scopes[1].status, "fail")
 
     def test_empty_list(self):
         with patch("main.subprocess.run") as mock_run:
-            rc = main.run_pr_message_checks([], io.StringIO())
-        self.assertEqual(rc, 0)
+            scopes = main.run_pr_message_checks([])
+        self.assertEqual(scopes, [])
         mock_run.assert_not_called()
-
-    def test_first_failure_keeps_banner_and_later_failures_use_no_banner(self):
-        results = [
-            MagicMock(returncode=0, stdout=""),
-            MagicMock(returncode=1, stdout="Commit rejected.\n"),
-            MagicMock(returncode=1, stdout="Type subject_imperative check failed\n"),
-        ]
-        with patch("main.subprocess.run", side_effect=results) as mock_run:
-            main.run_pr_message_checks(
-                ["ok first", "bad second", "bad third"], io.StringIO()
-            )
-
-        self.assertEqual(
-            mock_run.call_args_list[0][0][0], ["commit-check", "--message"]
-        )
-        self.assertEqual(
-            mock_run.call_args_list[1][0][0],
-            ["commit-check", "--message"],
-        )
-        self.assertEqual(
-            mock_run.call_args_list[2][0][0],
-            ["commit-check", "--message", "--no-banner"],
-        )
-
-    def test_initial_emitted_suppresses_banner_for_first_failure(self):
-        results = [
-            MagicMock(returncode=1, stdout="Commit rejected.\n"),
-        ]
-        with patch("main.subprocess.run", side_effect=results) as mock_run:
-            main.run_pr_message_checks(
-                ["bad commit"], io.StringIO(), initial_emitted=True
-            )
-        self.assertEqual(
-            mock_run.call_args[0][0],
-            ["commit-check", "--message", "--no-banner"],
-        )
-
-    def test_initial_not_emitted_allows_banner(self):
-        results = [
-            MagicMock(returncode=1, stdout="Commit rejected.\n"),
-        ]
-        with patch("main.subprocess.run", side_effect=results) as mock_run:
-            main.run_pr_message_checks(
-                ["bad commit"], io.StringIO(), initial_emitted=False
-            )
-        self.assertEqual(
-            mock_run.call_args[0][0],
-            ["commit-check", "--message"],
-        )
-
-    def test_later_failure_prefix_uses_short_separator_without_extra_blank_lines(self):
-        results = [
-            MagicMock(returncode=0, stdout=""),
-            MagicMock(returncode=1, stdout="Commit rejected.\n"),
-            MagicMock(
-                returncode=1,
-                stdout=(
-                    "Type subject_imperative check failed ==> bad third\n"
-                    "Commit message should use imperative mood\n"
-                    "Suggest: Use imperative mood\n\n"
-                ),
-            ),
-        ]
-        result_file = io.StringIO()
-        with patch("main.subprocess.run", side_effect=results):
-            main.run_pr_message_checks(
-                ["ok first", "bad second", "bad third"], result_file
-            )
-
-        output = result_file.getvalue()
-        self.assertIn("Commit rejected.\n", output)
-        self.assertIn(
-            "\n--- Commit 3/3:\nType subject_imperative check failed ==> bad third\n",
-            output,
-        )
-        self.assertNotIn(
-            "------------------------------------------------------------------------",
-            output,
-        )
-        self.assertNotIn("\n\n\n", output)
 
 
 class TestRunOtherChecks(unittest.TestCase):
-    def test_empty_args_returns_zero(self):
+    def test_empty_args_returns_no_scopes(self):
         with patch("main.subprocess.run") as mock_run:
-            rc = main.run_other_checks([], io.StringIO())
-        self.assertEqual(rc, 0)
+            scopes = main.run_other_checks([])
+        self.assertEqual(scopes, [])
         mock_run.assert_not_called()
 
-    def test_with_args_returns_returncode(self):
-        mock_result = MagicMock(returncode=1, stdout="branch check failed\n")
-        with patch("main.subprocess.run", return_value=mock_result):
-            rc = main.run_other_checks(["--branch", "--author-name"], io.StringIO())
-        self.assertEqual(rc, 1)
+    def test_runs_each_flag_as_its_own_scope(self):
+        results = [
+            MagicMock(
+                returncode=1, stdout=json_output(make_check("branch", status="fail"))
+            ),
+            MagicMock(returncode=0, stdout=json_output(make_check("author_name"))),
+        ]
+        with patch("main.subprocess.run", side_effect=results) as mock_run:
+            scopes = main.run_other_checks(["--branch", "--author-name"])
+        self.assertEqual([s.label for s in scopes], ["Branch", "Author name"])
+        self.assertEqual(scopes[0].status, "fail")
+        self.assertEqual(scopes[1].status, "pass")
+        self.assertEqual(
+            mock_run.call_args_list[0][0][0],
+            ["commit-check", "--format", "json", "--branch"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1][0][0],
+            ["commit-check", "--format", "json", "--author-name"],
+        )
+
+    def test_unknown_flag_is_skipped(self):
+        with patch("main.subprocess.run") as mock_run:
+            scopes = main.run_other_checks(["--unknown"])
+        self.assertEqual(scopes, [])
+        mock_run.assert_not_called()
 
 
 class TestGetPrCommitMessages(unittest.TestCase):
@@ -378,46 +432,34 @@ class TestGitMessageReaders(unittest.TestCase):
 
 
 class TestRunCommitCheck(unittest.TestCase):
-    def setUp(self):
-        self._orig_dir = os.getcwd()
-        import tempfile
-
-        self._tmpdir = tempfile.mkdtemp()
-        os.environ["RUNNER_TEMP"] = self._tmpdir
-        os.chdir(self._tmpdir)
-
-    def tearDown(self):
-        os.chdir(self._orig_dir)
-        os.environ.pop("RUNNER_TEMP", None)
-
-    def test_pr_path_calls_pr_message_checks(self):
+    def test_pr_path_checks_each_commit(self):
         with (
             patch("main.MESSAGE_ENABLED", True),
             patch("main.BRANCH_ENABLED", False),
             patch("main.AUTHOR_NAME_ENABLED", False),
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.get_pr_commit_messages", return_value=["fix: something"]),
-            patch("main.run_pr_message_checks", return_value=0) as mock_pr,
-            patch("main.run_other_checks", return_value=0),
-            patch("main.run_check_command") as mock_command,
+            patch("main.run_pr_message_checks", return_value=[pass_scope()]) as mock_pr,
+            patch("main.run_other_checks", return_value=[]),
         ):
-            rc = main.run_commit_check()
+            rc, results = main.run_commit_check()
         self.assertEqual(rc, 0)
-        mock_pr.assert_called_once()
-        mock_command.assert_not_called()
+        mock_pr.assert_called_once_with(["fix: something"])
+        self.assertEqual(len(results), 1)
 
-    def test_pr_path_returns_nonzero_when_any_check_fails(self):
+    def test_pr_path_fails_when_any_scope_fails(self):
         with (
             patch("main.MESSAGE_ENABLED", True),
             patch("main.BRANCH_ENABLED", True),
             patch("main.AUTHOR_NAME_ENABLED", False),
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.get_pr_commit_messages", return_value=["bad msg"]),
-            patch("main.run_pr_message_checks", return_value=1),
-            patch("main.run_other_checks", return_value=1),
+            patch("main.run_pr_message_checks", return_value=[fail_scope()]),
+            patch("main.run_other_checks", return_value=[pass_scope()]),
         ):
-            rc = main.run_commit_check()
+            rc, results = main.run_commit_check()
         self.assertEqual(rc, 1)
+        self.assertEqual(len(results), 2)
 
     def test_pr_title_check_runs_when_enabled(self):
         with (
@@ -428,16 +470,16 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.is_pr_event", return_value=True),
             patch("main.get_pr_title", return_value="feat: a feature"),
-            patch("main.run_check_command", return_value=0) as mock_cmd,
-            patch("main.run_other_checks", return_value=0),
+            patch(
+                "main.check_scope", return_value=pass_scope("PR title")
+            ) as mock_scope,
+            patch("main.run_other_checks", return_value=[]),
         ):
-            rc = main.run_commit_check()
+            rc, results = main.run_commit_check()
         self.assertEqual(rc, 0)
-        self.assertEqual(
-            mock_cmd.call_args[0][0],
-            ["--message", "--no-banner"],
+        mock_scope.assert_called_once_with(
+            "PR title", ["--message"], input_text="feat: a feature"
         )
-        self.assertEqual(mock_cmd.call_args[1]["input_text"], "feat: a feature")
 
     def test_pr_title_failure_propagates(self):
         with (
@@ -448,10 +490,10 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.is_pr_event", return_value=True),
             patch("main.get_pr_title", return_value="bad title"),
-            patch("main.run_check_command", return_value=1),
-            patch("main.run_other_checks", return_value=0),
+            patch("main.check_scope", return_value=fail_scope("PR title")),
+            patch("main.run_other_checks", return_value=[]),
         ):
-            rc = main.run_commit_check()
+            rc, results = main.run_commit_check()
         self.assertEqual(rc, 1)
 
     def test_pr_title_skipped_outside_pr_context(self):
@@ -463,36 +505,13 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.is_pr_event", return_value=False),
             patch("main.get_pr_title") as mock_title,
-            patch("main.run_check_command", return_value=0),
-            patch("main.run_other_checks", return_value=0),
+            patch("main.run_other_checks", return_value=[]),
         ):
-            rc = main.run_commit_check()
+            rc, results = main.run_commit_check()
         self.assertEqual(rc, 0)
         mock_title.assert_not_called()
 
-    def test_pr_title_and_message_both_run(self):
-        with (
-            patch("main.PR_TITLE_ENABLED", True),
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_title", return_value="feat: nice pr"),
-            patch(
-                "main.get_pr_commit_messages",
-                return_value=["fix: first", "feat: second"],
-            ),
-            patch("main.run_check_command", return_value=0) as mock_cmd,
-            patch("main.run_pr_message_checks", return_value=0) as mock_pr,
-            patch("main.run_other_checks", return_value=0),
-        ):
-            rc = main.run_commit_check()
-        self.assertEqual(rc, 0)
-        mock_cmd.assert_called_once()  # PR title check
-        mock_pr.assert_called_once()  # commit message checks
-
-    def test_non_pr_path_uses_direct_command(self):
+    def test_non_pr_message_check_uses_commit_message_scope(self):
         with (
             patch("main.MESSAGE_ENABLED", True),
             patch("main.BRANCH_ENABLED", False),
@@ -500,44 +519,22 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.get_pr_commit_messages", return_value=[]),
             patch("main.run_pr_message_checks") as mock_pr,
-            patch("main.run_check_command", return_value=0) as mock_command,
+            patch(
+                "main.check_scope", return_value=pass_scope("Commit message")
+            ) as mock_scope,
+            patch("main.run_other_checks", return_value=[]),
         ):
-            rc = main.run_commit_check()
+            rc, results = main.run_commit_check()
         self.assertEqual(rc, 0)
         mock_pr.assert_not_called()
-        mock_command.assert_called_once()
+        mock_scope.assert_called_once_with("Commit message", ["--message"])
 
-    def test_message_disabled_uses_direct_command(self):
-        with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.run_pr_message_checks") as mock_pr,
-            patch("main.run_check_command", return_value=0) as mock_command,
-        ):
-            rc = main.run_commit_check()
-        self.assertEqual(rc, 0)
-        mock_pr.assert_not_called()
-        mock_command.assert_called_once()
-
-    def test_result_txt_is_created(self):
-        with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.run_check_command", return_value=0),
-        ):
-            main.run_commit_check()
-        self.assertTrue(os.path.exists(main.get_result_path()))
-
-    def test_other_args_excludes_message(self):
+    def test_message_flag_removed_before_other_checks_in_pr(self):
         captured_args = []
 
-        def fake_other_checks(args, result_file):
+        def fake_other_checks(args):
             captured_args.extend(args)
-            return 0
+            return []
 
         with (
             patch("main.MESSAGE_ENABLED", True),
@@ -545,7 +542,7 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_NAME_ENABLED", False),
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.get_pr_commit_messages", return_value=["fix: x"]),
-            patch("main.run_pr_message_checks", return_value=0),
+            patch("main.run_pr_message_checks", return_value=[pass_scope()]),
             patch("main.run_other_checks", side_effect=fake_other_checks),
         ):
             main.run_commit_check()
@@ -553,34 +550,85 @@ class TestRunCommitCheck(unittest.TestCase):
         self.assertIn("--branch", captured_args)
 
 
-class TestReadResultFile(unittest.TestCase):
-    def setUp(self):
-        import tempfile
+class TestRenderStepLog(unittest.TestCase):
+    def _run(self, results):
+        buffer = io.StringIO()
+        with patch("sys.stdout", buffer):
+            main.render_step_log(results)
+        return buffer.getvalue()
 
-        self._orig_dir = os.getcwd()
-        self._tmpdir = tempfile.mkdtemp()
-        os.environ["RUNNER_TEMP"] = self._tmpdir
-        os.chdir(self._tmpdir)
+    def test_all_pass_prints_success_line(self):
+        output = self._run([pass_scope("Branch")])
+        self.assertIn("✔ commit-check: all checks passed", output)
 
-    def tearDown(self):
-        os.chdir(self._orig_dir)
-        os.environ.pop("RUNNER_TEMP", None)
+    def test_failure_prints_group_and_error_annotation(self):
+        output = self._run([fail_scope("Commit 1/1")])
+        self.assertIn("::group::Commit message", output)
+        self.assertIn("::endgroup::", output)
+        self.assertIn("✖ Commit 1/1 (1 failure)", output)
+        self.assertIn(
+            "::error title=CC001 message::The commit message should follow "
+            "Conventional Commits.",
+            output,
+        )
+        self.assertIn("value: bad message", output)
+        self.assertIn("Suggest: Use <type>(<scope>): <description>", output)
+        self.assertIn("Docs: https://commit-check.com/rules/#cc001", output)
 
-    def _write_result(self, content: str):
-        with open(main.get_result_path(), "w", encoding="utf-8") as file_obj:
-            file_obj.write(content)
+    def test_groups_scopes_by_category(self):
+        results = [
+            fail_scope("PR title"),
+            pass_scope("Commit 1/2"),
+            fail_scope("Branch"),
+        ]
+        output = self._run(results)
+        # One group for commit-message scopes, one for the branch scope.
+        self.assertEqual(output.count("::group::"), 2)
+        self.assertIn("::group::Commit message", output)
+        self.assertIn("::group::Branch", output)
 
-    def test_empty_file_returns_none(self):
-        self._write_result("")
-        self.assertIsNone(main.read_result_file())
+    def test_raw_text_fallback_is_printed(self):
+        scope = main.ScopeResult(label="Branch", raw_text="unexpected output")
+        output = self._run([scope])
+        self.assertIn("✖ Branch (0 failures)", output)
+        self.assertIn("unexpected output", output)
 
-    def test_file_with_content(self):
-        self._write_result("some output\n")
-        self.assertEqual(main.read_result_file(), "some output")
 
-    def test_ansi_codes_are_stripped(self):
-        self._write_result("\x1b[31mError\x1b[0m: bad commit")
-        self.assertEqual(main.read_result_file(), "Error: bad commit")
+class TestRenderJobSummary(unittest.TestCase):
+    def test_all_pass(self):
+        body = main.render_job_summary([pass_scope("Branch")])
+        self.assertIn("# Commit Check Policy Report", body)
+        self.assertIn("✅ **All checks passed** (1 scope)", body)
+
+    def test_failure_renders_table_with_rule_links(self):
+        body = main.render_job_summary([fail_scope("Commit 1/1")])
+        self.assertIn("**1 failure** across 1 scope", body)
+        self.assertIn("| Scope | Failed checks | Result |", body)
+        self.assertIn(
+            "| Commit 1/1 | [CC001 message](https://commit-check.com/rules/#cc001) | ❌ |",
+            body,
+        )
+        self.assertIn("<details>", body)
+        self.assertIn("value: `bad message`", body)
+        self.assertIn("suggest: Use <type>(<scope>): <description>", body)
+        self.assertIn("Rules reference: https://commit-check.com/rules/", body)
+
+    def test_pass_scope_renders_checkmark(self):
+        body = main.render_job_summary([pass_scope("Branch"), fail_scope("Commit 1/1")])
+        self.assertIn("| Branch | — | ✅ |", body)
+
+
+class TestRenderPrComment(unittest.TestCase):
+    def test_all_pass_keeps_success_prefix(self):
+        body = main.render_pr_comment([pass_scope("Branch")])
+        self.assertTrue(body.startswith(main.SUCCESS_TITLE))
+        self.assertIn("All checks passed", body)
+
+    def test_failure_keeps_failure_prefix_with_count(self):
+        body = main.render_pr_comment([fail_scope("Commit 1/1")])
+        self.assertTrue(body.startswith(main.FAILURE_TITLE))
+        self.assertIn("1 failure", body)
+        self.assertIn("| Scope | Failed checks | Result |", body)
 
 
 class TestBuildResultBody(unittest.TestCase):
@@ -594,71 +642,67 @@ class TestBuildResultBody(unittest.TestCase):
 
 
 class TestAddJobSummary(unittest.TestCase):
-    def setUp(self):
-        import tempfile
-
-        self._orig_dir = os.getcwd()
-        self._tmpdir = tempfile.mkdtemp()
-        os.environ["RUNNER_TEMP"] = self._tmpdir
-        os.chdir(self._tmpdir)
-        with open(main.get_result_path(), "w", encoding="utf-8"):
-            pass
-
-    def tearDown(self):
-        os.chdir(self._orig_dir)
-        os.environ.pop("RUNNER_TEMP", None)
-
     def test_false_skips(self):
         with patch("main.JOB_SUMMARY_ENABLED", False):
-            rc = main.add_job_summary()
+            rc = main.add_job_summary([pass_scope()])
         self.assertEqual(rc, 0)
 
-    def test_success_writes_success_title(self):
-        summary_path = os.path.join(self._tmpdir, "summary.txt")
+    def test_success_writes_policy_report(self):
+        summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
             patch("main.JOB_SUMMARY_ENABLED", True),
             patch("main.GITHUB_STEP_SUMMARY", summary_path),
-            patch("main.read_result_file", return_value=None),
         ):
-            rc = main.add_job_summary()
+            rc = main.add_job_summary([pass_scope("Branch")])
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn(main.SUCCESS_TITLE, content)
+        self.assertIn("All checks passed", content)
 
-    def test_failure_writes_failure_title(self):
-        summary_path = os.path.join(self._tmpdir, "summary.txt")
+    def test_failure_returns_nonzero(self):
+        summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
             patch("main.JOB_SUMMARY_ENABLED", True),
             patch("main.GITHUB_STEP_SUMMARY", summary_path),
-            patch("main.read_result_file", return_value="bad commit message"),
         ):
-            rc = main.add_job_summary()
+            rc = main.add_job_summary([fail_scope()])
         self.assertEqual(rc, 1)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn(main.FAILURE_TITLE, content)
-        self.assertIn("bad commit message", content)
+        self.assertIn("| Scope | Failed checks | Result |", content)
+        self.assertIn("❌", content)
+
+
+class TestSetResultOutput(unittest.TestCase):
+    def test_writes_heredoc_json(self):
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
+            main.set_result_output([fail_scope("Commit 1/1"), pass_scope("Branch")])
+        with open(output_path, encoding="utf-8") as file_obj:
+            content = file_obj.read()
+        self.assertIn("result<<EOF", content)
+        self.assertIn('"status": "fail"', content)
+        self.assertIn('"label": "Commit 1/1"', content)
+        self.assertTrue(content.strip().endswith("EOF"))
+
+    def test_all_pass_status(self):
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
+            main.set_result_output([pass_scope()])
+        with open(output_path, encoding="utf-8") as file_obj:
+            content = file_obj.read()
+        self.assertIn('"status": "pass"', content)
+
+    def test_no_output_env_is_noop(self):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ["GITHUB_STEP_SUMMARY"] = "/tmp/step_summary.txt"
+            main.set_result_output([pass_scope()])  # should not raise
 
 
 class TestAddPrComments(unittest.TestCase):
-    def setUp(self):
-        import tempfile
-
-        self._orig_dir = os.getcwd()
-        self._tmpdir = tempfile.mkdtemp()
-        os.environ["RUNNER_TEMP"] = self._tmpdir
-        os.chdir(self._tmpdir)
-        with open(main.get_result_path(), "w", encoding="utf-8"):
-            pass
-
-    def tearDown(self):
-        os.chdir(self._orig_dir)
-        os.environ.pop("RUNNER_TEMP", None)
-
     def test_disabled_returns_zero(self):
         with patch("main.PR_COMMENTS_ENABLED", False):
-            rc = main.add_pr_comments()
+            rc = main.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
 
     def test_fork_pr_skips_comment_and_warns(self):
@@ -668,14 +712,14 @@ class TestAddPrComments(unittest.TestCase):
             patch("main.JOB_SUMMARY_ENABLED", False),
             patch("builtins.print") as mock_print,
         ):
-            rc = main.add_pr_comments()
+            rc = main.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
         printed = mock_print.call_args[0][0]
         self.assertIn("::warning::", printed)
         self.assertIn("read-only", printed)
 
     def test_fork_pr_writes_job_summary_hint(self):
-        summary_path = os.path.join(self._tmpdir, "summary.txt")
+        summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
             patch("main.PR_COMMENTS_ENABLED", True),
             patch("main.is_fork_pr", return_value=True),
@@ -683,13 +727,101 @@ class TestAddPrComments(unittest.TestCase):
             patch("main.GITHUB_STEP_SUMMARY", summary_path),
             patch("builtins.print"),
         ):
-            rc = main.add_pr_comments()
+            rc = main.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("PR Comment Skipped", content)
         self.assertIn("read-only", content)
         self.assertIn("fork-pr-comments", content)
+
+    def test_creates_comment_with_rendered_body(self):
+        mock_pull_request = MagicMock()
+        mock_pull_request.get_comments.return_value = []
+        mock_repo = MagicMock()
+        mock_repo.get_issue.return_value = mock_pull_request
+
+        github_module = MagicMock()
+        github_module.Github.return_value.get_repo.return_value = mock_repo
+
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_REF": "refs/pull/12/merge",
+                },
+            ),
+            patch.dict(sys.modules, {"github": github_module}),
+        ):
+            rc = main.add_pr_comments([fail_scope()])
+        self.assertEqual(rc, 1)
+        self.assertEqual(mock_pull_request.create_comment.call_count, 1)
+        body = mock_pull_request.create_comment.call_args[1]["body"]
+        self.assertTrue(body.startswith(main.FAILURE_TITLE))
+        self.assertIn("| Scope | Failed checks | Result |", body)
+
+    def test_updates_existing_comment_when_changed(self):
+        old_comment = MagicMock(body="# Commit-Check ❌ 0 failures")
+        mock_pull_request = MagicMock()
+        mock_pull_request.get_comments.return_value = [old_comment]
+        mock_repo = MagicMock()
+        mock_repo.get_issue.return_value = mock_pull_request
+
+        github_module = MagicMock()
+        github_module.Github.return_value.get_repo.return_value = mock_repo
+
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_REF": "refs/pull/12/merge",
+                },
+            ),
+            patch.dict(sys.modules, {"github": github_module}),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments([fail_scope()])
+        self.assertEqual(rc, 1)
+        old_comment.edit.assert_called_once()
+        old_comment.delete.assert_not_called()
+
+    def test_skips_when_comment_is_up_to_date(self):
+        body = main.render_pr_comment([fail_scope()])
+        existing = MagicMock(body=body)
+        mock_pull_request = MagicMock()
+        mock_pull_request.get_comments.return_value = [existing]
+        mock_repo = MagicMock()
+        mock_repo.get_issue.return_value = mock_pull_request
+
+        github_module = MagicMock()
+        github_module.Github.return_value.get_repo.return_value = mock_repo
+
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_REF": "refs/pull/12/merge",
+                },
+            ),
+            patch.dict(sys.modules, {"github": github_module}),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments([fail_scope()])
+        self.assertEqual(rc, 1)
+        existing.edit.assert_not_called()
+        mock_pull_request.create_comment.assert_not_called()
 
 
 class TestIsForkPrWithReadonlyToken(unittest.TestCase):
@@ -724,8 +856,6 @@ class TestIsForkPr(unittest.TestCase):
         self.assertFalse(result)
 
     def test_same_repo_not_fork(self):
-        import tempfile
-
         event = {
             "pull_request": {
                 "head": {"repo": {"full_name": "owner/repo"}},
@@ -743,8 +873,6 @@ class TestIsForkPr(unittest.TestCase):
         os.unlink(event_path)
 
     def test_different_repo_is_fork(self):
-        import tempfile
-
         event = {
             "pull_request": {
                 "head": {"repo": {"full_name": "fork-owner/repo"}},
@@ -765,56 +893,43 @@ class TestIsForkPr(unittest.TestCase):
 class TestLogErrorAndExit(unittest.TestCase):
     def test_exits_with_specified_code(self):
         with self.assertRaises(SystemExit) as ctx:
-            main.log_error_and_exit("# Title", None, 0)
+            main.log_error_and_exit(0, [pass_scope()])
         self.assertEqual(ctx.exception.code, 0)
 
-    def test_with_result_text_prints_error(self):
+    def test_failure_prints_error_summary(self):
         with (
             patch("builtins.print") as mock_print,
             self.assertRaises(SystemExit),
         ):
-            main.log_error_and_exit("# Failure", "bad commit", 1)
+            main.log_error_and_exit(1, [fail_scope()])
         printed = mock_print.call_args[0][0]
-        self.assertIn("::error::", printed)
-        self.assertIn("bad commit", printed)
+        self.assertIn("::error::commit-check found 1 failure.", printed)
 
 
 class TestMain(unittest.TestCase):
-    def setUp(self):
-        import tempfile
-
-        self._orig_dir = os.getcwd()
-        self._tmpdir = tempfile.mkdtemp()
-        os.environ["RUNNER_TEMP"] = self._tmpdir
-        os.chdir(self._tmpdir)
-        with open(main.get_result_path(), "w", encoding="utf-8"):
-            pass
-
-    def tearDown(self):
-        os.chdir(self._orig_dir)
-        os.environ.pop("RUNNER_TEMP", None)
-
     def test_success_path(self):
         with (
             patch("main.log_env_vars"),
-            patch("main.run_commit_check", return_value=0),
+            patch("main.run_commit_check", return_value=(0, [pass_scope()])),
+            patch("main.render_step_log"),
+            patch("main.set_result_output"),
             patch("main.add_job_summary", return_value=0),
             patch("main.add_pr_comments", return_value=0),
             patch("main.DRY_RUN_ENABLED", False),
-            patch("main.read_result_file", return_value=None),
             self.assertRaises(SystemExit) as ctx,
         ):
             main.main()
         self.assertEqual(ctx.exception.code, 0)
 
-    def test_multiple_failures_still_exit_with_one(self):
+    def test_failure_path_exits_nonzero(self):
         with (
             patch("main.log_env_vars"),
-            patch("main.run_commit_check", return_value=1),
+            patch("main.run_commit_check", return_value=(1, [fail_scope()])),
+            patch("main.render_step_log"),
+            patch("main.set_result_output"),
             patch("main.add_job_summary", return_value=1),
             patch("main.add_pr_comments", return_value=1),
             patch("main.DRY_RUN_ENABLED", False),
-            patch("main.read_result_file", return_value="bad msg"),
             self.assertRaises(SystemExit) as ctx,
         ):
             main.main()
@@ -823,11 +938,12 @@ class TestMain(unittest.TestCase):
     def test_dry_run_forces_zero(self):
         with (
             patch("main.log_env_vars"),
-            patch("main.run_commit_check", return_value=1),
+            patch("main.run_commit_check", return_value=(1, [fail_scope()])),
+            patch("main.render_step_log"),
+            patch("main.set_result_output"),
             patch("main.add_job_summary", return_value=1),
             patch("main.add_pr_comments", return_value=0),
             patch("main.DRY_RUN_ENABLED", True),
-            patch("main.read_result_file", return_value=None),
             self.assertRaises(SystemExit) as ctx,
         ):
             main.main()

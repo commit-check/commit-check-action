@@ -37,6 +37,10 @@ inputs:
     description: check pull request title following conventional commits
     required: false
     default: false
+outputs:
+  result:
+    description: Structured check results as JSON (status + per-scope checks). Consume with fromJSON(steps.<id>.outputs.result).
+
 runs:
   using: "composite"
   steps:

@@ -1,19 +1,38 @@
 #!/usr/bin/env python3
+"""GitHub Action that runs commit-check and renders results.
+
+The action runs ``commit-check --format json`` to collect structured check
+results (rule IDs, error messages, suggestions, docs links), then renders
+them to three output surfaces:
+
+* **step log** — grouped sections with ``::error`` annotations per rule
+* **job summary** — a Markdown policy report table
+* **PR comment** — a compact Markdown summary (idempotently updated)
+"""
+
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
-from typing import TextIO
+from dataclasses import dataclass, field
+from typing import Any
 
 # Constants for message titles
 SUCCESS_TITLE = "# Commit-Check ✔️"
 FAILURE_TITLE = "# Commit-Check ❌"
 COMMIT_MESSAGE_DELIMITER = "\x00"
-COMMIT_SECTION_SEPARATOR = "\n---\n"
+RULES_URL = "https://commit-check.com/rules/"
 
 GITHUB_STEP_SUMMARY = os.environ["GITHUB_STEP_SUMMARY"]
+
+#: Human-readable labels for the non-message CLI flags.
+CHECK_LABELS = {
+    "--branch": "Branch",
+    "--author-name": "Author name",
+    "--author-email": "Author email",
+}
 
 
 def env_flag(name: str, default: str = "false") -> bool:
@@ -29,6 +48,33 @@ DRY_RUN_ENABLED = env_flag("DRY_RUN")
 JOB_SUMMARY_ENABLED = env_flag("JOB_SUMMARY")
 PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
 PR_TITLE_ENABLED = env_flag("PR_TITLE")
+
+
+@dataclass
+class ScopeResult:
+    """Result of running commit-check against one scope (PR title, one commit,
+    branch, author, ...).
+
+    ``checks`` holds the parsed JSON check outcomes (only set when the CLI
+    produced valid JSON); ``raw_text`` holds the raw CLI output when parsing
+    failed (a defensive fallback so unexpected output is never swallowed).
+    """
+
+    label: str
+    checks: list[dict[str, str]] = field(default_factory=list)
+    raw_text: str = ""
+
+    @property
+    def status(self) -> str:
+        """Overall status: ``pass`` when every check passed."""
+        if self.raw_text and not self.checks:
+            return "fail"
+        return "fail" if any(c["status"] == "fail" for c in self.checks) else "pass"
+
+    @property
+    def failures(self) -> list[dict[str, str]]:
+        """The checks that failed in this scope."""
+        return [c for c in self.checks if c["status"] == "fail"]
 
 
 def log_env_vars():
@@ -143,14 +189,15 @@ def get_pr_commit_messages() -> list[str]:
     return []
 
 
-def run_check_command(
-    args: list[str],
-    result_file: TextIO,
-    input_text: str | None = None,
-    output_prefix: str | None = None,
-) -> int:
-    """Run commit-check and write both stdout and stderr to the result file."""
-    command = ["commit-check"] + args
+def run_check_json(
+    args: list[str], input_text: str | None = None
+) -> tuple[int, dict[str, Any] | None, str]:
+    """Run ``commit-check --format json`` and return (exit code, parsed JSON, raw output).
+
+    The parsed JSON is ``None`` when the CLI did not produce valid JSON; the
+    raw output is kept so callers can fall back to showing it as text.
+    """
+    command = ["commit-check", "--format", "json"] + args
     result = subprocess.run(
         command,
         input=input_text,
@@ -160,59 +207,42 @@ def run_check_command(
         encoding="utf-8",
         check=False,
     )
-    if result.stdout:
-        if output_prefix:
-            result_file.write(output_prefix)
-        result_file.write(result.stdout.rstrip("\n"))
-        result_file.write("\n")
-    return result.returncode
+    raw = result.stdout or ""
+    try:
+        return result.returncode, json.loads(raw), raw
+    except json.JSONDecodeError:
+        return result.returncode, None, raw
 
 
-def run_pr_message_checks(
-    pr_messages: list[str],
-    result_file: TextIO,
-    initial_emitted: bool = False,
-) -> int:
-    """Checks each PR commit message individually via commit-check --message.
+def check_scope(
+    label: str, args: list[str], input_text: str | None = None
+) -> ScopeResult:
+    """Run commit-check for one scope and wrap the outcome in a ScopeResult."""
+    _rc, data, raw = run_check_json(args, input_text=input_text)
+    if isinstance(data, dict):
+        return ScopeResult(label=label, checks=data.get("checks", []))
+    return ScopeResult(label=label, raw_text=raw)
 
-    Parameters
-    ----------
-    initial_emitted : bool
-        Whether another check (e.g. PR title) has already produced banner output,
-        so the first failing commit should use --no-banner.
 
-    Returns 1 if any message fails, 0 if all pass.
-    """
-    has_failure = False
-    emitted_failure_output = initial_emitted
+def run_pr_message_checks(pr_messages: list[str]) -> list[ScopeResult]:
+    """Check each PR commit message individually via commit-check --message."""
+    results: list[ScopeResult] = []
     total = len(pr_messages)
     for index, msg in enumerate(pr_messages, start=1):
-        command_args = ["--message"]
-        if emitted_failure_output:
-            command_args.append("--no-banner")
-
-        if emitted_failure_output:
-            output_prefix = f"\n--- Commit {index}/{total}:\n"
-        else:
-            output_prefix = None
-
-        return_code = run_check_command(
-            command_args,
-            result_file,
-            input_text=msg,
-            output_prefix=output_prefix,
+        results.append(
+            check_scope(f"Commit {index}/{total}", ["--message"], input_text=msg)
         )
-        if return_code != 0:
-            has_failure = True
-            emitted_failure_output = True
-    return 1 if has_failure else 0
+    return results
 
 
-def run_other_checks(args: list[str], result_file: TextIO) -> int:
-    """Runs non-message checks (branch, author) once. Returns 0 if args is empty."""
-    if not args:
-        return 0
-    return run_check_command(args, result_file)
+def run_other_checks(args: list[str]) -> list[ScopeResult]:
+    """Run each non-message check (branch, author) once, as its own scope."""
+    results: list[ScopeResult] = []
+    for flag in args:
+        label = CHECK_LABELS.get(flag)
+        if label:
+            results.append(check_scope(label, [flag]))
+    return results
 
 
 def build_check_args() -> list[str]:
@@ -226,19 +256,8 @@ def build_check_args() -> list[str]:
     return [flag for flag, enabled in flags if enabled]
 
 
-def get_result_path() -> str:
-    """Return a safe path for the result file using a temp directory.
-
-    In GitHub Actions this uses ``RUNNER_TEMP`` which is cleaned up
-    automatically after the job.  Falls back to ``tempfile.gettempdir()``
-    for local testing.
-    """
-    base = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
-    return os.path.join(base, "commit-check-result.txt")
-
-
-def run_commit_check() -> int:
-    """Runs all enabled checks and returns the overall exit code.
+def run_commit_check() -> tuple[int, list[ScopeResult]]:
+    """Runs all enabled checks and returns the overall exit code and results.
 
     Checks are evaluated in order:
       1. PR title (when ``pr-title: true`` and in a PR event)
@@ -248,82 +267,230 @@ def run_commit_check() -> int:
     Outside of a PR event all enabled checks are handed to the CLI at once.
     """
     args = build_check_args()
-    exit_code = 0
-    emitted_failure_output = False
+    results: list[ScopeResult] = []
 
-    with open(get_result_path(), "w", encoding="utf-8") as result_file:
-        # ---- 1. PR title check ------------------------------------------------
-        # Always label the PR title section and suppress its banner so the
-        # output flows consistently with the commit-message section labels:
-        #
-        #   --- PR Title:
-        #   <error details>
-        #   --- Commit 1/1:
-        #   <error details>
-        if PR_TITLE_ENABLED and is_pr_event():
-            pr_title = get_pr_title()
-            if pr_title:
-                rc = run_check_command(
-                    ["--message", "--no-banner"],
-                    result_file,
-                    input_text=pr_title,
-                    output_prefix=f"--- PR Title:\n",
-                )
-                if rc != 0:
-                    exit_code = max(exit_code, rc)
-                    emitted_failure_output = True
+    # ---- 1. PR title check ------------------------------------------------
+    if PR_TITLE_ENABLED and is_pr_event():
+        pr_title = get_pr_title()
+        if pr_title:
+            results.append(check_scope("PR title", ["--message"], input_text=pr_title))
 
-        # ---- 2. Commit message checks -----------------------------------------
-        if MESSAGE_ENABLED:
-            pr_messages = get_pr_commit_messages()
-            if pr_messages:
-                # In PR context: check each commit individually to avoid
-                # only validating the synthetic merge commit at HEAD.
-                rc = run_pr_message_checks(
-                    pr_messages, result_file, initial_emitted=emitted_failure_output
-                )
-                if rc != 0:
-                    exit_code = max(exit_code, rc)
-                args = [a for a in args if a != "--message"]
+    # ---- 2. Commit message checks -----------------------------------------
+    if MESSAGE_ENABLED:
+        pr_messages = get_pr_commit_messages()
+        if pr_messages:
+            # In PR context: check each commit individually to avoid
+            # only validating the synthetic merge commit at HEAD.
+            results.extend(run_pr_message_checks(pr_messages))
+            args = [a for a in args if a != "--message"]
 
-        # ---- 3. Remaining checks (branch, author, etc.) -----------------------
-        if args:
-            rc = run_other_checks(args, result_file)
-            if rc != 0:
-                exit_code = max(exit_code, rc)
+    # ---- 3. Remaining checks (branch, author, etc.) -----------------------
+    # Outside a PR, check the HEAD commit message directly.
+    if "--message" in args:
+        results.append(check_scope("Commit message", ["--message"]))
+        args = [a for a in args if a != "--message"]
+    results.extend(run_other_checks(args))
 
-    return 1 if exit_code else 0
+    exit_code = 1 if any(scope.status == "fail" for scope in results) else 0
+    return exit_code, results
 
 
-def read_result_file() -> str | None:
-    """Reads the result.txt file and removes ANSI color codes."""
-    if os.path.getsize(get_result_path()) > 0:
-        with open(get_result_path(), "r", encoding="utf-8") as result_file:
-            result_text = re.sub(
-                r"\x1B\[[0-9;]*[a-zA-Z]", "", result_file.read()
-            )  # Remove ANSI colors
-        return result_text.rstrip()
-    return None
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+
+def _rule_label(check: dict[str, str]) -> str:
+    """Human-readable label for a check: ``CC001 message`` (kebab-case)."""
+    rule_id = check.get("rule_id", "")
+    name = check.get("check", "").replace("_", "-")
+    return f"{rule_id} {name}" if rule_id else name
+
+
+def _rule_markdown_link(check: dict[str, str]) -> str:
+    """Markdown link for a check: ``[CC001 message](docs_url)``."""
+    label = _rule_label(check)
+    docs_url = check.get("docs_url", "")
+    return f"[{label}]({docs_url})" if docs_url else label
+
+
+def _scope_group(label: str) -> str:
+    """Group name for a scope label, used to fold the step log output."""
+    if label == "PR title" or label.startswith("Commit"):
+        return "Commit message"
+    if label.startswith("Author"):
+        return "Author"
+    return label
+
+
+def _grouped(results: list[ScopeResult]) -> list[tuple[str, list[ScopeResult]]]:
+    """Split results into ordered groups for step log folding."""
+    groups: list[tuple[str, list[ScopeResult]]] = []
+    for scope in results:
+        group_name = _scope_group(scope.label)
+        if groups and groups[-1][0] == group_name:
+            groups[-1][1].append(scope)
+        else:
+            groups.append((group_name, [scope]))
+    return groups
+
+
+def render_step_log(results: list[ScopeResult]) -> None:
+    """Print results to the step log with folded groups and error annotations."""
+    for group_name, scopes in _grouped(results):
+        print(f"::group::{group_name}")
+        for scope in scopes:
+            if scope.status == "pass":
+                print(f"  \u2714 {scope.label}")
+                continue
+            failures = scope.failures
+            count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
+            print(f"  \u2716 {scope.label}{count}")
+            if scope.raw_text and not scope.checks:
+                # Defensive fallback: commit-check produced unexpected output.
+                for line in scope.raw_text.strip().splitlines():
+                    print(f"    {line}")
+                continue
+            for check in failures:
+                title = _rule_label(check)
+                error = check.get("error", "")
+                first_line = error.splitlines()[0] if error else "check failed"
+                print(f"::error title={title}::{first_line}")
+                if check.get("value"):
+                    print(f"    value: {check['value']}")
+                if error:
+                    print(f"    {error}")
+                if check.get("suggest"):
+                    print(f"    Suggest: {check['suggest']}")
+                if check.get("docs_url"):
+                    print(f"    Docs: {check['docs_url']}")
+        print("::endgroup::")
+
+    if all(scope.status == "pass" for scope in results):
+        print("\u2714 commit-check: all checks passed")
+
+
+def _failure_count(results: list[ScopeResult]) -> int:
+    return sum(len(scope.failures) for scope in results)
+
+
+def _markdown_table(results: list[ScopeResult]) -> str:
+    """Render the scope/result table shared by summary and PR comment."""
+    rows = ["| Scope | Failed checks | Result |", "|---|---|---|"]
+    for scope in results:
+        if scope.status == "pass":
+            rows.append(f"| {scope.label} | \u2014 | \u2705 |")
+        else:
+            links = " \u00b7 ".join(
+                _rule_markdown_link(check) for check in scope.failures
+            )
+            rows.append(f"| {scope.label} | {links} | \u274c |")
+    return "\n".join(rows)
+
+
+def _markdown_details(results: list[ScopeResult]) -> str:
+    """Render the collapsible failure details section."""
+    sections: list[str] = ["<details>", "<summary>Failure details</summary>", ""]
+    for scope in results:
+        if scope.status == "pass":
+            continue
+        sections.append(f"**{scope.label}**")
+        sections.append("")
+        for check in scope.failures:
+            error = check.get("error", "")
+            sections.append(f"- **{_rule_markdown_link(check)}** \u2014 {error}")
+            if check.get("value"):
+                sections.append(f"  - value: `{check['value']}`")
+            if check.get("suggest"):
+                sections.append(f"  - suggest: {check['suggest']}")
+        sections.append("")
+    sections.append("</details>")
+    return "\n".join(sections)
+
+
+def render_job_summary(results: list[ScopeResult]) -> str:
+    """Create the Markdown body for the GitHub job summary."""
+    header = "# Commit Check Policy Report"
+    if all(scope.status == "pass" for scope in results):
+        scopes = "scope" if len(results) == 1 else "scopes"
+        return f"{header}\n\n\u2705 **All checks passed** ({len(results)} {scopes})"
+
+    failures = _failure_count(results)
+    unit = "failure" if failures == 1 else "failures"
+    scopes = "scope" if len(results) == 1 else "scopes"
+    lines = [
+        header,
+        "",
+        f"**{failures} {unit}** across {len(results)} {scopes}",
+        "",
+        _markdown_table(results),
+        "",
+        _markdown_details(results),
+        "",
+        f"_Rules reference: {RULES_URL}_",
+    ]
+    return "\n".join(lines)
+
+
+def render_pr_comment(results: list[ScopeResult]) -> str:
+    """Create the Markdown body for the PR comment."""
+    if all(scope.status == "pass" for scope in results):
+        return f"{SUCCESS_TITLE} All checks passed"
+
+    failures = _failure_count(results)
+    unit = "failure" if failures == 1 else "failures"
+    lines = [
+        f"{FAILURE_TITLE} {failures} {unit}",
+        "",
+        _markdown_table(results),
+        "",
+        _markdown_details(results),
+    ]
+    return "\n".join(lines)
 
 
 def build_result_body(result_text: str | None) -> str:
-    """Create the human-readable result body used in summaries and PR comments."""
+    """Legacy helper kept for backward compatibility with existing callers."""
     if result_text is None:
         return SUCCESS_TITLE
     return f"{FAILURE_TITLE}\n```\n{result_text}\n```"
 
 
-def add_job_summary() -> int:
+# ---------------------------------------------------------------------------
+# Output surfaces
+# ---------------------------------------------------------------------------
+
+
+def add_job_summary(results: list[ScopeResult]) -> int:
     """Adds the commit check result to the GitHub job summary."""
     if not JOB_SUMMARY_ENABLED:
         return 0
 
-    result_text = read_result_file()
-
     with open(GITHUB_STEP_SUMMARY, "a", encoding="utf-8") as summary_file:
-        summary_file.write(build_result_body(result_text))
+        summary_file.write(render_job_summary(results))
 
-    return 0 if result_text is None else 1
+    return 0 if all(scope.status == "pass" for scope in results) else 1
+
+
+def set_result_output(results: list[ScopeResult]) -> None:
+    """Expose the structured results as the ``result`` action output.
+
+    Uses the heredoc form of ``GITHUB_OUTPUT`` so multi-line JSON survives.
+    """
+    output_path = os.getenv("GITHUB_OUTPUT")
+    if not output_path:
+        return
+    payload = {
+        "status": "pass" if all(s.status == "pass" for s in results) else "fail",
+        "scopes": [
+            {"label": scope.label, "status": scope.status, "checks": scope.checks}
+            for scope in results
+        ],
+    }
+    with open(output_path, "a", encoding="utf-8") as f:
+        f.write("result<<EOF\n")
+        f.write(json.dumps(payload, indent=2))
+        f.write("\nEOF\n")
 
 
 def is_fork_pr() -> bool:
@@ -383,7 +550,7 @@ def get_pr_number() -> int:
     )
 
 
-def add_pr_comments() -> int:
+def add_pr_comments(results: list[ScopeResult]) -> int:
     """Posts the commit check result as a comment on the pull request."""
     if not PR_COMMENTS_ENABLED:
         return 0
@@ -428,8 +595,7 @@ def add_pr_comments() -> int:
         repo = g.get_repo(repo_name)
         pull_request = repo.get_issue(pr_number)
 
-        result_text = read_result_file()
-        pr_comment_body = build_result_body(result_text)
+        pr_comment_body = render_pr_comment(results)
 
         comments = pull_request.get_comments()
         matching_comments = [
@@ -442,7 +608,7 @@ def add_pr_comments() -> int:
             last_comment = matching_comments[-1]
             if last_comment.body == pr_comment_body:
                 print(f"PR comment already up-to-date for PR #{pr_number}.")
-                return 0
+                return 0 if all(scope.status == "pass" for scope in results) else 1
             print(f"Updating the last comment on PR #{pr_number}.")
             last_comment.edit(pr_comment_body)
             for comment in matching_comments[:-1]:
@@ -452,7 +618,7 @@ def add_pr_comments() -> int:
             print(f"Creating a new comment on PR #{pr_number}.")
             pull_request.create_comment(body=pr_comment_body)
 
-        return 0 if result_text is None else 1
+        return 0 if all(scope.status == "pass" for scope in results) else 1
     except GithubException as e:
         if e.status == 403:
             print(
@@ -469,34 +635,30 @@ def add_pr_comments() -> int:
         return 0
 
 
-def log_error_and_exit(
-    failure_title: str, result_text: str | None, ret_code: int
-) -> None:
-    """
-    Logs an error message to GitHub Actions and exits with the specified return code.
-
-    Args:
-        failure_title (str): The title of the failure message.
-        result_text (str): The detailed result text to include in the error message.
-        ret_code (int): The return code to exit with.
-    """
-    if result_text:
-        error_message = f"{failure_title}\n```\n{result_text}\n```"
-        print(f"::error::{error_message}")
+def log_error_and_exit(ret_code: int, results: list[ScopeResult]) -> None:
+    """Logs a summary error to GitHub Actions and exits with the given code."""
+    if ret_code != 0 and results:
+        failures = _failure_count(results)
+        unit = "failure" if failures == 1 else "failures"
+        print(f"::error::commit-check found {failures} {unit}.")
     sys.exit(ret_code)
 
 
 def main():
-    """Main function to run commit-check, add job summary and post PR comments."""
+    """Main function to run commit-check and render all output surfaces."""
     log_env_vars()
 
-    ret_code = max(run_commit_check(), add_job_summary(), add_pr_comments())
+    ret_code, results = run_commit_check()
+
+    render_step_log(results)
+    set_result_output(results)
+
+    ret_code = max(ret_code, add_job_summary(results), add_pr_comments(results))
 
     if DRY_RUN_ENABLED:
         ret_code = 0
 
-    result_text = read_result_file()
-    log_error_and_exit(FAILURE_TITLE, result_text, ret_code)
+    log_error_and_exit(ret_code, results)
 
 
 if __name__ == "__main__":
