@@ -1,3 +1,5 @@
+# Learn more: https://commit-check.com
+
 inherit_from = "github:commit-check/.github:commit-check.toml"
 
 [branch]
