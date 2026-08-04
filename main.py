@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # Constants for message titles
-SUCCESS_TITLE = "# Commit-Check ✔️"
-FAILURE_TITLE = "# Commit-Check ❌"
+SUCCESS_TITLE = "# Commit Check ✔️"
+FAILURE_TITLE = "# Commit Check ❌"
 COMMIT_MESSAGE_DELIMITER = "\x00"
 RULES_URL = "https://commit-check.com/rules/"
 
@@ -416,45 +416,41 @@ def _markdown_details(results: list[ScopeResult]) -> str:
     return "\n".join(sections)
 
 
-def render_job_summary(results: list[ScopeResult]) -> str:
-    """Create the Markdown body for the GitHub job summary."""
-    header = "# Commit Check Policy Report"
+def render_report(results: list[ScopeResult], include_footer: bool = True) -> str:
+    """Render the Markdown report shared by the job summary and PR comment.
+
+    All checks passing collapses to a single success line; failures render
+    a scope table with rule links plus collapsible failure details.
+    """
     if all(scope.status == "pass" for scope in results):
         scopes = "scope" if len(results) == 1 else "scopes"
-        return f"{header}\n\n\u2705 **All checks passed** ({len(results)} {scopes})"
+        return f"{SUCCESS_TITLE} All checks passed ({len(results)} {scopes})"
 
     failures = _failure_count(results)
     unit = "failure" if failures == 1 else "failures"
     scopes = "scope" if len(results) == 1 else "scopes"
     lines = [
-        header,
+        FAILURE_TITLE,
         "",
         f"**{failures} {unit}** across {len(results)} {scopes}",
         "",
         _markdown_table(results),
         "",
         _markdown_details(results),
-        "",
-        f"_Rules reference: {RULES_URL}_",
     ]
+    if include_footer:
+        lines.extend(["", f"_Rules reference: {RULES_URL}_"])
     return "\n".join(lines)
+
+
+def render_job_summary(results: list[ScopeResult]) -> str:
+    """Create the Markdown body for the GitHub job summary."""
+    return render_report(results, include_footer=True)
 
 
 def render_pr_comment(results: list[ScopeResult]) -> str:
-    """Create the Markdown body for the PR comment."""
-    if all(scope.status == "pass" for scope in results):
-        return f"{SUCCESS_TITLE} All checks passed"
-
-    failures = _failure_count(results)
-    unit = "failure" if failures == 1 else "failures"
-    lines = [
-        f"{FAILURE_TITLE} {failures} {unit}",
-        "",
-        _markdown_table(results),
-        "",
-        _markdown_details(results),
-    ]
-    return "\n".join(lines)
+    """Create the Markdown body for the PR comment (same report as summary)."""
+    return render_report(results, include_footer=True)
 
 
 def build_result_body(result_text: str | None) -> str:
@@ -610,6 +606,8 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
             c
             for c in comments
             if c.body.startswith(SUCCESS_TITLE) or c.body.startswith(FAILURE_TITLE)
+            # Match comments from older versions that used a hyphenated title.
+            or c.body.startswith("# Commit-Check")
         ]
 
         if matching_comments:
