@@ -677,11 +677,23 @@ class TestRenderJobSummary(unittest.TestCase):
             body,
         )
         self.assertIn("<details>", body)
-        self.assertIn("value: `bad message`", body)
-        self.assertIn("suggest: Use <type>(<scope>): <description>", body)
+        self.assertIn("<summary>Show details</summary>", body)
+        self.assertIn("```text", body)
+        self.assertIn("✖ Commit 1/1 (1 failure)", body)
+        self.assertIn("CC001 message: The commit message should follow ", body)
+        self.assertIn("Suggest: Use <type>(<scope>): <description>", body)
         self.assertIn("Rules reference: https://commit-check.com/rules/", body)
 
-    def test_pass_scope_renders_checkmark(self):
+    def test_failure_details_show_all_scopes_and_values(self):
+        results = [
+            fail_scope("Commit 1/2"),
+            pass_scope("Commit 2/2", value="fix: resolve timeout"),
+        ]
+        body = main.render_job_summary(results)
+        self.assertIn("✔ Commit 2/2 (fix: resolve timeout)", body)
+        self.assertIn("✖ Commit 1/2 (1 failure)", body)
+
+    def test_pass_scope_renders_checkmark_without_value(self):
         body = main.render_job_summary([pass_scope("Branch"), fail_scope("Commit 1/1")])
         self.assertIn("| Branch | — | — | ✅ |", body)
 

@@ -384,19 +384,20 @@ def _failure_count(results: list[ScopeResult]) -> int:
 def _markdown_table(results: list[ScopeResult]) -> str:
     """Render the scope/result table shared by summary and PR comment.
 
-    The checked-value column mirrors what the success details show per
-    scope, so a failing table still answers "what exactly was checked".
+    The checked-value column only fills failed scopes: pass scopes keep a
+    dash so the failure stands out, and the full per-scope values live in
+    the collapsible details block.
     """
     rows = [
         "| Scope | Checked value | Failed checks | Result |",
         "|---|---|---|---|",
     ]
     for scope in results:
-        value = _scope_value(scope)
-        value_display = f"`{value}`" if value else "\u2014"
         if scope.status == "pass":
-            rows.append(f"| {scope.label} | {value_display} | \u2014 | \u2705 |")
+            rows.append(f"| {scope.label} | \u2014 | \u2014 | \u2705 |")
         else:
+            value = _scope_value(scope)
+            value_display = f"`{value}`" if value else "\u2014"
             links = " \u00b7 ".join(
                 _rule_markdown_link(check) for check in scope.failures
             )
@@ -405,23 +406,33 @@ def _markdown_table(results: list[ScopeResult]) -> str:
 
 
 def _markdown_details(results: list[ScopeResult]) -> str:
-    """Render the collapsible failure details section."""
-    sections: list[str] = ["<details>", "<summary>Failure details</summary>", ""]
-    for scope in results:
-        if scope.status == "pass":
-            continue
-        sections.append(f"**{scope.label}**")
-        sections.append("")
-        for check in scope.failures:
-            error = check.get("error", "")
-            sections.append(f"- **{_rule_markdown_link(check)}** \u2014 {error}")
-            if check.get("value"):
-                sections.append(f"  - value: `{check['value']}`")
-            if check.get("suggest"):
-                sections.append(f"  - suggest: {check['suggest']}")
-        sections.append("")
-    sections.append("</details>")
-    return "\n".join(sections)
+    """Render the collapsible details block with every scope's checked value.
+
+    Mirrors the step log layout (group name, ✔/✖ scope lines with the
+    checked value) and adds the failure reason and suggestion under each
+    failing rule, so one expand answers both "what was checked" and
+    "what failed and why".
+    """
+    lines = ["<details>", "<summary>Show details</summary>", "", "```text"]
+    for group_name, scopes in _grouped(results):
+        lines.append(group_name)
+        for scope in scopes:
+            value = _scope_value(scope)
+            suffix = f" ({value})" if value else ""
+            if scope.status == "pass":
+                lines.append(f"  ✔ {scope.label}{suffix}")
+                continue
+            failures = scope.failures
+            count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
+            lines.append(f"  ✖ {scope.label}{count}")
+            for check in failures:
+                error = check.get("error", "")
+                first_line = error.splitlines()[0] if error else "check failed"
+                lines.append(f"    {_rule_label(check)}: {first_line}")
+                if check.get("suggest"):
+                    lines.append(f"    Suggest: {check['suggest']}")
+    lines.extend(["```", "", "</details>"])
+    return "\n".join(lines)
 
 
 def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
