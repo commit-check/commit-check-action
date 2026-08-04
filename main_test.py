@@ -46,8 +46,8 @@ def json_output(*checks) -> str:
     return json.dumps({"status": status, "checks": list(checks)})
 
 
-def pass_scope(label: str = "Branch") -> main.ScopeResult:
-    return main.ScopeResult(label=label, checks=[make_check("branch")])
+def pass_scope(label: str = "Branch", value: str = "") -> main.ScopeResult:
+    return main.ScopeResult(label=label, checks=[make_check("branch", value=value)])
 
 
 def fail_scope(label: str = "Commit 1/1") -> main.ScopeResult:
@@ -630,30 +630,41 @@ class TestRenderStepLog(unittest.TestCase):
 
 class TestRenderJobSummary(unittest.TestCase):
     def test_all_pass(self):
-        body = main.render_job_summary([pass_scope("Branch")])
+        body = main.render_job_summary([pass_scope("Branch", value="main")])
         self.assertTrue(body.startswith(main.REPORT_TITLE))
         self.assertIn("All checks passed (1 scope)", body)
         self.assertIn("<details>", body)
         self.assertIn("<summary>Show details</summary>", body)
         self.assertIn("```text", body)
         self.assertIn("Branch", body)
-        self.assertIn("  ✔ Branch", body)
+        self.assertIn("  ✔ Branch (main)", body)
 
     def test_all_pass_groups_scopes_like_step_log(self):
         results = [
-            pass_scope("PR title"),
-            pass_scope("Commit 1/2"),
-            pass_scope("Commit 2/2"),
-            pass_scope("Branch"),
-            pass_scope("Author name"),
-            pass_scope("Author email"),
+            pass_scope("PR title", value="feat: add login page"),
+            pass_scope("Commit 1/2", value="feat: add user auth"),
+            pass_scope("Commit 2/2", value="fix: resolve timeout"),
+            pass_scope("Branch", value="feature/pr-12"),
+            pass_scope("Author name", value="Jane Doe"),
+            pass_scope("Author email", value="jane@example.com"),
         ]
         body = main.render_job_summary(results)
         # Group headers in the details block mirror the step log ordering.
         self.assertLess(body.index("Commit message"), body.index("Branch"))
         self.assertLess(body.index("Branch"), body.index("Author"))
-        for scope in results:
-            self.assertIn(f"  ✔ {scope.label}", body)
+        self.assertIn("  ✔ PR title (feat: add login page)", body)
+        self.assertIn("  ✔ Branch (feature/pr-12)", body)
+        self.assertIn("  ✔ Author email (jane@example.com)", body)
+
+    def test_all_pass_truncates_long_values(self):
+        long_value = "x" * 200
+        body = main.render_job_summary([pass_scope("Commit 1/1", value=long_value)])
+        self.assertIn(f"  ✔ Commit 1/1 ({'x' * 77}...)", body)
+
+    def test_all_pass_without_value_shows_plain_label(self):
+        body = main.render_job_summary([pass_scope("Branch")])
+        self.assertIn("  ✔ Branch", body)
+        self.assertNotIn("  ✔ Branch (", body)
 
     def test_failure_renders_table_with_rule_links(self):
         body = main.render_job_summary([fail_scope("Commit 1/1")])

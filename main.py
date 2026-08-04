@@ -415,17 +415,37 @@ def _markdown_details(results: list[ScopeResult]) -> str:
     return "\n".join(sections)
 
 
+def _scope_value(scope: ScopeResult, max_len: int = 80) -> str:
+    """First non-empty check value for a scope, trimmed to a single line.
+
+    The value is the concrete thing that was checked (PR title, commit
+    subject, branch name, author name/email) and reads naturally next to
+    the scope label in the success details.
+    """
+    for check in scope.checks:
+        value = check.get("value", "")
+        if value:
+            first_line = value.splitlines()[0].strip()
+            if len(first_line) > max_len:
+                return first_line[: max_len - 3] + "..."
+            return first_line
+    return ""
+
+
 def _markdown_passed_details(results: list[ScopeResult]) -> str:
     """Render the collapsible section listing passed checks per scope.
 
     Mirrors the step log layout (group name followed by indented ✔ scope
-    lines) inside a fenced block so it reads like the action log.
+    lines) inside a fenced block so it reads like the action log. Each
+    scope line also shows the concrete value that was checked.
     """
     lines = ["<details>", "<summary>Show details</summary>", "", "```text"]
     for group_name, scopes in _grouped(results):
         lines.append(group_name)
         for scope in scopes:
-            lines.append(f"  ✔ {scope.label}")
+            value = _scope_value(scope)
+            suffix = f" ({value})" if value else ""
+            lines.append(f"  ✔ {scope.label}{suffix}")
     lines.extend(["```", "", "</details>"])
     return "\n".join(lines)
 
