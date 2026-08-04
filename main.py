@@ -382,16 +382,25 @@ def _failure_count(results: list[ScopeResult]) -> int:
 
 
 def _markdown_table(results: list[ScopeResult]) -> str:
-    """Render the scope/result table shared by summary and PR comment."""
-    rows = ["| Scope | Failed checks | Result |", "|---|---|---|"]
+    """Render the scope/result table shared by summary and PR comment.
+
+    The checked-value column mirrors what the success details show per
+    scope, so a failing table still answers "what exactly was checked".
+    """
+    rows = [
+        "| Scope | Checked value | Failed checks | Result |",
+        "|---|---|---|---|",
+    ]
     for scope in results:
+        value = _scope_value(scope)
+        value_display = f"`{value}`" if value else "\u2014"
         if scope.status == "pass":
-            rows.append(f"| {scope.label} | \u2014 | \u2705 |")
+            rows.append(f"| {scope.label} | {value_display} | \u2014 | \u2705 |")
         else:
             links = " \u00b7 ".join(
                 _rule_markdown_link(check) for check in scope.failures
             )
-            rows.append(f"| {scope.label} | {links} | \u274c |")
+            rows.append(f"| {scope.label} | {value_display} | {links} | \u274c |")
     return "\n".join(rows)
 
 

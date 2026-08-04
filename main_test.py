@@ -670,9 +670,10 @@ class TestRenderJobSummary(unittest.TestCase):
         body = main.render_job_summary([fail_scope("Commit 1/1")])
         self.assertTrue(body.startswith(main.REPORT_TITLE))
         self.assertIn("**1 failure** across 1 scope", body)
-        self.assertIn("| Scope | Failed checks | Result |", body)
+        self.assertIn("| Scope | Checked value | Failed checks | Result |", body)
         self.assertIn(
-            "| Commit 1/1 | [CC001 message](https://commit-check.com/rules/#cc001) | ❌ |",
+            "| Commit 1/1 | `bad message` | "
+            "[CC001 message](https://commit-check.com/rules/#cc001) | ❌ |",
             body,
         )
         self.assertIn("<details>", body)
@@ -682,7 +683,7 @@ class TestRenderJobSummary(unittest.TestCase):
 
     def test_pass_scope_renders_checkmark(self):
         body = main.render_job_summary([pass_scope("Branch"), fail_scope("Commit 1/1")])
-        self.assertIn("| Branch | — | ✅ |", body)
+        self.assertIn("| Branch | — | — | ✅ |", body)
 
 
 class TestRenderPrComment(unittest.TestCase):
@@ -699,7 +700,7 @@ class TestRenderPrComment(unittest.TestCase):
         self.assertEqual(comment, summary)
         self.assertTrue(comment.startswith(main.REPORT_TITLE))
         self.assertIn("**1 failure** across 1 scope", comment)
-        self.assertIn("| Scope | Failed checks | Result |", comment)
+        self.assertIn("| Scope | Checked value | Failed checks | Result |", comment)
 
 
 class TestBuildResultBody(unittest.TestCase):
@@ -740,7 +741,7 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertEqual(rc, 1)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("| Scope | Failed checks | Result |", content)
+        self.assertIn("| Scope | Checked value | Failed checks | Result |", content)
         self.assertIn("❌", content)
 
 
@@ -833,7 +834,7 @@ class TestAddPrComments(unittest.TestCase):
         self.assertEqual(mock_pull_request.create_comment.call_count, 1)
         body = mock_pull_request.create_comment.call_args[1]["body"]
         self.assertTrue(body.startswith(main.REPORT_TITLE))
-        self.assertIn("| Scope | Failed checks | Result |", body)
+        self.assertIn("| Scope | Checked value | Failed checks | Result |", body)
 
     def test_updates_existing_comment_when_changed(self):
         old_comment = MagicMock(body="# Commit-Check ❌ 0 failures")
