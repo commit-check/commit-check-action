@@ -382,11 +382,10 @@ def _failure_count(results: list[ScopeResult]) -> int:
 
 
 def _markdown_table(results: list[ScopeResult]) -> str:
-    """Render the scope/result table shared by summary and PR comment.
+    """Render the failure table shared by summary and PR comment.
 
-    The checked-value column only fills failed scopes: pass scopes keep a
-    dash so the failure stands out, and the full per-scope values live in
-    the collapsible details block.
+    Only failed scopes appear in the table so the failure stands out; the
+    full pass/fail picture lives in the collapsible details block.
     """
     rows = [
         "| Scope | Checked value | Failed checks | Result |",
@@ -394,14 +393,11 @@ def _markdown_table(results: list[ScopeResult]) -> str:
     ]
     for scope in results:
         if scope.status == "pass":
-            rows.append(f"| {scope.label} | \u2014 | \u2014 | \u2705 |")
-        else:
-            value = _scope_value(scope)
-            value_display = f"`{value}`" if value else "\u2014"
-            links = " \u00b7 ".join(
-                _rule_markdown_link(check) for check in scope.failures
-            )
-            rows.append(f"| {scope.label} | {value_display} | {links} | \u274c |")
+            continue
+        value = _scope_value(scope)
+        value_display = f"`{value}`" if value else "\u2014"
+        links = " \u00b7 ".join(_rule_markdown_link(check) for check in scope.failures)
+        rows.append(f"| {scope.label} | {value_display} | {links} | \u274c |")
     return "\n".join(rows)
 
 

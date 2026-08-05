@@ -695,7 +695,11 @@ class TestRenderJobSummary(unittest.TestCase):
 
     def test_pass_scope_renders_checkmark_without_value(self):
         body = main.render_job_summary([pass_scope("Branch"), fail_scope("Commit 1/1")])
-        self.assertIn("| Branch | — | — | ✅ |", body)
+        # Pass scopes stay out of the table; the details block carries them.
+        table = body.split("<details>")[0]
+        self.assertNotIn("| Branch |", table)
+        self.assertIn("| Commit 1/1 | `bad message` |", table)
+        self.assertIn("✔ Branch", body)
 
 
 class TestRenderPrComment(unittest.TestCase):
