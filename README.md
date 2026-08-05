@@ -201,6 +201,34 @@ for all available options.
 > [Optional Inputs](#optional-inputs), so env vars and config files are the
 > recommended way to customize.
 
+## Outputs
+
+### `result`
+
+Structured check results as JSON, available to downstream steps via
+[`fromJSON`](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/accessing-contextual-information-about-workflow-runs#fromjson):
+
+```yaml
+- uses: commit-check/commit-check-action@v2
+  id: commit-check
+  with:
+    dry-run: true # (1)
+
+- name: Inspect results
+  run: |
+    echo "Status: ${{ fromJSON(steps.commit-check.outputs.result).status }}"
+    echo "Scopes: ${{ toJSON(fromJSON(steps.commit-check.outputs.result).scopes) }}"
+```
+
+1. Without `dry-run`, a failing check ends the job before any later step runs.
+   Use `dry-run` (or `continue-on-error`) when a downstream step is meant to
+   read the result and decide for itself.
+
+Each scope carries the check outcomes (`rule_id`, `check`, `status`, `value`,
+`error`, `suggest`, `docs_url`) exactly as produced by
+`commit-check --format json`, so downstream jobs can build their own reports
+or gate on individual rules.
+
 ## GitHub Action Job Summary
 
 By default, commit-check-action results are shown on the job summary page of the workflow.
