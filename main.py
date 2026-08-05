@@ -12,19 +12,44 @@ them to three output surfaces:
 
 import json
 import os
-import re
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
-# Constant for the report title
-REPORT_TITLE = "# Commit Check"
 COMMIT_MESSAGE_DELIMITER = "\x00"
 RULES_URL = "https://commit-check.com/rules/"
 
-GITHUB_STEP_SUMMARY = os.environ["GITHUB_STEP_SUMMARY"]
+#: Hidden marker identifying comments this action owns.
+#
+# Comment identity has to be something a human cannot type by accident. The
+# previous title-prefix match meant any comment opening with "# Commit Check"
+# was treated as ours — and old ones are deleted, not just skipped. An HTML
+# comment is invisible in the rendered body and is what Codecov, SonarQube and
+# CodSpeed all use for the same purpose.
+COMMENT_MARKER = "<!-- commit-check-action -->"
+
+#: Logo shown next to the report title.
+#
+# Served from this repository rather than commit-check.com so the report has no
+# cross-repository dependency, and as PNG rather than SVG because GitHub proxies
+# comment images through camo, which handles SVG unreliably. Point this at a
+# single org-wide asset if the other tools grow the same header.
+LOGO_URL = (
+    "https://raw.githubusercontent.com/commit-check/commit-check-action/main/"
+    "assets/logo.png"
+)
+
+#: Report heading. h2 rather than h1: this renders inside a PR comment, where an
+#: h1 is louder than anything else on the page.
+REPORT_TITLE = f'## <img src="{LOGO_URL}" width="20" align="top" alt=""> Commit Check'
+
+#: Prefixes of report bodies written by earlier versions, kept so the first run
+#: after upgrading adopts the existing comment instead of posting a second one.
+#: Drop these once a release has been out long enough.
+LEGACY_TITLES = ("# Commit Check", "# Commit-Check")
+
+GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY", "")
 
 #: Human-readable labels for the non-message CLI flags.
 CHECK_LABELS = {
@@ -377,39 +402,72 @@ def render_step_log(results: list[ScopeResult]) -> None:
         print("\u2714 commit-check: all checks passed")
 
 
+def _check_counts(results: list[ScopeResult]) -> tuple[int, int]:
+    """Return ``(failed, total)`` counted in checks, not scopes.
+
+    One unit throughout: the header used to read ``2 failures \u00b7 9 passed
+    (11 scopes)``, where the first number counted checks and the other two
+    counted scopes, so the three never added up.
+
+    A scope whose output could not be parsed contributes one failed check \u2014
+    it has no check list to count, but it is a problem the reader has to act
+    on and must not vanish from the totals.
+    """
+    failed = total = 0
+    for scope in results:
+        if scope.raw_text and not scope.checks:
+            failed += 1
+            total += 1
+            continue
+        failed += len(scope.failures)
+        total += len(scope.checks)
+    return failed, total
+
+
 def _failure_count(results: list[ScopeResult]) -> int:
-    return sum(len(scope.failures) for scope in results)
+    """Number of failed checks across every scope."""
+    return _check_counts(results)[0]
 
 
 def _markdown_table(results: list[ScopeResult]) -> str:
     """Render the failure table shared by summary and PR comment.
 
-    Only failed scopes appear in the table so the failure stands out; the
-    full pass/fail picture lives in the collapsible details block.
+    Only failed scopes appear, so a per-row result column would read ``\u274c`` on
+    every row and carry no information; the pass/fail picture for everything
+    else lives in the details block.
     """
     rows = [
-        "| Scope | Checked value | Failed checks | Result |",
-        "|---|---|---|---|",
+        "| Scope | Checked value | Failed checks |",
+        "|---|---|---|",
     ]
     for scope in results:
         if scope.status == "pass":
             continue
         value = _scope_value(scope)
         value_display = f"`{value}`" if value else "\u2014"
-        links = " \u00b7 ".join(_rule_markdown_link(check) for check in scope.failures)
-        rows.append(f"| {scope.label} | {value_display} | {links} | \u274c |")
+        if scope.raw_text and not scope.checks:
+            links = "_output could not be parsed \u2014 see details_"
+        else:
+            links = " \u00b7 ".join(
+                _rule_markdown_link(check) for check in scope.failures
+            )
+        rows.append(f"| {scope.label} | {value_display} | {links} |")
     return "\n".join(rows)
 
 
 def _markdown_details(results: list[ScopeResult]) -> str:
-    """Render the collapsible details block with every scope's checked value.
+    """Render the collapsible details block listing every scope.
 
-    Mirrors the step log layout (group name, ✔/✖ scope lines with the
-    checked value) and adds the failure reason and suggestion under each
-    failing rule, so one expand answers both "what was checked" and
-    "what failed and why".
+    Mirrors the step log layout (group name, ✔/✖ scope lines with the checked
+    value) and adds the failure reason and suggestion under each failing rule,
+    so one expand answers both "what was checked" and "what failed and why".
+    The same block is used whether or not anything failed — on a clean run the
+    failure branches simply never fire.
     """
-    lines = ["<details>", "<summary>Show details</summary>", "", "```text"]
+    _failed, total = _check_counts(results)
+    unit = "check" if total == 1 else "checks"
+    label = f"Show all {total} {unit}" if total else "Show details"
+    lines = ["<details>", f"<summary>{label}</summary>", "", "```text"]
     for group_name, scopes in _grouped(results):
         lines.append(group_name)
         for scope in scopes:
@@ -417,6 +475,12 @@ def _markdown_details(results: list[ScopeResult]) -> str:
             suffix = f" ({value})" if value else ""
             if scope.status == "pass":
                 lines.append(f"  ✔ {scope.label}{suffix}")
+                continue
+            if scope.raw_text and not scope.checks:
+                # Defensive fallback: commit-check produced unexpected output.
+                lines.append(f"  ✖ {scope.label}")
+                for line in scope.raw_text.strip().splitlines():
+                    lines.append(f"    {line}")
                 continue
             failures = scope.failures
             count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
@@ -450,38 +514,24 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
     return ""
 
 
-def _markdown_passed_details(results: list[ScopeResult]) -> str:
-    """Render the collapsible section listing passed checks per scope.
-
-    Mirrors the step log layout (group name followed by indented ✔ scope
-    lines) inside a fenced block so it reads like the action log. Each
-    scope line also shows the concrete value that was checked.
-    """
-    lines = ["<details>", "<summary>Show details</summary>", "", "```text"]
-    for group_name, scopes in _grouped(results):
-        lines.append(group_name)
-        for scope in scopes:
-            value = _scope_value(scope)
-            suffix = f" ({value})" if value else ""
-            lines.append(f"  ✔ {scope.label}{suffix}")
-    lines.extend(["```", "", "</details>"])
-    return "\n".join(lines)
-
-
 # ---------------------------------------------------------------------------
 # Output specification
 #
 # The Markdown report shared by the job summary and the PR comment renders
 # as follows (values are filled from ScopeResult data):
 #
+# Every body opens with COMMENT_MARKER, which is invisible when rendered and is
+# how the action recognises its own PR comment on the next run.
+#
 # Success:
 #
-#   # Commit Check
+#   <!-- commit-check-action -->
+#   ## <img src="..." width="20" align="top" alt=""> Commit Check
 #
-#   ✅ **11 passed** (11 scopes)
+#   ✅ **All 28 checks passed**
 #
 #   <details>
-#   <summary>Show details</summary>
+#   <summary>Show all 28 checks</summary>
 #
 #   ```text
 #   Commit message
@@ -496,18 +546,21 @@ def _markdown_passed_details(results: list[ScopeResult]) -> str:
 #
 #   </details>
 #
+#   _commit-check 2.13.1 · [Rules reference](https://commit-check.com/rules/)_
+#
 # Failure:
 #
-#   # Commit Check
+#   <!-- commit-check-action -->
+#   ## <img src="..." width="20" align="top" alt=""> Commit Check
 #
-#   ❌ **2 failures** · ✅ **9 passed** (11 scopes)
+#   ❌ **2 of 28 checks failed**
 #
-#   | Scope | Checked value | Failed checks | Result |
-#   |---|---|---|---|
-#   | Commit 2/11 | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) | ❌ |
+#   | Scope | Checked value | Failed checks |
+#   |---|---|---|
+#   | Commit 2/11 | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
 #
 #   <details>
-#   <summary>Show details</summary>
+#   <summary>Show all 28 checks</summary>
 #
 #   ```text
 #   Commit message
@@ -521,69 +574,69 @@ def _markdown_passed_details(results: list[ScopeResult]) -> str:
 #
 #   </details>
 #
-#   _Rules reference: https://commit-check.com/rules/_
+#   _commit-check 2.13.1 · [Rules reference](https://commit-check.com/rules/)_
 #
 # Notes:
-# - The table lists only failed scopes; passing scopes live in the details.
-# - Values are capped at 60 chars (… suffix) and shown for every scope in
-#   the details block, plus for failed scopes in the table.
-# - The step log output is a separate plain-text rendering (render_step_log).
+# - Counts are in checks, never scopes, so the numbers in the header always
+#   reconcile against the number in the details summary.
+# - The table lists only failed scopes; there is no per-row result column
+#   because it would read ❌ on every row. Passing scopes live in the details.
+# - Values are capped at 60 characters with a literal "..." suffix and shown
+#   for every scope in the details block, plus for failed scopes in the table.
+# - The step log is a separate plain-text rendering (render_step_log).
 # ---------------------------------------------------------------------------
 
 
-def render_report(results: list[ScopeResult], include_footer: bool = True) -> str:
+def _commit_check_version() -> str:
+    """Version of the commit-check CLI that produced these results."""
+    try:
+        from importlib.metadata import version
+
+        return version("commit-check")
+    except Exception:
+        return ""
+
+
+def _report_footer() -> str:
+    """Attribution line: which version ran, and where the rules are documented.
+
+    The version is the first thing worth knowing when a result looks wrong, and
+    it is otherwise buried in the step log.
+    """
+    rules = f"[Rules reference]({RULES_URL})"
+    installed = _commit_check_version()
+    return f"_commit-check {installed} · {rules}_" if installed else f"_{rules}_"
+
+
+def render_report(results: list[ScopeResult]) -> str:
     """Render the Markdown report shared by the job summary and PR comment.
 
-    The report opens with the plain title line followed by a CodSpeed-style
-    status line: ``✅ **N passed** (N scopes)`` on success, or
-    ``❌ **N failures** · ✅ **M passed** (N scopes)`` on failure, followed
-    by a scope table with rule links and collapsible details.
+    Opens with the hidden marker and the title, then a one-line verdict —
+    ``✅ **All N checks passed**`` or ``❌ **N of M checks failed**`` — then the
+    failure table (failures only) and the collapsible per-scope details.
     """
-    if all(scope.status == "pass" for scope in results):
-        scopes = "scope" if len(results) == 1 else "scopes"
-        lines = [
-            REPORT_TITLE,
-            "",
-            f"✅ **{len(results)} passed** ({len(results)} {scopes})",
-            "",
-            _markdown_passed_details(results),
-        ]
-        return "\n".join(lines)
+    failed, total = _check_counts(results)
+    unit = "check" if total == 1 else "checks"
 
-    failures = _failure_count(results)
-    unit = "failure" if failures == 1 else "failures"
-    passed = sum(1 for scope in results if scope.status == "pass")
-    scopes = "scope" if len(results) == 1 else "scopes"
-    lines = [
-        REPORT_TITLE,
-        "",
-        f"❌ **{failures} {unit}** · ✅ **{passed} passed** "
-        f"({len(results)} {scopes})",
-        "",
-        _markdown_table(results),
-        "",
-        _markdown_details(results),
-    ]
-    if include_footer:
-        lines.extend(["", f"_Rules reference: {RULES_URL}_"])
+    lines = [COMMENT_MARKER, REPORT_TITLE, ""]
+    if failed == 0:
+        lines.append(f"✅ **All {total} {unit} passed**")
+        lines.append("")
+    else:
+        lines.append(f"❌ **{failed} of {total} {unit} failed**")
+        lines.extend(["", _markdown_table(results), ""])
+    lines.extend([_markdown_details(results), "", _report_footer()])
     return "\n".join(lines)
 
 
 def render_job_summary(results: list[ScopeResult]) -> str:
     """Create the Markdown body for the GitHub job summary."""
-    return render_report(results, include_footer=True)
+    return render_report(results)
 
 
 def render_pr_comment(results: list[ScopeResult]) -> str:
     """Create the Markdown body for the PR comment (same report as summary)."""
-    return render_report(results, include_footer=True)
-
-
-def build_result_body(result_text: str | None) -> str:
-    """Legacy helper kept for backward compatibility with existing callers."""
-    if result_text is None:
-        return REPORT_TITLE
-    return f"{REPORT_TITLE}\n```\n{result_text}\n```"
+    return render_report(results)
 
 
 # ---------------------------------------------------------------------------
@@ -593,7 +646,7 @@ def build_result_body(result_text: str | None) -> str:
 
 def add_job_summary(results: list[ScopeResult]) -> int:
     """Adds the commit check result to the GitHub job summary."""
-    if not JOB_SUMMARY_ENABLED:
+    if not JOB_SUMMARY_ENABLED or not GITHUB_STEP_SUMMARY:
         return 0
 
     with open(GITHUB_STEP_SUMMARY, "a", encoding="utf-8") as summary_file:
@@ -680,6 +733,32 @@ def get_pr_number() -> int:
     )
 
 
+def _is_bot(comment: Any) -> bool:
+    """Whether a comment was posted by a bot account rather than a person."""
+    try:
+        return comment.user.type == "Bot"
+    except Exception:
+        return False
+
+
+def _find_own_comments(comments: list[Any]) -> tuple[Any | None, list[Any]]:
+    """Pick the comment to update and the ones to delete.
+
+    Returns ``(target, stale)``. Only comments carrying ``COMMENT_MARKER`` are
+    ever deleted — those are unambiguously ours. A comment from an earlier
+    version has no marker, so it is adopted (edited, which adds the marker)
+    when there is no marked comment yet, and only if a bot posted it: the
+    legacy signal is a title prefix, which a person can type by accident, and
+    editing someone's comment out from under them is not recoverable.
+    """
+    marked = [c for c in comments if COMMENT_MARKER in c.body]
+    if marked:
+        return marked[-1], marked[:-1]
+
+    legacy = [c for c in comments if c.body.startswith(LEGACY_TITLES) and _is_bot(c)]
+    return (legacy[-1], []) if legacy else (None, [])
+
+
 def add_pr_comments(results: list[ScopeResult]) -> int:
     """Posts the commit check result as a comment on the pull request."""
     if not PR_COMMENTS_ENABLED:
@@ -697,7 +776,7 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
             "for how to enable PR comments on fork PRs."
         )
         print(f"::warning::{msg}")
-        if JOB_SUMMARY_ENABLED:
+        if JOB_SUMMARY_ENABLED and GITHUB_STEP_SUMMARY:
             with open(GITHUB_STEP_SUMMARY, "a", encoding="utf-8") as f:
                 f.write(
                     "\n---\n"
@@ -713,13 +792,24 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
 
     try:
         from github import Auth, Github, GithubException  # type: ignore
+    except ImportError as e:
+        # Imported here, so it has to be caught here. Leaving it inside the
+        # try below would bind GithubException only on success — and an
+        # ImportError would then make the `except GithubException` clause
+        # itself raise NameError, which propagates past the `except Exception`
+        # underneath it and kills a step that is meant to be non-fatal.
+        print(f"::warning::Unable to post PR comment: {e}", file=sys.stderr)
+        return 0
 
+    try:
         token = os.getenv("GITHUB_TOKEN")
         repo_name = os.getenv("GITHUB_REPOSITORY")
         pr_number = get_pr_number()
 
         if not token:
             raise ValueError("GITHUB_TOKEN is not set")
+        if not repo_name:
+            raise ValueError("GITHUB_REPOSITORY is not set")
 
         g = Github(auth=Auth.Token(token))
         repo = g.get_repo(repo_name)
@@ -727,23 +817,15 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
 
         pr_comment_body = render_pr_comment(results)
 
-        comments = pull_request.get_comments()
-        matching_comments = [
-            c
-            for c in comments
-            if c.body.startswith(REPORT_TITLE)
-            # Match comments from older versions that used a hyphenated title.
-            or c.body.startswith("# Commit-Check")
-        ]
+        target, stale = _find_own_comments(list(pull_request.get_comments()))
 
-        if matching_comments:
-            last_comment = matching_comments[-1]
-            if last_comment.body == pr_comment_body:
+        if target is not None:
+            if target.body == pr_comment_body:
                 print(f"PR comment already up-to-date for PR #{pr_number}.")
                 return 0 if all(scope.status == "pass" for scope in results) else 1
             print(f"Updating the last comment on PR #{pr_number}.")
-            last_comment.edit(pr_comment_body)
-            for comment in matching_comments[:-1]:
+            target.edit(pr_comment_body)
+            for comment in stale:
                 print(f"Deleting an old comment on PR #{pr_number}.")
                 comment.delete()
         else:

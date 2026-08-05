@@ -8,11 +8,19 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-# GITHUB_STEP_SUMMARY is accessed via os.environ[] (not getenv) at import time,
-# so we must set it before importing main.
 os.environ.setdefault("GITHUB_STEP_SUMMARY", "/tmp/step_summary.txt")
 
 import main  # noqa: E402
+
+#: The report footer names the installed commit-check version, which differs
+#: between a contributor's machine and CI. Golden tests pin it so they assert on
+#: the report layout rather than on whatever version happens to be installed.
+PINNED_VERSION = "2.13.1"
+FOOTER = (
+    f"_commit-check {PINNED_VERSION} · "
+    "[Rules reference](https://commit-check.com/rules/)_"
+)
+pin_version = patch("main._commit_check_version", new=lambda: PINNED_VERSION)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -629,6 +637,7 @@ class TestRenderStepLog(unittest.TestCase):
 
 
 class TestRenderJobSummary(unittest.TestCase):
+    @pin_version
     def test_success_golden_output(self):
         """Pin the full success report so the spec stays visible and exact."""
         results = [
@@ -640,12 +649,13 @@ class TestRenderJobSummary(unittest.TestCase):
         body = main.render_report(results)
         self.assertEqual(
             body,
-            "# Commit Check\n"
+            f"{main.COMMENT_MARKER}\n"
+            f"{main.REPORT_TITLE}\n"
             "\n"
-            "✅ **4 passed** (4 scopes)\n"
+            "✅ **All 4 checks passed**\n"
             "\n"
             "<details>\n"
-            "<summary>Show details</summary>\n"
+            "<summary>Show all 4 checks</summary>\n"
             "\n"
             "```text\n"
             "Commit message\n"
@@ -656,9 +666,12 @@ class TestRenderJobSummary(unittest.TestCase):
             "  ✔ Branch (feature/add-login)\n"
             "```\n"
             "\n"
-            "</details>",
+            "</details>\n"
+            "\n"
+            f"{FOOTER}",
         )
 
+    @pin_version
     def test_failure_golden_output(self):
         """Pin the full failure report: failed row in the table, all in details."""
         results = [
@@ -669,17 +682,18 @@ class TestRenderJobSummary(unittest.TestCase):
         body = main.render_report(results)
         self.assertEqual(
             body,
-            "# Commit Check\n"
+            f"{main.COMMENT_MARKER}\n"
+            f"{main.REPORT_TITLE}\n"
             "\n"
-            "❌ **1 failure** · ✅ **2 passed** (3 scopes)\n"
+            "❌ **1 of 3 checks failed**\n"
             "\n"
-            "| Scope | Checked value | Failed checks | Result |\n"
-            "|---|---|---|---|\n"
+            "| Scope | Checked value | Failed checks |\n"
+            "|---|---|---|\n"
             "| Commit 2/2 | `bad message` | "
-            "[CC001 message](https://commit-check.com/rules/#cc001) | ❌ |\n"
+            "[CC001 message](https://commit-check.com/rules/#cc001) |\n"
             "\n"
             "<details>\n"
-            "<summary>Show details</summary>\n"
+            "<summary>Show all 3 checks</summary>\n"
             "\n"
             "```text\n"
             "Commit message\n"
@@ -694,15 +708,43 @@ class TestRenderJobSummary(unittest.TestCase):
             "\n"
             "</details>\n"
             "\n"
-            "_Rules reference: https://commit-check.com/rules/_",
+            f"{FOOTER}",
         )
+
+    def test_counts_are_checks_not_scopes(self):
+        """The header numbers must reconcile: failed + passed == total.
+
+        They previously did not — failures were counted in checks while the
+        rest of the line counted scopes, so a scope failing two rules rendered
+        "2 failures · 2 passed (3 scopes)".
+        """
+        two_failures = main.ScopeResult(
+            label="Commit 1/2",
+            checks=[
+                make_check("message", status="fail", rule_id="CC001"),
+                make_check("subject_min_length", status="fail", rule_id="CC005"),
+            ],
+        )
+        body = main.render_report([pass_scope("Branch"), two_failures])
+        self.assertIn("❌ **2 of 3 checks failed**", body)
+        self.assertIn("<summary>Show all 3 checks</summary>", body)
+
+    def test_table_has_no_constant_result_column(self):
+        """Only failures reach the table, so a result column would never vary."""
+        body = main.render_job_summary([fail_scope("Commit 1/1")])
+        self.assertIn("| Scope | Checked value | Failed checks |", body)
+        self.assertNotIn("| Result |", body)
+
+    def test_body_opens_with_hidden_marker(self):
+        body = main.render_job_summary([pass_scope("Branch")])
+        self.assertTrue(body.startswith(main.COMMENT_MARKER))
 
     def test_all_pass(self):
         body = main.render_job_summary([pass_scope("Branch", value="main")])
-        self.assertTrue(body.startswith(main.REPORT_TITLE))
-        self.assertIn("✅ **1 passed** (1 scope)", body)
+        self.assertIn(main.REPORT_TITLE, body)
+        self.assertIn("✅ **All 1 check passed**", body)
         self.assertIn("<details>", body)
-        self.assertIn("<summary>Show details</summary>", body)
+        self.assertIn("<summary>Show all 1 check</summary>", body)
         self.assertIn("```text", body)
         self.assertIn("Branch", body)
         self.assertIn("  ✔ Branch (main)", body)
@@ -736,21 +778,21 @@ class TestRenderJobSummary(unittest.TestCase):
 
     def test_failure_renders_table_with_rule_links(self):
         body = main.render_job_summary([fail_scope("Commit 1/1")])
-        self.assertTrue(body.startswith(main.REPORT_TITLE))
-        self.assertIn("❌ **1 failure** · ✅ **0 passed** (1 scope)", body)
-        self.assertIn("| Scope | Checked value | Failed checks | Result |", body)
+        self.assertIn(main.REPORT_TITLE, body)
+        self.assertIn("❌ **1 of 1 check failed**", body)
+        self.assertIn("| Scope | Checked value | Failed checks |", body)
         self.assertIn(
             "| Commit 1/1 | `bad message` | "
-            "[CC001 message](https://commit-check.com/rules/#cc001) | ❌ |",
+            "[CC001 message](https://commit-check.com/rules/#cc001) |",
             body,
         )
         self.assertIn("<details>", body)
-        self.assertIn("<summary>Show details</summary>", body)
+        self.assertIn("<summary>Show all 1 check</summary>", body)
         self.assertIn("```text", body)
         self.assertIn("✖ Commit 1/1 (1 failure)", body)
         self.assertIn("CC001 message: The commit message should follow ", body)
         self.assertIn("Suggest: Use <type>(<scope>): <description>", body)
-        self.assertIn("Rules reference: https://commit-check.com/rules/", body)
+        self.assertIn("[Rules reference](https://commit-check.com/rules/)", body)
 
     def test_failure_details_show_all_scopes_and_values(self):
         results = [
@@ -775,26 +817,16 @@ class TestRenderPrComment(unittest.TestCase):
         comment = main.render_pr_comment([pass_scope("Branch")])
         summary = main.render_job_summary([pass_scope("Branch")])
         self.assertEqual(comment, summary)
-        self.assertTrue(comment.startswith(main.REPORT_TITLE))
-        self.assertIn("✅ **1 passed** (1 scope)", comment)
+        self.assertTrue(comment.startswith(main.COMMENT_MARKER))
+        self.assertIn("✅ **All 1 check passed**", comment)
 
     def test_failure_matches_job_summary(self):
         comment = main.render_pr_comment([fail_scope("Commit 1/1")])
         summary = main.render_job_summary([fail_scope("Commit 1/1")])
         self.assertEqual(comment, summary)
-        self.assertTrue(comment.startswith(main.REPORT_TITLE))
-        self.assertIn("❌ **1 failure** · ✅ **0 passed** (1 scope)", comment)
-        self.assertIn("| Scope | Checked value | Failed checks | Result |", comment)
-
-
-class TestBuildResultBody(unittest.TestCase):
-    def test_success_body(self):
-        self.assertEqual(main.build_result_body(None), main.REPORT_TITLE)
-
-    def test_failure_body(self):
-        result = main.build_result_body("bad commit")
-        self.assertIn(main.REPORT_TITLE, result)
-        self.assertIn("bad commit", result)
+        self.assertTrue(comment.startswith(main.COMMENT_MARKER))
+        self.assertIn("❌ **1 of 1 check failed**", comment)
+        self.assertIn("| Scope | Checked value | Failed checks |", comment)
 
 
 class TestAddJobSummary(unittest.TestCase):
@@ -813,7 +845,7 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("✅ **1 passed** (1 scope)", content)
+        self.assertIn("✅ **All 1 check passed**", content)
 
     def test_failure_returns_nonzero(self):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
@@ -825,7 +857,7 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertEqual(rc, 1)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("| Scope | Checked value | Failed checks | Result |", content)
+        self.assertIn("| Scope | Checked value | Failed checks |", content)
         self.assertIn("❌", content)
 
 
@@ -917,11 +949,14 @@ class TestAddPrComments(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(mock_pull_request.create_comment.call_count, 1)
         body = mock_pull_request.create_comment.call_args[1]["body"]
-        self.assertTrue(body.startswith(main.REPORT_TITLE))
-        self.assertIn("| Scope | Checked value | Failed checks | Result |", body)
+        self.assertTrue(body.startswith(main.COMMENT_MARKER))
+        self.assertIn("| Scope | Checked value | Failed checks |", body)
 
     def test_updates_existing_comment_when_changed(self):
+        # A report from an earlier version: no marker, and posted by the bot,
+        # which is what makes it safe to adopt.
         old_comment = MagicMock(body="# Commit-Check ❌ 0 failures")
+        old_comment.user.type = "Bot"
         mock_pull_request = MagicMock()
         mock_pull_request.get_comments.return_value = [old_comment]
         mock_repo = MagicMock()
@@ -1108,3 +1143,46 @@ class TestMain(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFindOwnComments(unittest.TestCase):
+    """Comment ownership: the action must never destroy a human's comment."""
+
+    @staticmethod
+    def _comment(body: str, user_type: str = "Bot") -> MagicMock:
+        comment = MagicMock()
+        comment.body = body
+        comment.user.type = user_type
+        return comment
+
+    def test_marked_comment_is_updated_and_older_ones_deleted(self):
+        first = self._comment(f"{main.COMMENT_MARKER}\nold")
+        second = self._comment(f"{main.COMMENT_MARKER}\nnewer")
+        target, stale = main._find_own_comments([first, second])
+        self.assertIs(target, second)
+        self.assertEqual(stale, [first])
+
+    def test_human_comment_with_the_old_title_is_never_deleted(self):
+        """A person can type '# Commit Check'; deleting on that is destructive."""
+        human = self._comment("# Commit Check\nwhy is this failing?", user_type="User")
+        mine = self._comment(f"{main.COMMENT_MARKER}\nreport")
+        target, stale = main._find_own_comments([human, mine])
+        self.assertIs(target, mine)
+        self.assertEqual(stale, [])
+
+    def test_human_comment_with_the_old_title_is_not_adopted(self):
+        human = self._comment("# Commit Check\nwhy is this failing?", user_type="User")
+        target, stale = main._find_own_comments([human])
+        self.assertIsNone(target)
+        self.assertEqual(stale, [])
+
+    def test_bot_comment_from_an_older_version_is_adopted(self):
+        legacy = self._comment("# Commit-Check\nold report")
+        target, stale = main._find_own_comments([legacy])
+        self.assertIs(target, legacy)
+        self.assertEqual(stale, [])
+
+    def test_no_comments_yields_nothing_to_update(self):
+        target, stale = main._find_own_comments([])
+        self.assertIsNone(target)
+        self.assertEqual(stale, [])
