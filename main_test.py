@@ -608,14 +608,58 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertIn("::group::Commit message", output)
         self.assertIn("::endgroup::", output)
         self.assertIn("✖ Commit 1/1 (1 failure)", output)
-        self.assertIn(
-            "::error title=CC001 message::The commit message should follow "
-            "Conventional Commits.",
-            output,
-        )
+        self.assertIn("      CC001 message", output)
         self.assertIn("value: bad message", output)
         self.assertIn("Suggest: Use <type>(<scope>): <description>", output)
         self.assertIn("Docs: https://commit-check.com/rules/#cc001", output)
+        # The annotation names the scope, which the title alone cannot carry.
+        self.assertIn(
+            "::error title=CC001 message::Commit 1/1: The commit message should "
+            "follow Conventional Commits.",
+            output,
+        )
+
+    def test_failure_reason_is_printed_once(self):
+        """The listing and the annotation must not both print the reason.
+
+        They used to: the ::error command carried the first line of the error
+        and the listing printed the whole error underneath it, so the same
+        sentence appeared twice in a row in the job log.
+        """
+        output = self._run([fail_scope("Commit 1/1")])
+        self.assertEqual(
+            output.count("The commit message should follow Conventional Commits."),
+            2,  # once in the listing, once in the annotation after the groups
+        )
+        listing = output.split("::endgroup::")[0]
+        self.assertEqual(
+            listing.count("The commit message should follow Conventional Commits."), 1
+        )
+
+    def test_annotations_come_after_every_group(self):
+        """An ::error inside a group breaks the indented listing apart."""
+        output = self._run([fail_scope("Commit 1/1"), pass_scope("Branch")])
+        self.assertLess(output.rindex("::endgroup::"), output.index("::error "))
+
+    def test_annotation_payload_is_escaped(self):
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            checks=[
+                make_check(
+                    "message",
+                    status="fail",
+                    error="first line\nsecond line with 100% certainty",
+                )
+            ],
+        )
+        output = self._run([scope])
+        annotation = [ln for ln in output.splitlines() if ln.startswith("::error")][0]
+        self.assertNotIn("\n", annotation.removeprefix("::error "))
+        self.assertIn("first line", annotation)
+
+    def test_pass_scopes_show_the_checked_value(self):
+        output = self._run([pass_scope("Branch", value="feature/add-login")])
+        self.assertIn("✔ Branch (feature/add-login)", output)
 
     def test_groups_scopes_by_category(self):
         results = [
@@ -632,8 +676,12 @@ class TestRenderStepLog(unittest.TestCase):
     def test_raw_text_fallback_is_printed(self):
         scope = main.ScopeResult(label="Branch", raw_text="unexpected output")
         output = self._run([scope])
-        self.assertIn("✖ Branch (0 failures)", output)
+        # No "(0 failures)": there is no check list to count, and claiming zero
+        # next to a ✖ reads as a contradiction.
+        self.assertIn("✖ Branch", output)
+        self.assertNotIn("0 failures", output)
         self.assertIn("unexpected output", output)
+        self.assertIn("::error title=commit-check: Branch::", output)
 
 
 class TestRenderJobSummary(unittest.TestCase):

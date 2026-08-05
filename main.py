@@ -367,38 +367,72 @@ def _grouped(results: list[ScopeResult]) -> list[tuple[str, list[ScopeResult]]]:
     return groups
 
 
+def _annotation_escape(text: str) -> str:
+    """Escape text for a workflow command payload.
+
+    A newline would end the command and leave the rest of the message as a
+    stray log line, and a bare ``%`` can be read as the start of an escape.
+    """
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
 def render_step_log(results: list[ScopeResult]) -> None:
-    """Print results to the step log with folded groups and error annotations."""
+    """Print results to the step log, then emit one annotation per failure.
+
+    The two are separated deliberately. An ``::error`` command renders as a
+    line of its own wherever it is printed, so emitting one inside the indented
+    listing broke the tree apart, and its ``title=`` \u2014 which is what carries the
+    rule ID \u2014 is only shown in the annotations UI, never inline. Printing the
+    detail once in the listing and the annotations after all the groups keeps
+    the log readable and still surfaces failures in the run summary and on the
+    Files changed tab.
+    """
+    annotations: list[tuple[str, str]] = []
+
     for group_name, scopes in _grouped(results):
         print(f"::group::{group_name}")
         for scope in scopes:
+            value = _scope_value(scope)
+            suffix = f" ({value})" if value else ""
             if scope.status == "pass":
-                print(f"  \u2714 {scope.label}")
+                print(f"  \u2714 {scope.label}{suffix}")
+                continue
+            if scope.raw_text and not scope.checks:
+                # Defensive fallback: commit-check produced unexpected output.
+                print(f"  \u2716 {scope.label}")
+                for line in scope.raw_text.strip().splitlines():
+                    print(f"      {line}")
+                annotations.append(
+                    (f"commit-check: {scope.label}", "output could not be parsed")
+                )
                 continue
             failures = scope.failures
             count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
             print(f"  \u2716 {scope.label}{count}")
-            if scope.raw_text and not scope.checks:
-                # Defensive fallback: commit-check produced unexpected output.
-                for line in scope.raw_text.strip().splitlines():
-                    print(f"    {line}")
-                continue
             for check in failures:
-                title = _rule_label(check)
+                label = _rule_label(check)
                 error = check.get("error", "")
-                first_line = error.splitlines()[0] if error else "check failed"
-                print(f"::error title={title}::{first_line}")
+                print(f"      {label}")
                 if check.get("value"):
-                    print(f"    value: {check['value']}")
+                    print(f"        value: {check['value']}")
                 if error:
-                    print(f"    {error}")
+                    for line in error.splitlines():
+                        print(f"        {line}")
                 if check.get("suggest"):
-                    print(f"    Suggest: {check['suggest']}")
+                    print(f"        Suggest: {check['suggest']}")
                 if check.get("docs_url"):
-                    print(f"    Docs: {check['docs_url']}")
+                    print(f"        Docs: {check['docs_url']}")
+                first_line = error.splitlines()[0] if error else "check failed"
+                annotations.append((label, f"{scope.label}: {first_line}"))
         print("::endgroup::")
 
-    if all(scope.status == "pass" for scope in results):
+    for title, message in annotations:
+        print(
+            f"::error title={_annotation_escape(title)}"
+            f"::{_annotation_escape(message)}"
+        )
+
+    if not annotations:
         print("\u2714 commit-check: all checks passed")
 
 
