@@ -40,11 +40,16 @@ inputs:
 outputs:
   result:
     description: Structured check results as JSON (status + per-scope checks). Consume with fromJSON(steps.<id>.outputs.result).
+    # Composite actions do not forward step outputs automatically: without this
+    # mapping (and the step id it refers to) the output is always the empty
+    # string, and fromJSON('') fails the calling workflow.
+    value: ${{ steps.commit-check.outputs.result }}
 
 runs:
   using: "composite"
   steps:
     - name: Install dependencies and run commit-check
+      id: commit-check
       shell: bash
       run: |
         # Platform-specific settings
