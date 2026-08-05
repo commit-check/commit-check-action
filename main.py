@@ -403,29 +403,27 @@ def render_step_log(results: list[ScopeResult]) -> None:
 
 
 def _check_counts(results: list[ScopeResult]) -> tuple[int, int]:
-    """Return ``(failed, total)`` counted in checks, not scopes.
+    """Return ``(failed, total)`` where one check is one thing that was checked.
 
-    One unit throughout: the header used to read ``2 failures \u00b7 9 passed
-    (11 scopes)``, where the first number counted checks and the other two
-    counted scopes, so the three never added up.
+    A "check" here is a scope \u2014 one commit message, the branch, the author name
+    \u2014 not one rule evaluation. Counting rule evaluations produced a number that
+    grew with the size of the pull request rather than with the strictness of
+    the policy: sixteen commit messages against six enabled rules reported
+    "1 of 100 checks failed", where 96 of the 100 were the same six rules run
+    again per commit. The large denominator also made a real failure look
+    negligible \u2014 one bad commit out of fifteen reads very differently from
+    1 of 100.
 
-    A scope whose output could not be parsed contributes one failed check \u2014
-    it has no check list to count, but it is a problem the reader has to act
-    on and must not vanish from the totals.
+    This number matches what the reader can count: the rows in the table plus
+    the \u2714/\u2716 lines in the details block. Which rules failed is not lost, it is
+    just reported where it belongs \u2014 in the table and the details.
     """
-    failed = total = 0
-    for scope in results:
-        if scope.raw_text and not scope.checks:
-            failed += 1
-            total += 1
-            continue
-        failed += len(scope.failures)
-        total += len(scope.checks)
-    return failed, total
+    failed = sum(1 for scope in results if scope.status == "fail")
+    return failed, len(results)
 
 
 def _failure_count(results: list[ScopeResult]) -> int:
-    """Number of failed checks across every scope."""
+    """Number of scopes that failed."""
     return _check_counts(results)[0]
 
 
@@ -528,10 +526,10 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   <!-- commit-check-action -->
 #   ## <img src="..." width="20" align="top" alt=""> Commit Check
 #
-#   ✅ **All 28 checks passed**
+#   ✅ **All 5 checks passed**
 #
 #   <details>
-#   <summary>Show all 28 checks</summary>
+#   <summary>Show all 5 checks</summary>
 #
 #   ```text
 #   Commit message
@@ -553,14 +551,14 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   <!-- commit-check-action -->
 #   ## <img src="..." width="20" align="top" alt=""> Commit Check
 #
-#   ❌ **2 of 28 checks failed**
+#   ❌ **1 of 5 checks failed**
 #
 #   | Scope | Checked value | Failed checks |
 #   |---|---|---|
 #   | Commit 2/11 | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
 #
 #   <details>
-#   <summary>Show all 28 checks</summary>
+#   <summary>Show all 5 checks</summary>
 #
 #   ```text
 #   Commit message
@@ -577,8 +575,10 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   _commit-check 2.13.1 · [Rules reference](https://commit-check.com/rules/)_
 #
 # Notes:
-# - Counts are in checks, never scopes, so the numbers in the header always
-#   reconcile against the number in the details summary.
+# - One check is one thing that was checked — a commit message, the branch, the
+#   author — not one rule evaluation. The total therefore matches the number of
+#   ✔/✖ lines the reader can count in the details block, and does not grow with
+#   the number of commits in the pull request or rules in the config.
 # - The table lists only failed scopes; there is no per-row result column
 #   because it would read ❌ on every row. Passing scopes live in the details.
 # - Values are capped at 60 characters with a literal "..." suffix and shown

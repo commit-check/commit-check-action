@@ -711,12 +711,14 @@ class TestRenderJobSummary(unittest.TestCase):
             f"{FOOTER}",
         )
 
-    def test_counts_are_checks_not_scopes(self):
-        """The header numbers must reconcile: failed + passed == total.
+    def test_a_check_is_a_thing_checked_not_a_rule_evaluation(self):
+        """The total counts scopes, so it tracks the policy, not the PR size.
 
-        They previously did not — failures were counted in checks while the
-        rest of the line counted scopes, so a scope failing two rules rendered
-        "2 failures · 2 passed (3 scopes)".
+        Counting rule evaluations made the denominator grow with the number of
+        commits: sixteen messages against six enabled rules reported "1 of 100
+        checks failed", which both overstated the work done and made one bad
+        commit out of fifteen look negligible. Two rules failing on one commit
+        is still one thing to go and fix.
         """
         two_failures = main.ScopeResult(
             label="Commit 1/2",
@@ -726,8 +728,25 @@ class TestRenderJobSummary(unittest.TestCase):
             ],
         )
         body = main.render_report([pass_scope("Branch"), two_failures])
-        self.assertIn("❌ **2 of 3 checks failed**", body)
-        self.assertIn("<summary>Show all 3 checks</summary>", body)
+        self.assertIn("❌ **1 of 2 checks failed**", body)
+        self.assertIn("<summary>Show all 2 checks</summary>", body)
+        # Both failing rules are still named, in the table and the details.
+        self.assertIn("CC001 message", body)
+        self.assertIn("CC005 subject-min-length", body)
+
+    def test_total_does_not_grow_with_the_number_of_rules(self):
+        """Adding rules to one scope must not change the headline total."""
+        one_rule = [pass_scope("Branch")]
+        many_rules = [
+            main.ScopeResult(
+                label="Branch",
+                checks=[
+                    make_check(f"rule_{i}", rule_id=f"CC{i:03d}") for i in range(9)
+                ],
+            )
+        ]
+        self.assertIn("✅ **All 1 check passed**", main.render_report(one_rule))
+        self.assertIn("✅ **All 1 check passed**", main.render_report(many_rules))
 
     def test_table_has_no_constant_result_column(self):
         """Only failures reach the table, so a result column would never vary."""
