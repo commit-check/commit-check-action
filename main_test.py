@@ -747,9 +747,10 @@ class TestRenderJobSummary(unittest.TestCase):
             "Commit message\n"
             "  ✔ PR title (feat: add login page)\n"
             "  ✖ Commit 2/2 (1 failure)\n"
-            "    CC001 message: The commit message should follow "
-            "Conventional Commits.\n"
-            "    Suggest: Use <type>(<scope>): <description>\n"
+            "      CC001 message\n"
+            "        value: bad message\n"
+            "        The commit message should follow Conventional Commits.\n"
+            "        Suggest: Use <type>(<scope>): <description>\n"
             "Branch\n"
             "  ✔ Branch (feature/add-login)\n"
             "```\n"
@@ -857,8 +858,10 @@ class TestRenderJobSummary(unittest.TestCase):
         self.assertIn("<summary>Show all 1 check</summary>", body)
         self.assertIn("```text", body)
         self.assertIn("✖ Commit 1/1 (1 failure)", body)
-        self.assertIn("CC001 message: The commit message should follow ", body)
-        self.assertIn("Suggest: Use <type>(<scope>): <description>", body)
+        self.assertIn("      CC001 message", body)
+        # The failing value appears in full; the table truncates at 60.
+        self.assertIn("        value: bad message", body)
+        self.assertIn("        Suggest: Use <type>(<scope>): <description>", body)
         self.assertIn("[Rules reference](https://commit-check.com/rules/)", body)
 
     def test_failure_details_show_all_scopes_and_values(self):

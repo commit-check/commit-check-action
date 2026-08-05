@@ -367,6 +367,54 @@ def _grouped(results: list[ScopeResult]) -> list[tuple[str, list[ScopeResult]]]:
     return groups
 
 
+def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
+    """Render the indented listing for one group of scopes, without its header.
+
+    Shared by both output surfaces so they cannot drift: the step log and the
+    Markdown details block are the same tree, and the only difference is the
+    docs link, which the Markdown report already carries on the rule ID in the
+    table above it.
+
+    A failing scope shows its value in full rather than truncated. It is the one
+    value the reader has to act on, and the table's 60-character cap can cut off
+    the part that explains the failure.
+    """
+    lines: list[str] = []
+    for scope in scopes:
+        if scope.status == "pass":
+            value = _scope_value(scope)
+            lines.append(f"  ✔ {scope.label}{f' ({value})' if value else ''}")
+            continue
+        if scope.raw_text and not scope.checks:
+            # Defensive fallback: commit-check produced unexpected output.
+            lines.append(f"  ✖ {scope.label}")
+            lines.extend(f"      {ln}" for ln in scope.raw_text.strip().splitlines())
+            continue
+        failures = scope.failures
+        count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
+        lines.append(f"  ✖ {scope.label}{count}")
+        for check in failures:
+            lines.append(f"      {_rule_label(check)}")
+            if check.get("value"):
+                lines.append(f"        value: {check['value']}")
+            for line in check.get("error", "").splitlines():
+                lines.append(f"        {line}")
+            if check.get("suggest"):
+                lines.append(f"        Suggest: {check['suggest']}")
+            if include_docs and check.get("docs_url"):
+                lines.append(f"        Docs: {check['docs_url']}")
+    return lines
+
+
+def _render_tree(results: list[ScopeResult], include_docs: bool) -> list[str]:
+    """Render the full grouped listing: a header line per group, then its scopes."""
+    lines: list[str] = []
+    for group_name, scopes in _grouped(results):
+        lines.append(group_name)
+        lines.extend(_render_scopes(scopes, include_docs))
+    return lines
+
+
 def _annotation_escape(text: str) -> str:
     """Escape text for a workflow command payload.
 
@@ -387,44 +435,27 @@ def render_step_log(results: list[ScopeResult]) -> None:
     the log readable and still surfaces failures in the run summary and on the
     Files changed tab.
     """
-    annotations: list[tuple[str, str]] = []
-
+    # The tree is grouped, so it is printed group by group rather than in one
+    # block: ::group:: and ::endgroup:: have to bracket each section's lines.
     for group_name, scopes in _grouped(results):
         print(f"::group::{group_name}")
-        for scope in scopes:
-            value = _scope_value(scope)
-            suffix = f" ({value})" if value else ""
-            if scope.status == "pass":
-                print(f"  \u2714 {scope.label}{suffix}")
-                continue
-            if scope.raw_text and not scope.checks:
-                # Defensive fallback: commit-check produced unexpected output.
-                print(f"  \u2716 {scope.label}")
-                for line in scope.raw_text.strip().splitlines():
-                    print(f"      {line}")
-                annotations.append(
-                    (f"commit-check: {scope.label}", "output could not be parsed")
-                )
-                continue
-            failures = scope.failures
-            count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
-            print(f"  \u2716 {scope.label}{count}")
-            for check in failures:
-                label = _rule_label(check)
-                error = check.get("error", "")
-                print(f"      {label}")
-                if check.get("value"):
-                    print(f"        value: {check['value']}")
-                if error:
-                    for line in error.splitlines():
-                        print(f"        {line}")
-                if check.get("suggest"):
-                    print(f"        Suggest: {check['suggest']}")
-                if check.get("docs_url"):
-                    print(f"        Docs: {check['docs_url']}")
-                first_line = error.splitlines()[0] if error else "check failed"
-                annotations.append((label, f"{scope.label}: {first_line}"))
+        for line in _render_scopes(scopes, include_docs=True):
+            print(line)
         print("::endgroup::")
+
+    annotations: list[tuple[str, str]] = []
+    for scope in results:
+        if scope.status == "pass":
+            continue
+        if scope.raw_text and not scope.checks:
+            annotations.append(
+                (f"commit-check: {scope.label}", "output could not be parsed")
+            )
+            continue
+        for check in scope.failures:
+            error = check.get("error", "")
+            first_line = error.splitlines()[0] if error else "check failed"
+            annotations.append((_rule_label(check), f"{scope.label}: {first_line}"))
 
     for title, message in annotations:
         print(
@@ -500,29 +531,7 @@ def _markdown_details(results: list[ScopeResult]) -> str:
     unit = "check" if total == 1 else "checks"
     label = f"Show all {total} {unit}" if total else "Show details"
     lines = ["<details>", f"<summary>{label}</summary>", "", "```text"]
-    for group_name, scopes in _grouped(results):
-        lines.append(group_name)
-        for scope in scopes:
-            value = _scope_value(scope)
-            suffix = f" ({value})" if value else ""
-            if scope.status == "pass":
-                lines.append(f"  ✔ {scope.label}{suffix}")
-                continue
-            if scope.raw_text and not scope.checks:
-                # Defensive fallback: commit-check produced unexpected output.
-                lines.append(f"  ✖ {scope.label}")
-                for line in scope.raw_text.strip().splitlines():
-                    lines.append(f"    {line}")
-                continue
-            failures = scope.failures
-            count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
-            lines.append(f"  ✖ {scope.label}{count}")
-            for check in failures:
-                error = check.get("error", "")
-                first_line = error.splitlines()[0] if error else "check failed"
-                lines.append(f"    {_rule_label(check)}: {first_line}")
-                if check.get("suggest"):
-                    lines.append(f"    Suggest: {check['suggest']}")
+    lines.extend(_render_tree(results, include_docs=False))
     lines.extend(["```", "", "</details>"])
     return "\n".join(lines)
 
@@ -598,8 +607,10 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   Commit message
 #     ✔ PR title (feat: add login page)
 #     ✖ Commit 2/11 (1 failure)
-#       CC001 message: The commit message should follow Conventional Commits.
-#       Suggest: Use <type>(<scope>): <description>
+#         CC001 message
+#           value: bad msg
+#           The commit message should follow Conventional Commits.
+#           Suggest: Use <type>(<scope>): <description>
 #   Branch
 #     ✔ Branch (feature/add-login)
 #   ```
@@ -615,9 +626,11 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   the number of commits in the pull request or rules in the config.
 # - The table lists only failed scopes; there is no per-row result column
 #   because it would read ❌ on every row. Passing scopes live in the details.
-# - Values are capped at 60 characters with a literal "..." suffix and shown
-#   for every scope in the details block, plus for failed scopes in the table.
-# - The step log is a separate plain-text rendering (render_step_log).
+# - Values are capped at 60 characters with a literal "..." suffix, except on a
+#   failing scope, where the details block prints the value in full — it is the
+#   one value the reader has to act on and the cap can hide the reason.
+# - The step log renders the same tree (_render_scopes); it adds the docs URL,
+#   which the Markdown report already carries on the rule ID in the table.
 # ---------------------------------------------------------------------------
 
 
