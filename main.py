@@ -468,6 +468,69 @@ def _markdown_passed_details(results: list[ScopeResult]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Output specification
+#
+# The Markdown report shared by the job summary and the PR comment renders
+# as follows (values are filled from ScopeResult data):
+#
+# Success:
+#
+#   # Commit Check
+#
+#   ✅ **11 passed** (11 scopes)
+#
+#   <details>
+#   <summary>Show details</summary>
+#
+#   ```text
+#   Commit message
+#     ✔ PR title (feat: add login page)
+#     ✔ Commit 1/11 (feat: add user auth)
+#   Branch
+#     ✔ Branch (feature/add-login)
+#   Author
+#     ✔ Author name (Jane Doe)
+#     ✔ Author email (jane@example.com)
+#   ```
+#
+#   </details>
+#
+# Failure:
+#
+#   # Commit Check
+#
+#   ❌ **2 failures** · ✅ **9 passed** (11 scopes)
+#
+#   | Scope | Checked value | Failed checks | Result |
+#   |---|---|---|---|
+#   | Commit 2/11 | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) | ❌ |
+#
+#   <details>
+#   <summary>Show details</summary>
+#
+#   ```text
+#   Commit message
+#     ✔ PR title (feat: add login page)
+#     ✖ Commit 2/11 (1 failure)
+#       CC001 message: The commit message should follow Conventional Commits.
+#       Suggest: Use <type>(<scope>): <description>
+#   Branch
+#     ✔ Branch (feature/add-login)
+#   ```
+#
+#   </details>
+#
+#   _Rules reference: https://commit-check.com/rules/_
+#
+# Notes:
+# - The table lists only failed scopes; passing scopes live in the details.
+# - Values are capped at 60 chars (… suffix) and shown for every scope in
+#   the details block, plus for failed scopes in the table.
+# - The step log output is a separate plain-text rendering (render_step_log).
+# ---------------------------------------------------------------------------
+
+
 def render_report(results: list[ScopeResult], include_footer: bool = True) -> str:
     """Render the Markdown report shared by the job summary and PR comment.
 

@@ -629,6 +629,74 @@ class TestRenderStepLog(unittest.TestCase):
 
 
 class TestRenderJobSummary(unittest.TestCase):
+    def test_success_golden_output(self):
+        """Pin the full success report so the spec stays visible and exact."""
+        results = [
+            pass_scope("PR title", value="feat: add login page"),
+            pass_scope("Commit 1/2", value="feat: add user auth"),
+            pass_scope("Commit 2/2", value="fix: resolve timeout"),
+            pass_scope("Branch", value="feature/add-login"),
+        ]
+        body = main.render_report(results)
+        self.assertEqual(
+            body,
+            "# Commit Check\n"
+            "\n"
+            "✅ **4 passed** (4 scopes)\n"
+            "\n"
+            "<details>\n"
+            "<summary>Show details</summary>\n"
+            "\n"
+            "```text\n"
+            "Commit message\n"
+            "  ✔ PR title (feat: add login page)\n"
+            "  ✔ Commit 1/2 (feat: add user auth)\n"
+            "  ✔ Commit 2/2 (fix: resolve timeout)\n"
+            "Branch\n"
+            "  ✔ Branch (feature/add-login)\n"
+            "```\n"
+            "\n"
+            "</details>",
+        )
+
+    def test_failure_golden_output(self):
+        """Pin the full failure report: failed row in the table, all in details."""
+        results = [
+            pass_scope("PR title", value="feat: add login page"),
+            fail_scope("Commit 2/2"),
+            pass_scope("Branch", value="feature/add-login"),
+        ]
+        body = main.render_report(results)
+        self.assertEqual(
+            body,
+            "# Commit Check\n"
+            "\n"
+            "❌ **1 failure** · ✅ **2 passed** (3 scopes)\n"
+            "\n"
+            "| Scope | Checked value | Failed checks | Result |\n"
+            "|---|---|---|---|\n"
+            "| Commit 2/2 | `bad message` | "
+            "[CC001 message](https://commit-check.com/rules/#cc001) | ❌ |\n"
+            "\n"
+            "<details>\n"
+            "<summary>Show details</summary>\n"
+            "\n"
+            "```text\n"
+            "Commit message\n"
+            "  ✔ PR title (feat: add login page)\n"
+            "  ✖ Commit 2/2 (1 failure)\n"
+            "    CC001 message: The commit message should follow "
+            "Conventional Commits.\n"
+            "    Suggest: Use <type>(<scope>): <description>\n"
+            "Branch\n"
+            "  ✔ Branch (feature/add-login)\n"
+            "```\n"
+            "\n"
+            "</details>\n"
+            "\n"
+            "_Rules reference: https://commit-check.com/rules/_",
+        )
+
     def test_all_pass(self):
         body = main.render_job_summary([pass_scope("Branch", value="main")])
         self.assertTrue(body.startswith(main.REPORT_TITLE))
