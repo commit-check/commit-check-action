@@ -475,17 +475,17 @@ def _markdown_passed_details(results: list[ScopeResult]) -> str:
 def render_report(results: list[ScopeResult], include_footer: bool = True) -> str:
     """Render the Markdown report shared by the job summary and PR comment.
 
-    The report opens with the plain title line followed by the status line:
-    ``✅ All checks passed (N scopes)`` on success, or the failure count on
-    failure, followed by a scope table with rule links and collapsible
-    failure details.
+    The report opens with the plain title line followed by a CodSpeed-style
+    status line: ``✅ **N passed** (N scopes)`` on success, or
+    ``❌ **N failures** · ✅ **M passed** (N scopes)`` on failure, followed
+    by a scope table with rule links and collapsible details.
     """
     if all(scope.status == "pass" for scope in results):
         scopes = "scope" if len(results) == 1 else "scopes"
         lines = [
             REPORT_TITLE,
             "",
-            f"✅ All checks passed ({len(results)} {scopes})",
+            f"✅ **{len(results)} passed** ({len(results)} {scopes})",
             "",
             _markdown_passed_details(results),
         ]
@@ -493,11 +493,13 @@ def render_report(results: list[ScopeResult], include_footer: bool = True) -> st
 
     failures = _failure_count(results)
     unit = "failure" if failures == 1 else "failures"
+    passed = sum(1 for scope in results if scope.status == "pass")
     scopes = "scope" if len(results) == 1 else "scopes"
     lines = [
         REPORT_TITLE,
         "",
-        f"❌ **{failures} {unit}** across {len(results)} {scopes}",
+        f"❌ **{failures} {unit}** · ✅ **{passed} passed** "
+        f"({len(results)} {scopes})",
         "",
         _markdown_table(results),
         "",

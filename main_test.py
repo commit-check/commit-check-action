@@ -632,7 +632,7 @@ class TestRenderJobSummary(unittest.TestCase):
     def test_all_pass(self):
         body = main.render_job_summary([pass_scope("Branch", value="main")])
         self.assertTrue(body.startswith(main.REPORT_TITLE))
-        self.assertIn("All checks passed (1 scope)", body)
+        self.assertIn("✅ **1 passed** (1 scope)", body)
         self.assertIn("<details>", body)
         self.assertIn("<summary>Show details</summary>", body)
         self.assertIn("```text", body)
@@ -669,7 +669,7 @@ class TestRenderJobSummary(unittest.TestCase):
     def test_failure_renders_table_with_rule_links(self):
         body = main.render_job_summary([fail_scope("Commit 1/1")])
         self.assertTrue(body.startswith(main.REPORT_TITLE))
-        self.assertIn("**1 failure** across 1 scope", body)
+        self.assertIn("❌ **1 failure** · ✅ **0 passed** (1 scope)", body)
         self.assertIn("| Scope | Checked value | Failed checks | Result |", body)
         self.assertIn(
             "| Commit 1/1 | `bad message` | "
@@ -704,14 +704,14 @@ class TestRenderPrComment(unittest.TestCase):
         summary = main.render_job_summary([pass_scope("Branch")])
         self.assertEqual(comment, summary)
         self.assertTrue(comment.startswith(main.REPORT_TITLE))
-        self.assertIn("All checks passed (1 scope)", comment)
+        self.assertIn("✅ **1 passed** (1 scope)", comment)
 
     def test_failure_matches_job_summary(self):
         comment = main.render_pr_comment([fail_scope("Commit 1/1")])
         summary = main.render_job_summary([fail_scope("Commit 1/1")])
         self.assertEqual(comment, summary)
         self.assertTrue(comment.startswith(main.REPORT_TITLE))
-        self.assertIn("**1 failure** across 1 scope", comment)
+        self.assertIn("❌ **1 failure** · ✅ **0 passed** (1 scope)", comment)
         self.assertIn("| Scope | Checked value | Failed checks | Result |", comment)
 
 
@@ -741,7 +741,7 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("All checks passed", content)
+        self.assertIn("✅ **1 passed** (1 scope)", content)
 
     def test_failure_returns_nonzero(self):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
