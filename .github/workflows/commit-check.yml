@@ -25,7 +25,11 @@ jobs:
           branch: true
           author-name: true
           author-email: true
-          job-summary: true
-          # Only post PR comments from the ubuntu job to avoid duplicates
+          # Report from the ubuntu job only. Every leg checks the same commits
+          # against the same rules, so the other two produce a byte-identical
+          # report — three copies of it on the run page, and the matrix is here
+          # to prove the action runs on each OS, not to say the same thing
+          # three times.
+          job-summary: ${{ matrix.os == 'ubuntu-latest' }}
           pr-comments: ${{ github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' }}
           pr-title: true
