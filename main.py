@@ -884,15 +884,18 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         if e.status == 403:
             print(
                 "::warning::Unable to post PR comment (403 Forbidden). "
-                "Ensure your workflow grants 'issues: write' permission. "
+                "Ensure your workflow grants 'pull-requests: write' permission. "
                 f"Error: {e.data.get('message', str(e))}",
                 file=sys.stderr,
             )
             return 0
-        print(f"Error posting PR comment: {e}", file=sys.stderr)
+        # Annotated, not just printed: posting the comment is best-effort and
+        # never fails the step, so without an annotation the run is green, the
+        # comment is absent, and nothing says why.
+        print(f"::warning::Unable to post PR comment: {e}", file=sys.stderr)
         return 0
     except Exception as e:
-        print(f"Error posting PR comment: {e}", file=sys.stderr)
+        print(f"::warning::Unable to post PR comment: {e}", file=sys.stderr)
         return 0
 
 

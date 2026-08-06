@@ -39,7 +39,6 @@ Create a new GitHub Actions workflow in your project, e.g. at [.github/workflows
 name: Commit Check
 
 on:
-  push:
   pull_request:
     branches: 'main'
 
@@ -50,7 +49,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Required for merge-base checks
       - uses: commit-check/commit-check-action@v2
@@ -60,7 +59,7 @@ jobs:
           author-name: false
           author-email: false
           job-summary: true
-          pr-comments: ${{ github.event_name == 'pull_request' }}
+          pr-comments: true
 ```
 
 > [!NOTE]
