@@ -56,7 +56,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: commit-check/commit-check-action@v2
@@ -148,7 +148,7 @@ jobs:
       pull-requests: write
     steps:
       # SAFE: checkout the merge commit, NOT the PR head
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: commit-check/commit-check-action@v2

@@ -39,7 +39,6 @@ Create a new GitHub Actions workflow in your project, e.g. at [.github/workflows
 name: Commit Check
 
 on:
-  push:
   pull_request:
     branches: 'main'
 
@@ -50,7 +49,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Required for merge-base checks
       - uses: commit-check/commit-check-action@v2
@@ -60,7 +59,7 @@ jobs:
           author-name: false
           author-email: false
           job-summary: true
-          pr-comments: ${{ github.event_name == 'pull_request' }}
+          pr-comments: true
 ```
 
 > [!NOTE]
@@ -231,25 +230,96 @@ or gate on individual rules.
 
 ## GitHub Action Job Summary
 
-By default, commit-check-action results are shown on the job summary page of the workflow.
+By default, commit-check-action results are shown on the job summary page of the
+workflow. The report below is reproduced as the action renders it, except that
+its title is a heading in the real thing — it is bold here so it stays out of
+this page's table of contents — and the footer names the version that actually
+ran.
 
 ### Success Job Summary
 
-![Success job summary](https://github.com/commit-check/.github/blob/main/screenshot/success-job-summary.png)
+Passing runs stay to one line, with the detail folded away:
+
+> <img src="https://raw.githubusercontent.com/commit-check/commit-check-action/main/assets/logo.png" width="20" align="top" alt=""> **Commit Check**
+>
+> ✅ **All 3 checks passed**
+>
+> <details>
+> <summary>Show all 3 checks</summary>
+>
+> ```text
+> Commit message
+>   ✔ PR title (feat: add login page)
+>   ✔ Commit 1/2 (feat: add login page)
+> Branch
+>   ✔ Branch (feature/add-login)
+> ```
+>
+> </details>
+>
+> _commit-check &lt;version&gt; · [Rules reference](https://commit-check.com/rules/)_
 
 ### Failure Job Summary
 
-![Failure job summary](https://github.com/commit-check/.github/blob/main/screenshot/failure-job-summary.png)
+Failures open with a count, then a table of only the scopes that failed — every
+rule ID links to its documentation — with the full tree still one click away:
+
+> <img src="https://raw.githubusercontent.com/commit-check/commit-check-action/main/assets/logo.png" width="20" align="top" alt=""> **Commit Check**
+>
+> ❌ **2 of 4 checks failed**
+>
+> | Scope | Checked value | Failed checks |
+> |---|---|---|
+> | Commit 2/2 | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
+> | Branch | `my-changes` | [CC201 branch](https://commit-check.com/rules/#cc201) |
+>
+> <details>
+> <summary>Show all 4 checks</summary>
+>
+> ```text
+> Commit message
+>   ✔ PR title (feat: add login page)
+>   ✔ Commit 1/2 (feat: add login page)
+>   ✖ Commit 2/2 (1 failure)
+>       CC001 message
+>         value: bad msg
+>         The commit message should follow Conventional Commits.
+>         Suggest: Use <type>(<scope>): <description>
+> Branch
+>   ✖ Branch (1 failure)
+>       CC201 branch
+>         value: my-changes
+>         The branch should follow Conventional Branch.
+>         Suggest: Use <type>/<description> with allowed types
+> ```
+>
+> </details>
+>
+> _commit-check &lt;version&gt; · [Rules reference](https://commit-check.com/rules/)_
+
+A scope is one thing that was checked — a commit message, the branch, the author
+— not one rule evaluation, so the total matches the ✔/✖ lines you can count and
+does not grow with the number of rules in your config.
 
 ## GitHub Pull Request Comments
 
-### Success Pull Request Comment
+With `pr-comments: true` the same report is posted as a pull request comment.
+It is the same Markdown: the job summary and the comment are both rendered by
+`render_report`, so the two surfaces cannot disagree. See
+[Success Job Summary](#success-job-summary) and
+[Failure Job Summary](#failure-job-summary) above for what it looks like.
 
-![Success pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/success-pr-comments.png)
+What differs is the lifecycle rather than the content:
 
-### Failure Pull Request Comment
-
-![Failure pull request comment](https://github.com/commit-check/.github/blob/main/screenshot/failure-pr-comments.png)
+- The comment is **edited in place** on later runs rather than added to, so a
+  pull request carries one Commit Check comment however many times CI runs. It
+  stays after the checks pass, showing the ✅ report rather than disappearing.
+- Comments are identified by a hidden `<!-- commit-check-action -->` marker, so
+  reformatting the visible text does not orphan the previous one. If several
+  marked comments somehow exist, the newest is kept and the rest deleted.
+- A comment from a version predating the marker is adopted rather than
+  duplicated — but only when a bot posted it, since the older signal was just a
+  title prefix that a person could type by hand.
 
 ## Fork PR Comments
 

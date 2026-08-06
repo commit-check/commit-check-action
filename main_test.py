@@ -1085,6 +1085,105 @@ class TestAddPrComments(unittest.TestCase):
         mock_pull_request.create_comment.assert_not_called()
 
 
+class _StubGithubException(Exception):
+    """Stands in for github.GithubException, which is mocked away in these tests.
+
+    The real class has to be a genuine exception type or the ``except`` clause
+    in add_pr_comments raises TypeError before the handler is reached.
+    """
+
+    def __init__(self, status, data=None):
+        super().__init__(f"status {status}")
+        self.status = status
+        # Stored as given, exactly as PyGithub does. Coercing a falsy payload
+        # to {} here would hide the very shapes the handler has to survive.
+        self.data = data
+
+
+class TestAddPrCommentsFailures(unittest.TestCase):
+    """Posting the comment is best-effort, but it must never fail silently.
+
+    Every branch here returns 0 so the step stays green — which is the point:
+    without an annotation the run is green, the comment is absent, and nothing
+    on the page says why.
+    """
+
+    def _run(self, side_effect):
+        mock_pull_request = MagicMock()
+        mock_pull_request.get_comments.return_value = []
+        mock_pull_request.create_comment.side_effect = side_effect
+        mock_repo = MagicMock()
+        mock_repo.get_issue.return_value = mock_pull_request
+
+        github_module = MagicMock()
+        github_module.GithubException = _StubGithubException
+        github_module.Github.return_value.get_repo.return_value = mock_repo
+
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_REF": "refs/pull/12/merge",
+                },
+            ),
+            patch.dict(sys.modules, {"github": github_module}),
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments([fail_scope()])
+        printed = [
+            call[0][0]
+            for call in mock_print.call_args_list
+            if call[0] and isinstance(call[0][0], str)
+        ]
+        return rc, printed
+
+    def test_forbidden_names_the_permission_that_actually_grants_this(self):
+        rc, printed = self._run(
+            _StubGithubException(403, {"message": "Resource not accessible"})
+        )
+        self.assertEqual(rc, 0)
+        warning = next(w for w in printed if "::warning::" in w)
+        # pull-requests, not issues: a PR comment is written with the
+        # pull-requests scope, and this hint is the only guidance a user gets.
+        self.assertIn("pull-requests: write", warning)
+        self.assertNotIn("issues: write", warning)
+        # The API's own wording is what tells the user which resource was
+        # refused, so the hint has to carry it through.
+        self.assertIn("Resource not accessible", warning)
+
+    def test_forbidden_with_a_non_mapping_payload_still_warns(self):
+        # data is whatever the body decoded to: None when empty, a str when it
+        # is not JSON. Reaching for .get on either raises inside the handler
+        # and escapes the function, which would fail the step.
+        for payload in (None, "forbidden"):
+            with self.subTest(payload=payload):
+                rc, printed = self._run(_StubGithubException(403, payload))
+                self.assertEqual(rc, 0)
+                warning = next(w for w in printed if "::warning::" in w)
+                self.assertIn("pull-requests: write", warning)
+                self.assertIn("status 403", warning)
+
+    def test_other_api_errors_are_annotated(self):
+        rc, printed = self._run(_StubGithubException(500, {"message": "boom"}))
+        self.assertEqual(rc, 0)
+        self.assertTrue(
+            any("::warning::" in w for w in printed),
+            f"a failed post must be annotated, got: {printed}",
+        )
+
+    def test_unexpected_errors_are_annotated(self):
+        rc, printed = self._run(RuntimeError("network went away"))
+        self.assertEqual(rc, 0)
+        self.assertTrue(
+            any("::warning::" in w and "network went away" in w for w in printed),
+            f"a failed post must be annotated, got: {printed}",
+        )
+
+
 class TestIsForkPrWithReadonlyToken(unittest.TestCase):
     def test_fork_pr_with_pull_request_event(self):
         with (
