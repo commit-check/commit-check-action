@@ -882,10 +882,15 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         return 0 if all(scope.status == "pass" for scope in results) else 1
     except GithubException as e:
         if e.status == 403:
+            # GithubException.data is whatever the response decoded to, which
+            # is None for an empty body and a str for a non-JSON one. Reaching
+            # for .get unguarded would raise inside this handler and escape the
+            # function, turning the best-effort path into a step failure.
+            detail = e.data.get("message") if isinstance(e.data, dict) else None
             print(
                 "::warning::Unable to post PR comment (403 Forbidden). "
                 "Ensure your workflow grants 'pull-requests: write' permission. "
-                f"Error: {e.data.get('message', str(e))}",
+                f"Error: {detail or e}",
                 file=sys.stderr,
             )
             return 0

@@ -1095,7 +1095,9 @@ class _StubGithubException(Exception):
     def __init__(self, status, data=None):
         super().__init__(f"status {status}")
         self.status = status
-        self.data = data or {}
+        # Stored as given, exactly as PyGithub does. Coercing a falsy payload
+        # to {} here would hide the very shapes the handler has to survive.
+        self.data = data
 
 
 class TestAddPrCommentsFailures(unittest.TestCase):
@@ -1149,6 +1151,21 @@ class TestAddPrCommentsFailures(unittest.TestCase):
         # pull-requests scope, and this hint is the only guidance a user gets.
         self.assertIn("pull-requests: write", warning)
         self.assertNotIn("issues: write", warning)
+        # The API's own wording is what tells the user which resource was
+        # refused, so the hint has to carry it through.
+        self.assertIn("Resource not accessible", warning)
+
+    def test_forbidden_with_a_non_mapping_payload_still_warns(self):
+        # data is whatever the body decoded to: None when empty, a str when it
+        # is not JSON. Reaching for .get on either raises inside the handler
+        # and escapes the function, which would fail the step.
+        for payload in (None, "forbidden"):
+            with self.subTest(payload=payload):
+                rc, printed = self._run(_StubGithubException(403, payload))
+                self.assertEqual(rc, 0)
+                warning = next(w for w in printed if "::warning::" in w)
+                self.assertIn("pull-requests: write", warning)
+                self.assertIn("status 403", warning)
 
     def test_other_api_errors_are_annotated(self):
         rc, printed = self._run(_StubGithubException(500, {"message": "boom"}))
