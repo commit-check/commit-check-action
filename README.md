@@ -77,7 +77,7 @@ jobs:
   <a href="https://github.com/opencadc"><img src="https://avatars.githubusercontent.com/u/13909060?s=200&v=4" alt="OpenCADC" width="28"/></a>
   <strong>OpenCADC</strong>&nbsp;&nbsp;
   <a href="https://github.com/extrawest"><img src="https://avatars.githubusercontent.com/u/39154663?s=200&v=4" alt="Extrawest" width="28"/></a>
-  <strong>Extrawest</strong>
+  <strong>Extrawest</strong>&nbsp;&nbsp;
   <a href="https://github.com/Chainlift"><img src="https://avatars.githubusercontent.com/u/204404276?s=200&v=4" alt="Chainlift" width="28"/></a>
   <strong>Chainlift</strong>&nbsp;&nbsp;
   <a href="https://github.com/mila-iqia"><img src="https://avatars.githubusercontent.com/u/11724251?s=200&v=4" alt="Mila" width="28"/></a>
@@ -86,6 +86,8 @@ jobs:
   <strong>RLinf</strong>&nbsp;&nbsp;
   <a href="https://github.com/collective"><img src="https://avatars.githubusercontent.com/u/362867?s=200&v=4" alt="Collective" width="28"/></a>
   <strong>Collective</strong>&nbsp;&nbsp;
+  <a href="https://github.com/cpp-linter"><img src="https://avatars.githubusercontent.com/cpp-linter?s=200&v=4" alt="cpp-linter" width="28"/></a>
+  <strong>cpp-linter</strong>&nbsp;&nbsp;
   <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
 </p>
 
