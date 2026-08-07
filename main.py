@@ -126,6 +126,32 @@ class ScopeResult:
         return [c for c in self.checks if c["status"] == "fail"]
 
 
+def overall_status(results: list[ScopeResult]) -> str:
+    """Reduce scope statuses to one of ``pass``/``fail``/``skip``.
+
+    One function, used by every completion path, because the alternative
+    is what this replaced: four separate ``all(... == "pass")`` tests, each
+    correct only while exactly two statuses existed. The moment ``skip``
+    appeared they all silently reclassified a skipped run as a failure.
+
+    ``skip`` requires at least one scope and all of them skipped.
+    """
+    if any(scope.status == "fail" for scope in results):
+        return "fail"
+    if results and all(scope.status == "skip" for scope in results):
+        return "skip"
+    return "pass"
+
+
+def exit_code_for(results: list[ScopeResult]) -> int:
+    """Only a failure is an error.
+
+    A skipped run validated nothing, but it violated no policy either, so
+    it must not fail the workflow.
+    """
+    return 1 if overall_status(results) == "fail" else 0
+
+
 def log_env_vars():
     """Logs the environment variables for debugging purposes.
 
@@ -340,7 +366,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
         args = [a for a in args if a != "--message"]
     results.extend(run_other_checks(args))
 
-    exit_code = 1 if any(scope.status == "fail" for scope in results) else 0
+    exit_code = exit_code_for(results)
     return exit_code, results
 
 
@@ -490,7 +516,10 @@ def render_step_log(results: list[ScopeResult]) -> None:
         if total and skipped == total:
             print("\u2298 commit-check: all checks skipped, nothing was validated")
         elif skipped:
-            print(f"\u2714 commit-check: all checks passed ({skipped} skipped)")
+            print(
+                f"\u2714 commit-check: {total - skipped} of {total} checks passed, "
+                f"{skipped} skipped"
+            )
         else:
             print("\u2714 commit-check: all checks passed")
 
@@ -541,7 +570,10 @@ def _markdown_table(results: list[ScopeResult]) -> str:
         "|---|---|---|",
     ]
     for scope in results:
-        if scope.status == "pass":
+        # Only failures belong in this table. A skipped scope has no failed
+        # checks and no checked value, so it contributed an entirely blank
+        # row \u2014 an empty accusation in a table headed "Failed checks".
+        if scope.status != "fail":
             continue
         value = _scope_value(scope)
         value_display = f"`{value}`" if value else "\u2014"
@@ -726,7 +758,7 @@ def render_report(results: list[ScopeResult]) -> str:
     if failed:
         lines.append(f"❌ **{failed} of {total} {unit} failed**")
         lines.extend(["", _markdown_table(results), ""])
-    elif skipped == total:
+    elif total and skipped == total:
         # Nothing ran, so there is no success to announce. Saying "all
         # checks passed" here is the defect this branch exists to prevent.
         lines.append(f"⊘ **All {total} {unit} skipped** — nothing was validated")
@@ -766,7 +798,7 @@ def add_job_summary(results: list[ScopeResult]) -> int:
     with open(GITHUB_STEP_SUMMARY, "a", encoding="utf-8") as summary_file:
         summary_file.write(render_job_summary(results))
 
-    return 0 if all(scope.status == "pass" for scope in results) else 1
+    return exit_code_for(results)
 
 
 def set_result_output(results: list[ScopeResult]) -> None:
@@ -778,7 +810,7 @@ def set_result_output(results: list[ScopeResult]) -> None:
     if not output_path:
         return
     payload = {
-        "status": "pass" if all(s.status == "pass" for s in results) else "fail",
+        "status": overall_status(results),
         "scopes": [
             {"label": scope.label, "status": scope.status, "checks": scope.checks}
             for scope in results
@@ -936,7 +968,7 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         if target is not None:
             if target.body == pr_comment_body:
                 print(f"PR comment already up-to-date for PR #{pr_number}.")
-                return 0 if all(scope.status == "pass" for scope in results) else 1
+                return exit_code_for(results)
             print(f"Updating the last comment on PR #{pr_number}.")
             target.edit(pr_comment_body)
             for comment in stale:
@@ -946,7 +978,7 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
             print(f"Creating a new comment on PR #{pr_number}.")
             pull_request.create_comment(body=pr_comment_body)
 
-        return 0 if all(scope.status == "pass" for scope in results) else 1
+        return exit_code_for(results)
     except GithubException as e:
         if e.status == 403:
             # GithubException.data is whatever the response decoded to, which
