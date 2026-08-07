@@ -303,6 +303,40 @@ A scope is one thing that was checked — a commit message, the branch, the auth
 — not one rule evaluation, so the total matches the ✔/✖ lines you can count and
 does not grow with the number of rules in your config.
 
+### Skipped Job Summary
+
+Some runs validate nothing at all — most commonly when the commit author is
+listed in `ignore_authors`, which is how Dependabot and other bots are usually
+exempted. Those runs report `⊘`, never `✔`:
+
+> <img src="https://raw.githubusercontent.com/commit-check/commit-check-action/main/assets/logo.png" width="20" align="top" alt=""> **Commit Check**
+>
+> ⊘ **All 3 checks skipped** — nothing was validated
+>
+> <details>
+> <summary>Show all 3 checks</summary>
+>
+> ```text
+> Commit message
+>   ⊘ PR title (skipped)
+>   ⊘ Commit 1/1 (skipped)
+> Branch
+>   ⊘ Branch (skipped)
+> ```
+>
+> </details>
+>
+> _commit-check &lt;version&gt; · [Rules reference](https://commit-check.com/rules/)_
+
+A skipped scope carries no checked value, because nothing was examined. When
+only some scopes skip, the verdict counts them separately —
+`✅ **3 of 5 checks passed**, 2 skipped` — so the headline never claims a pass
+that did not happen. Failures still take precedence over skips.
+
+This needs commit-check 2.13.4 or newer, which reports `"status": "skip"` in
+its JSON. Against an older engine every check is `pass` or `fail` as before,
+and the report is unchanged.
+
 ## GitHub Pull Request Comments
 
 With `pr-comments: true` the same report is posted as a pull request comment.
