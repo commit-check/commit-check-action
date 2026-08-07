@@ -29,27 +29,23 @@ RULES_URL = "https://commit-check.com/rules/"
 # CodSpeed all use for the same purpose.
 COMMENT_MARKER = "<!-- commit-check-action -->"
 
-#: Logo shown next to the report title.
-#
-# Served from this repository rather than commit-check.com so the report has no
-# cross-repository dependency, and as PNG rather than SVG because GitHub proxies
-# comment images through camo, which handles SVG unreliably. Point this at a
-# single org-wide asset if the other tools grow the same header.
-#
-# This is the org's *filled* mark (branding/avatar.png), not the transparent
-# logo-mark. At this size a stroke has almost no visual weight -- the wordless
-# mark rendered as a faint tick, worst on dark backgrounds -- while a filled
-# tile holds up. It is the asset the branding README calls out as legible
-# small, and the width below matches the h2 cap height so the icon is not
-# smaller than the words next to it.
-LOGO_URL = (
-    "https://raw.githubusercontent.com/commit-check/commit-check-action/main/"
-    "assets/logo.png"
-)
-
 #: Report heading. h2 rather than h1: this renders inside a PR comment, where an
 #: h1 is louder than anything else on the page.
-REPORT_TITLE = f'## <img src="{LOGO_URL}" width="24" align="top" alt=""> Commit Check'
+#
+# Deliberately carries no logo. The org mark is a check inside a rounded tile,
+# which is the same object GitHub's ✅ is — same shape, same silhouette, only
+# the hue differs. Putting it immediately above the verdict line meant a failing
+# report opened with a tick and then said "❌ 2 of 4 checks failed": the first
+# symbol the eye lands on contradicted the second, and it did so precisely when
+# the reader most needs to read the result quickly.
+#
+# The verdict line is the one status signal in this report, and one is the right
+# number. "Commit Check" in words is unambiguous branding; a checkmark next to a
+# failure is not.
+#
+# Do not "fix" this by showing the logo only on success — that makes the logo's
+# presence itself a status signal, which is the same defect wearing a hat.
+REPORT_TITLE = "## Commit Check"
 
 #: Prefixes of report bodies written by earlier versions, kept so the first run
 #: after upgrading adopts the existing comment instead of posting a second one.
@@ -574,7 +570,7 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 # Success:
 #
 #   <!-- commit-check-action -->
-#   ## <img src="..." width="24" align="top" alt=""> Commit Check
+#   ## Commit Check
 #
 #   ✅ **All 5 checks passed**
 #
@@ -599,7 +595,7 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 # Failure:
 #
 #   <!-- commit-check-action -->
-#   ## <img src="..." width="24" align="top" alt=""> Commit Check
+#   ## Commit Check
 #
 #   ❌ **1 of 5 checks failed**
 #
