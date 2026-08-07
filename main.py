@@ -101,10 +101,24 @@ class ScopeResult:
 
     @property
     def status(self) -> str:
-        """Overall status: ``pass`` when every check passed."""
+        """Overall status: ``pass``, ``fail``, or ``skip``.
+
+        ``skip`` means every rule in this scope declined to run — the author
+        is on an ``ignore_authors`` list, or there was nothing to check. It
+        is reported separately from ``pass`` because a skipped scope
+        validated nothing, and rendering the two identically let a bypassed
+        policy read as an enforced one.
+
+        A single real verdict outranks the skips: a scope is ``skip`` only
+        when *all* of its checks skipped.
+        """
         if self.raw_text and not self.checks:
             return "fail"
-        return "fail" if any(c["status"] == "fail" for c in self.checks) else "pass"
+        if any(c["status"] == "fail" for c in self.checks):
+            return "fail"
+        if self.checks and all(c["status"] == "skip" for c in self.checks):
+            return "skip"
+        return "pass"
 
     @property
     def failures(self) -> list[dict[str, str]]:
@@ -384,6 +398,11 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
     """
     lines: list[str] = []
     for scope in scopes:
+        if scope.status == "skip":
+            # Deliberately not a ✔. Nothing was validated here, and a tick
+            # claiming otherwise is what made a bypassed policy look enforced.
+            lines.append(f"  ⊘ {scope.label} (skipped)")
+            continue
         if scope.status == "pass":
             value = _scope_value(scope)
             lines.append(f"  ✔ {scope.label}{f' ({value})' if value else ''}")
@@ -467,7 +486,13 @@ def render_step_log(results: list[ScopeResult]) -> None:
         )
 
     if not annotations:
-        print("\u2714 commit-check: all checks passed")
+        skipped, total = _skip_count(results), len(results)
+        if total and skipped == total:
+            print("\u2298 commit-check: all checks skipped, nothing was validated")
+        elif skipped:
+            print(f"\u2714 commit-check: all checks passed ({skipped} skipped)")
+        else:
+            print("\u2714 commit-check: all checks passed")
 
 
 def _check_counts(results: list[ScopeResult]) -> tuple[int, int]:
@@ -493,6 +518,15 @@ def _check_counts(results: list[ScopeResult]) -> tuple[int, int]:
 def _failure_count(results: list[ScopeResult]) -> int:
     """Number of scopes that failed."""
     return _check_counts(results)[0]
+
+
+def _skip_count(results: list[ScopeResult]) -> int:
+    """Number of scopes that never ran.
+
+    Reported separately from the pass count so the headline cannot claim
+    that checks passed when they were skipped.
+    """
+    return sum(1 for scope in results if scope.status == "skip")
 
 
 def _markdown_table(results: list[ScopeResult]) -> str:
@@ -592,6 +626,25 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #
 #   _commit-check 2.13.1 · [Rules reference](https://commit-check.com/rules/)_
 #
+# Skipped (every rule declined to run — e.g. the author is in ignore_authors):
+#
+#   ⊘ **All 5 checks skipped** — nothing was validated
+#
+#   ```text
+#   Commit message
+#     ⊘ PR title (skipped)
+#     ⊘ Commit 1/1 (skipped)
+#   Branch
+#     ⊘ Branch (skipped)
+#   Author
+#     ⊘ Author name (skipped)
+#     ⊘ Author email (skipped)
+#   ```
+#
+# A skipped scope deliberately carries no ✔ and no checked value: nothing was
+# examined, so there is no value to report and no pass to claim. When only some
+# scopes skip, the verdict reads "✅ **3 of 5 checks passed**, 2 skipped".
+#
 # Failure:
 #
 #   <!-- commit-check-action -->
@@ -666,15 +719,26 @@ def render_report(results: list[ScopeResult]) -> str:
     failure table (failures only) and the collapsible per-scope details.
     """
     failed, total = _check_counts(results)
+    skipped = _skip_count(results)
     unit = "check" if total == 1 else "checks"
 
     lines = [COMMENT_MARKER, REPORT_TITLE, ""]
-    if failed == 0:
-        lines.append(f"✅ **All {total} {unit} passed**")
-        lines.append("")
-    else:
+    if failed:
         lines.append(f"❌ **{failed} of {total} {unit} failed**")
         lines.extend(["", _markdown_table(results), ""])
+    elif skipped == total:
+        # Nothing ran, so there is no success to announce. Saying "all
+        # checks passed" here is the defect this branch exists to prevent.
+        lines.append(f"⊘ **All {total} {unit} skipped** — nothing was validated")
+        lines.append("")
+    elif skipped:
+        lines.append(
+            f"✅ **{total - skipped} of {total} {unit} passed**, {skipped} skipped"
+        )
+        lines.append("")
+    else:
+        lines.append(f"✅ **All {total} {unit} passed**")
+        lines.append("")
     lines.extend([_markdown_details(results), "", _report_footer()])
     return "\n".join(lines)
 

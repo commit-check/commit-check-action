@@ -1355,3 +1355,81 @@ class TestFindOwnComments(unittest.TestCase):
         target, stale = main._find_own_comments([])
         self.assertIsNone(target)
         self.assertEqual(stale, [])
+
+
+def skip_scope(label: str = "PR title") -> main.ScopeResult:
+    """A scope whose every rule declined to run (e.g. author in ignore_authors)."""
+    return main.ScopeResult(
+        label=label,
+        checks=[make_check("message", status="skip", rule_id="CC001", value="")],
+    )
+
+
+class TestSkippedScopes(unittest.TestCase):
+    """A skipped scope must never render as a passing one.
+
+    commit-check-action#258 is the case this guards: every rule was skipped
+    because the author is dependabot[bot], and the report announced
+    "All 5 checks passed" over five green ticks.
+    """
+
+    def test_scope_status_is_skip_not_pass(self):
+        self.assertEqual(skip_scope().status, "skip")
+
+    def test_one_real_verdict_outranks_the_skips(self):
+        """A scope only counts as skipped when nothing in it ran."""
+        mixed = main.ScopeResult(
+            label="PR title",
+            checks=[
+                make_check("message", status="skip", value=""),
+                make_check("subject_max_length", status="pass", value="feat: x"),
+            ],
+        )
+        self.assertEqual(mixed.status, "pass")
+
+    @pin_version
+    def test_all_skipped_golden_output(self):
+        """Pin the fully skipped report: no ✔, no pass claim."""
+        results = [skip_scope("PR title"), skip_scope("Commit 1/1")]
+        body = main.render_report(results)
+        self.assertEqual(
+            body,
+            f"{main.COMMENT_MARKER}\n"
+            f"{main.REPORT_TITLE}\n"
+            "\n"
+            "⊘ **All 2 checks skipped** — nothing was validated\n"
+            "\n"
+            "<details>\n"
+            "<summary>Show all 2 checks</summary>\n"
+            "\n"
+            "```text\n"
+            "Commit message\n"
+            "  ⊘ PR title (skipped)\n"
+            "  ⊘ Commit 1/1 (skipped)\n"
+            "```\n"
+            "\n"
+            "</details>\n"
+            "\n"
+            f"{FOOTER}",
+        )
+
+    def test_partial_skip_does_not_claim_all_passed(self):
+        results = [pass_scope("Branch", value="main"), skip_scope("PR title")]
+        body = main.render_report(results)
+        self.assertIn("✅ **1 of 2 checks passed**, 1 skipped", body)
+        self.assertNotIn("All 2 checks passed", body)
+
+    def test_failure_still_wins_over_skips(self):
+        results = [fail_scope("Commit 1/1"), skip_scope("PR title")]
+        body = main.render_report(results)
+        self.assertIn("❌ **1 of 2 checks failed**", body)
+
+    def test_skipped_scope_reports_no_checked_value(self):
+        """The ⊘ line carries no value, because nothing was examined."""
+        body = main.render_report([skip_scope("PR title")])
+        self.assertIn("  ⊘ PR title (skipped)", body)
+
+    def test_older_engine_without_skip_is_unaffected(self):
+        """Back-compat: engines that only emit pass/fail render as before."""
+        results = [pass_scope("Branch", value="main")]
+        self.assertIn("✅ **All 1 check passed**", main.render_report(results))
