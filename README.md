@@ -242,7 +242,7 @@ ran.
 
 Passing runs stay to one line, with the detail folded away:
 
-> <img src="https://raw.githubusercontent.com/commit-check/commit-check-action/main/assets/logo.png" width="20" align="top" alt=""> **Commit Check**
+> <img src="https://raw.githubusercontent.com/commit-check/commit-check-action/main/assets/logo.png" width="24" align="top" alt=""> **Commit Check**
 >
 > ✅ **All 3 checks passed**
 >
@@ -266,7 +266,7 @@ Passing runs stay to one line, with the detail folded away:
 Failures open with a count, then a table of only the scopes that failed — every
 rule ID links to its documentation — with the full tree still one click away:
 
-> <img src="https://raw.githubusercontent.com/commit-check/commit-check-action/main/assets/logo.png" width="20" align="top" alt=""> **Commit Check**
+> <img src="https://raw.githubusercontent.com/commit-check/commit-check-action/main/assets/logo.png" width="24" align="top" alt=""> **Commit Check**
 >
 > ❌ **2 of 4 checks failed**
 >
