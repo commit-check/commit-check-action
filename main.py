@@ -35,6 +35,13 @@ COMMENT_MARKER = "<!-- commit-check-action -->"
 # cross-repository dependency, and as PNG rather than SVG because GitHub proxies
 # comment images through camo, which handles SVG unreliably. Point this at a
 # single org-wide asset if the other tools grow the same header.
+#
+# This is the org's *filled* mark (branding/avatar.png), not the transparent
+# logo-mark. At this size a stroke has almost no visual weight -- the wordless
+# mark rendered as a faint tick, worst on dark backgrounds -- while a filled
+# tile holds up. It is the asset the branding README calls out as legible
+# small, and the width below matches the h2 cap height so the icon is not
+# smaller than the words next to it.
 LOGO_URL = (
     "https://raw.githubusercontent.com/commit-check/commit-check-action/main/"
     "assets/logo.png"
@@ -42,7 +49,7 @@ LOGO_URL = (
 
 #: Report heading. h2 rather than h1: this renders inside a PR comment, where an
 #: h1 is louder than anything else on the page.
-REPORT_TITLE = f'## <img src="{LOGO_URL}" width="20" align="top" alt=""> Commit Check'
+REPORT_TITLE = f'## <img src="{LOGO_URL}" width="24" align="top" alt=""> Commit Check'
 
 #: Prefixes of report bodies written by earlier versions, kept so the first run
 #: after upgrading adopts the existing comment instead of posting a second one.
@@ -567,7 +574,7 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 # Success:
 #
 #   <!-- commit-check-action -->
-#   ## <img src="..." width="20" align="top" alt=""> Commit Check
+#   ## <img src="..." width="24" align="top" alt=""> Commit Check
 #
 #   ✅ **All 5 checks passed**
 #
@@ -592,7 +599,7 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 # Failure:
 #
 #   <!-- commit-check-action -->
-#   ## <img src="..." width="20" align="top" alt=""> Commit Check
+#   ## <img src="..." width="24" align="top" alt=""> Commit Check
 #
 #   ❌ **1 of 5 checks failed**
 #
