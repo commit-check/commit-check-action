@@ -558,12 +558,32 @@ def _skip_count(results: list[ScopeResult]) -> int:
     return sum(1 for scope in results if scope.status == "skip")
 
 
+def _table_cell_code(text: str) -> str:
+    """Render a checked value as a code span safe for a Markdown table cell.
+
+    A commit subject is arbitrary text. A ``|`` inside a cell ends the cell,
+    and a backtick would end a fixed single-backtick span, so the delimiter
+    grows past the longest backtick run in the value instead. A value that
+    starts or ends with a backtick additionally needs the padding spaces —
+    CommonMark strips exactly one of each.
+    """
+    escaped = text.replace("|", "\\|")
+    delimiter = "`"
+    while delimiter in escaped:
+        delimiter += "`"
+    if escaped.startswith("`") or escaped.endswith("`"):
+        escaped = f" {escaped} "
+    return f"{delimiter}{escaped}{delimiter}"
+
+
 def _markdown_table(results: list[ScopeResult]) -> str:
     """Render the failure table shared by summary and PR comment.
 
     Only failed scopes appear, so a per-row result column would read ``\u274c`` on
     every row and carry no information; the pass/fail picture for everything
-    else lives in the details block.
+    else lives in the details block. Listing every scope was tried and
+    reverted: the table grew with the pull request, and it duplicated the
+    details block line for line.
     """
     rows = [
         "| Scope | Checked value | Failed checks |",
@@ -576,7 +596,7 @@ def _markdown_table(results: list[ScopeResult]) -> str:
         if scope.status != "fail":
             continue
         value = _scope_value(scope)
-        value_display = f"`{value}`" if value else "\u2014"
+        value_display = _table_cell_code(value) if value else "\u2014"
         if scope.raw_text and not scope.checks:
             links = "_output could not be parsed \u2014 see details_"
         else:
@@ -714,6 +734,10 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   the number of commits in the pull request or rules in the config.
 # - The table lists only failed scopes; there is no per-row result column
 #   because it would read ❌ on every row. Passing scopes live in the details.
+#   An all-scope table with a verdict column was tried and reverted: it grew
+#   with the pull request and duplicated the details block line for line.
+# - A checked value renders as a code span with pipes escaped and the span
+#   delimiter grown past any backtick run, so a subject cannot break the table.
 # - Values are capped at 60 characters with a literal "..." suffix, except on a
 #   failing scope, where the details block prints the value in full — it is the
 #   one value the reader has to act on and the cap can hide the reason.

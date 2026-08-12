@@ -803,6 +803,32 @@ class TestRenderJobSummary(unittest.TestCase):
         self.assertIn("| Scope | Checked value | Failed checks |", body)
         self.assertNotIn("| Result |", body)
 
+    @staticmethod
+    def _failing_scope_with_value(value: str) -> main.ScopeResult:
+        return main.ScopeResult(
+            label="Commit 1/1",
+            checks=[make_check("message", status="fail", value=value)],
+        )
+
+    def test_pipe_in_a_value_does_not_break_the_table(self):
+        table = main._markdown_table([self._failing_scope_with_value("feat: a|b")])
+        self.assertIn("`feat: a\\|b`", table)
+
+    def test_backtick_in_a_value_does_not_end_the_code_span(self):
+        """The span delimiter grows past the longest backtick run inside."""
+        table = main._markdown_table(
+            [self._failing_scope_with_value("fix: escape `quoted` text")]
+        )
+        self.assertIn("``fix: escape `quoted` text``", table)
+
+    def test_value_ending_in_a_backtick_gets_padding_spaces(self):
+        """CommonMark reads a backtick against the delimiter as part of it;
+        the padding spaces keep the content and the fence apart."""
+        table = main._markdown_table(
+            [self._failing_scope_with_value("fix: dangling `")]
+        )
+        self.assertIn("`` fix: dangling ` ``", table)
+
     def test_body_opens_with_hidden_marker(self):
         body = main.render_job_summary([pass_scope("Branch")])
         self.assertTrue(body.startswith(main.COMMENT_MARKER))
