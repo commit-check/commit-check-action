@@ -2,3 +2,9 @@ venv/
 .venv/
 __pycache__/
 result.txt
+
+# pytest-cov
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
