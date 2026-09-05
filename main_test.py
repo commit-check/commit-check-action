@@ -1435,6 +1435,145 @@ class TestSkippedScopes(unittest.TestCase):
         self.assertIn("✅ **All 1 check passed**", main.render_report(results))
 
 
+def warn_scope(label: str = "Branch", value: str = "jsmith/fix-x") -> main.ScopeResult:
+    """A scope with one rule the config lists under the top-level ``warn``."""
+    return main.ScopeResult(
+        label=label,
+        checks=[
+            make_check(
+                "branch",
+                status="warn",
+                rule_id="CC201",
+                value=value,
+                error="The branch should follow Conventional Branch.",
+                suggest="Use <type>/<description>",
+                docs_url="https://commit-check.com/rules/#cc201",
+            )
+        ],
+    )
+
+
+class TestWarnedScopes(unittest.TestCase):
+    """A rule listed under the config's top-level ``warn`` is reported in
+    full, but it must never read as a failure — or disappear like a pass."""
+
+    def test_scope_status_is_warn_not_fail_or_pass(self):
+        self.assertEqual(warn_scope().status, "warn")
+
+    def test_a_real_failure_outranks_a_warning_in_the_same_scope(self):
+        """CC2xx groups both branch and merge_base; the two can disagree."""
+        mixed = main.ScopeResult(
+            label="Branch",
+            checks=[
+                make_check("branch", status="warn", rule_id="CC201"),
+                make_check("merge_base", status="fail", rule_id="CC202"),
+            ],
+        )
+        self.assertEqual(mixed.status, "fail")
+
+    def test_a_warning_outranks_a_skip_in_the_same_scope(self):
+        mixed = main.ScopeResult(
+            label="Author",
+            checks=[
+                make_check("author_name", status="skip"),
+                make_check("author_email", status="warn", rule_id="CC102"),
+            ],
+        )
+        self.assertEqual(mixed.status, "warn")
+
+    def test_warnings_property_lists_only_the_warned_checks(self):
+        mixed = main.ScopeResult(
+            label="Branch",
+            checks=[
+                make_check("branch", status="warn", rule_id="CC201"),
+                make_check("merge_base", status="pass", rule_id="CC202"),
+            ],
+        )
+        self.assertEqual([c["rule_id"] for c in mixed.warnings], ["CC201"])
+
+    def test_overall_status_and_exit_code_treat_a_warning_as_a_pass(self):
+        results = [pass_scope("PR title"), warn_scope()]
+        self.assertEqual(main.overall_status(results), "pass")
+        self.assertEqual(main.exit_code_for(results), 0)
+
+    def test_a_real_failure_still_fails_the_run_alongside_a_warning(self):
+        results = [fail_scope("Commit 1/1"), warn_scope()]
+        self.assertEqual(main.overall_status(results), "fail")
+        self.assertEqual(main.exit_code_for(results), 1)
+
+    @pin_version
+    def test_warning_only_golden_output(self):
+        """Pin the warning report: passes, but the finding is fully visible."""
+        results = [
+            pass_scope("PR title", value="feat: add login page"),
+            warn_scope("Branch"),
+        ]
+        body = main.render_report(results)
+        self.assertEqual(
+            body,
+            f"{main.COMMENT_MARKER}\n"
+            f"{main.REPORT_TITLE}\n"
+            "\n"
+            "✅ **1 of 2 checks passed**, 1 warning\n"
+            "\n"
+            "| Scope | Checked value | Warnings |\n"
+            "|---|---|---|\n"
+            "| Branch | `jsmith/fix-x` | "
+            "[CC201 branch](https://commit-check.com/rules/#cc201) |\n"
+            "\n"
+            "<details>\n"
+            "<summary>Show all 2 checks</summary>\n"
+            "\n"
+            "```text\n"
+            "Commit message\n"
+            "  ✔ PR title (feat: add login page)\n"
+            "Branch\n"
+            "  ⚠ Branch (1 warning)\n"
+            "      CC201 branch\n"
+            "        value: jsmith/fix-x\n"
+            "        The branch should follow Conventional Branch.\n"
+            "        Suggest: Use <type>/<description>\n"
+            "```\n"
+            "\n"
+            "</details>\n"
+            "\n"
+            f"{FOOTER}",
+        )
+
+    def test_warning_and_skip_both_fold_into_the_title_in_order(self):
+        results = [pass_scope("PR title"), warn_scope(), skip_scope("Author")]
+        body = main.render_report(results)
+        self.assertIn("✅ **1 of 3 checks passed**, 1 warning, 1 skipped", body)
+
+    def test_a_failure_still_fails_and_names_the_warning_too(self):
+        results = [fail_scope("Commit 1/1"), warn_scope()]
+        body = main.render_report(results)
+        self.assertIn("❌ **1 of 2 checks failed**, 1 warning", body)
+        self.assertIn("| Scope | Checked value | Failed checks |", body)
+        self.assertIn("| Scope | Checked value | Warnings |", body)
+        self.assertLess(
+            body.index("Failed checks"),
+            body.index("| Scope | Checked value | Warnings |"),
+        )
+
+    def test_step_log_prints_a_warning_annotation_not_an_error(self):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            main.render_step_log([warn_scope()])
+        out = buf.getvalue()
+        self.assertIn("::warning title=CC201 branch::Branch: The branch should ", out)
+        self.assertNotIn("::error", out)
+        self.assertIn("  ⚠ Branch (1 warning)", out)
+
+    def test_step_log_friendly_line_mentions_the_warning(self):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            main.render_step_log([pass_scope("PR title"), warn_scope()])
+        out = buf.getvalue()
+        self.assertIn("1 of 2 checks passed, 1 warning", out)
+        self.assertNotIn("all checks passed", out)
+
+
 class TestSkipCompletionSemantics(unittest.TestCase):
     """A skipped run must not be treated as a failing one.
 

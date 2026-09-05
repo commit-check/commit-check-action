@@ -203,6 +203,13 @@ for all available options.
 > [Optional Inputs](#optional-inputs), so env vars and config files are the
 > recommended way to customize.
 
+The config's top-level `warn` reports a rule without failing the run — see
+[Warning Job Summary](#warning-job-summary) for what that looks like:
+
+```toml
+warn = ["branch", "CC003"]
+```
+
 ## Outputs
 
 ### `result`
@@ -337,6 +344,49 @@ that did not happen. Failures still take precedence over skips.
 This needs commit-check 2.13.4 or newer, which reports `"status": "skip"` in
 its JSON. Against an older engine every check is `pass` or `fail` as before,
 and the report is unchanged.
+
+### Warning Job Summary
+
+A rule listed under the config's [top-level `warn`](#via-configuration-file)
+still runs and is reported in full — its own table row, its own entry in the
+details block — but it never fails the workflow. It counts toward "passed":
+
+> **Commit Check**
+>
+> ✅ **3 of 4 checks passed**, 1 warning
+>
+> | Scope | Checked value | Warnings |
+> |---|---|---|
+> | Branch | `jsmith/fix-x` | [CC201 branch](https://commit-check.com/rules/#cc201) |
+>
+> <details>
+> <summary>Show all 4 checks</summary>
+>
+> ```text
+> Commit message
+>   ✔ PR title (feat: add login page)
+>   ✔ Commit 1/2 (feat: add login page)
+> Branch
+>   ⚠ Branch (1 warning)
+>       CC201 branch
+>         value: jsmith/fix-x
+>         The branch should follow Conventional Branch.
+>         Suggest: Use <type>/<description> with allowed types
+> ```
+>
+> </details>
+>
+> _commit-check &lt;version&gt; · [Rules reference](https://commit-check.com/rules/)_
+
+A warned scope is marked `⚠`, never `✖`, and a real failure elsewhere still
+fails the run — the verdict then reads `❌ **N of M checks failed**, K
+warnings` and both tables appear. In the step log, a warning becomes a
+`::warning` annotation rather than `::error`, so it never counts toward the
+run's error count.
+
+This needs commit-check 2.17.0 or newer, which reports `"status": "warn"` in
+its JSON. Against an older engine, or a config with no `warn` list, no check
+can ever be a warning, and the report is unchanged.
 
 ## GitHub Pull Request Comments
 

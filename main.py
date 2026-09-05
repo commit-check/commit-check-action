@@ -101,7 +101,7 @@ class ScopeResult:
 
     @property
     def status(self) -> str:
-        """Overall status: ``pass``, ``fail``, or ``skip``.
+        """Overall status: ``pass``, ``fail``, ``warn``, or ``skip``.
 
         ``skip`` means every rule in this scope declined to run — the author
         is on an ``ignore_authors`` list, or there was nothing to check. It
@@ -109,13 +109,19 @@ class ScopeResult:
         validated nothing, and rendering the two identically let a bypassed
         policy read as an enforced one.
 
-        A single real verdict outranks the skips: a scope is ``skip`` only
-        when *all* of its checks skipped.
+        ``warn`` means a rule found something but is listed under the
+        config's top-level ``warn``, so commit-check reports it without
+        failing the run. A real failure still outranks a warning in the same
+        scope (CC202 stands in for ``branch`` when the two disagree), and a
+        single real verdict — failing or warning — outranks the skips: a
+        scope is ``skip`` only when *all* of its checks skipped.
         """
         if self.raw_text and not self.checks:
             return "fail"
         if any(c["status"] == "fail" for c in self.checks):
             return "fail"
+        if any(c["status"] == "warn" for c in self.checks):
+            return "warn"
         if self.checks and all(c["status"] == "skip" for c in self.checks):
             return "skip"
         return "pass"
@@ -124,6 +130,11 @@ class ScopeResult:
     def failures(self) -> list[dict[str, str]]:
         """The checks that failed in this scope."""
         return [c for c in self.checks if c["status"] == "fail"]
+
+    @property
+    def warnings(self) -> list[dict[str, str]]:
+        """The checks reported as warnings in this scope."""
+        return [c for c in self.checks if c["status"] == "warn"]
 
 
 def overall_status(results: list[ScopeResult]) -> str:
@@ -134,7 +145,9 @@ def overall_status(results: list[ScopeResult]) -> str:
     correct only while exactly two statuses existed. The moment ``skip``
     appeared they all silently reclassified a skipped run as a failure.
 
-    ``skip`` requires at least one scope and all of them skipped.
+    ``skip`` requires at least one scope and all of them skipped. A ``warn``
+    scope is neither a failure nor a skip, so it falls through to ``pass``
+    here — reported in full, but it never fails the workflow.
     """
     if any(scope.status == "fail" for scope in results):
         return "fail"
@@ -410,6 +423,27 @@ def _grouped(results: list[ScopeResult]) -> list[tuple[str, list[ScopeResult]]]:
     return groups
 
 
+def _render_findings(checks: list[dict[str, str]], include_docs: bool) -> list[str]:
+    """Render the indented detail lines for a list of check entries.
+
+    Shared by the failure and warning branches of ``_render_scopes`` — the
+    same rule label / value / error / suggestion / docs layout, whichever
+    list it is called with.
+    """
+    lines: list[str] = []
+    for check in checks:
+        lines.append(f"      {_rule_label(check)}")
+        if check.get("value"):
+            lines.append(f"        value: {check['value']}")
+        for line in check.get("error", "").splitlines():
+            lines.append(f"        {line}")
+        if check.get("suggest"):
+            lines.append(f"        Suggest: {check['suggest']}")
+        if include_docs and check.get("docs_url"):
+            lines.append(f"        Docs: {check['docs_url']}")
+    return lines
+
+
 def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
     """Render the indented listing for one group of scopes, without its header.
 
@@ -418,9 +452,9 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
     docs link, which the Markdown report already carries on the rule ID in the
     table above it.
 
-    A failing scope shows its value in full rather than truncated. It is the one
-    value the reader has to act on, and the table's 60-character cap can cut off
-    the part that explains the failure.
+    A failing or warned scope shows its value in full rather than truncated.
+    It is the one value the reader has to act on, and the table's 60-character
+    cap can cut off the part that explains it.
     """
     lines: list[str] = []
     for scope in scopes:
@@ -433,6 +467,15 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
             value = _scope_value(scope)
             lines.append(f"  ✔ {scope.label}{f' ({value})' if value else ''}")
             continue
+        if scope.status == "warn":
+            # Reported like a failure — same detail lines — but never a ✖:
+            # a warned rule ran and found something, it just does not fail
+            # the workflow, and the marker says so at a glance.
+            warnings = scope.warnings
+            count = f" ({len(warnings)} warning{'s' if len(warnings) != 1 else ''})"
+            lines.append(f"  ⚠ {scope.label}{count}")
+            lines.extend(_render_findings(warnings, include_docs))
+            continue
         if scope.raw_text and not scope.checks:
             # Defensive fallback: commit-check produced unexpected output.
             lines.append(f"  ✖ {scope.label}")
@@ -441,16 +484,7 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
         failures = scope.failures
         count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
         lines.append(f"  ✖ {scope.label}{count}")
-        for check in failures:
-            lines.append(f"      {_rule_label(check)}")
-            if check.get("value"):
-                lines.append(f"        value: {check['value']}")
-            for line in check.get("error", "").splitlines():
-                lines.append(f"        {line}")
-            if check.get("suggest"):
-                lines.append(f"        Suggest: {check['suggest']}")
-            if include_docs and check.get("docs_url"):
-                lines.append(f"        Docs: {check['docs_url']}")
+        lines.extend(_render_findings(failures, include_docs))
     return lines
 
 
@@ -473,15 +507,19 @@ def _annotation_escape(text: str) -> str:
 
 
 def render_step_log(results: list[ScopeResult]) -> None:
-    """Print results to the step log, then emit one annotation per failure.
+    """Print results to the step log, then emit one annotation per finding.
 
-    The two are separated deliberately. An ``::error`` command renders as a
-    line of its own wherever it is printed, so emitting one inside the indented
-    listing broke the tree apart, and its ``title=`` \u2014 which is what carries the
-    rule ID \u2014 is only shown in the annotations UI, never inline. Printing the
-    detail once in the listing and the annotations after all the groups keeps
-    the log readable and still surfaces failures in the run summary and on the
-    Files changed tab.
+    The tree and the annotations are separated deliberately. An ``::error`` or
+    ``::warning`` command renders as a line of its own wherever it is printed,
+    so emitting one inside the indented listing broke the tree apart, and its
+    ``title=`` \u2014 which is what carries the rule ID \u2014 is only shown in the
+    annotations UI, never inline. Printing the detail once in the listing and
+    the annotations after all the groups keeps the log readable and still
+    surfaces findings in the run summary and on the Files changed tab.
+
+    A failure becomes an ``::error``, a warning a ``::warning`` \u2014 GitHub
+    renders the two differently, and only the errors count toward the
+    friendly one-line verdict claiming nothing failed.
     """
     # The tree is grouped, so it is printed group by group rather than in one
     # block: ::group:: and ::endgroup:: have to bracket each section's lines.
@@ -491,34 +529,53 @@ def render_step_log(results: list[ScopeResult]) -> None:
             print(line)
         print("::endgroup::")
 
-    annotations: list[tuple[str, str]] = []
+    errors: list[tuple[str, str]] = []
+    warnings: list[tuple[str, str]] = []
     for scope in results:
-        if scope.status == "pass":
+        if scope.status in ("pass", "skip"):
             continue
         if scope.raw_text and not scope.checks:
-            annotations.append(
+            errors.append(
                 (f"commit-check: {scope.label}", "output could not be parsed")
             )
             continue
         for check in scope.failures:
             error = check.get("error", "")
             first_line = error.splitlines()[0] if error else "check failed"
-            annotations.append((_rule_label(check), f"{scope.label}: {first_line}"))
+            errors.append((_rule_label(check), f"{scope.label}: {first_line}"))
+        for check in scope.warnings:
+            error = check.get("error", "")
+            first_line = error.splitlines()[0] if error else "check warning"
+            warnings.append((_rule_label(check), f"{scope.label}: {first_line}"))
 
-    for title, message in annotations:
+    for title, message in errors:
         print(
             f"::error title={_annotation_escape(title)}"
             f"::{_annotation_escape(message)}"
         )
+    for title, message in warnings:
+        print(
+            f"::warning title={_annotation_escape(title)}"
+            f"::{_annotation_escape(message)}"
+        )
 
-    if not annotations:
-        skipped, total = _skip_count(results), len(results)
+    if not errors:
+        skipped, warned, total = (
+            _skip_count(results),
+            _warn_count(results),
+            len(results),
+        )
         if total and skipped == total:
             print("\u2298 commit-check: all checks skipped, nothing was validated")
-        elif skipped:
+        elif warned or skipped:
+            passed = total - skipped - warned
+            tail = []
+            if warned:
+                tail.append(f"{warned} warning{'s' if warned != 1 else ''}")
+            if skipped:
+                tail.append(f"{skipped} skipped")
             print(
-                f"\u2714 commit-check: {total - skipped} of {total} checks passed, "
-                f"{skipped} skipped"
+                f"\u2714 commit-check: {passed} of {total} checks passed, {', '.join(tail)}"
             )
         else:
             print("\u2714 commit-check: all checks passed")
@@ -558,31 +615,42 @@ def _skip_count(results: list[ScopeResult]) -> int:
     return sum(1 for scope in results if scope.status == "skip")
 
 
-def _markdown_table(results: list[ScopeResult]) -> str:
-    """Render the failure table shared by summary and PR comment.
+def _warn_count(results: list[ScopeResult]) -> int:
+    """Number of scopes reported as warnings.
 
-    Only failed scopes appear, so a per-row result column would read ``\u274c`` on
-    every row and carry no information; the pass/fail picture for everything
-    else lives in the details block.
+    Reported separately from the pass count, the same way skips are, so the
+    headline can say how many findings were surfaced without claiming they
+    failed anything.
+    """
+    return sum(1 for scope in results if scope.status == "warn")
+
+
+def _markdown_table(
+    results: list[ScopeResult], status: str = "fail", header: str = "Failed checks"
+) -> str:
+    """Render the failure or warning table shared by summary and PR comment.
+
+    Only scopes of the given status appear, so a per-row result column would
+    read the same symbol on every row and carry no information; the pass/fail
+    picture for everything else lives in the details block.
     """
     rows = [
-        "| Scope | Checked value | Failed checks |",
+        f"| Scope | Checked value | {header} |",
         "|---|---|---|",
     ]
     for scope in results:
-        # Only failures belong in this table. A skipped scope has no failed
-        # checks and no checked value, so it contributed an entirely blank
-        # row \u2014 an empty accusation in a table headed "Failed checks".
-        if scope.status != "fail":
+        # A skipped scope has no failed checks and no checked value, so it
+        # contributed an entirely blank row \u2014 an empty accusation in a table
+        # headed "Failed checks" \u2014 before this filter existed.
+        if scope.status != status:
             continue
         value = _scope_value(scope)
         value_display = f"`{value}`" if value else "\u2014"
         if scope.raw_text and not scope.checks:
             links = "_output could not be parsed \u2014 see details_"
         else:
-            links = " \u00b7 ".join(
-                _rule_markdown_link(check) for check in scope.failures
-            )
+            entries = scope.failures if status == "fail" else scope.warnings
+            links = " \u00b7 ".join(_rule_markdown_link(check) for check in entries)
         rows.append(f"| {scope.label} | {value_display} | {links} |")
     return "\n".join(rows)
 
@@ -677,6 +745,44 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 # examined, so there is no value to report and no pass to claim. When only some
 # scopes skip, the verdict reads "✅ **3 of 5 checks passed**, 2 skipped".
 #
+# Warning (the repository's config lists a rule under the top-level `warn`):
+#
+#   <!-- commit-check-action -->
+#   ## Commit Check
+#
+#   ✅ **3 of 4 checks passed**, 1 warning
+#
+#   | Scope | Checked value | Warnings |
+#   |---|---|---|
+#   | Branch | `jsmith/fix-x` | [CC201 branch](https://commit-check.com/rules/#cc201) |
+#
+#   <details>
+#   <summary>Show all 4 checks</summary>
+#
+#   ```text
+#   Commit message
+#     ✔ PR title (feat: add login page)
+#   Branch
+#     ⚠ Branch (1 warning)
+#         CC201 branch
+#           value: jsmith/fix-x
+#           The branch should follow Conventional Branch.
+#           Suggest: Use <type>/<description>
+#   Author
+#     ✔ Author name (Jane Doe)
+#     ✔ Author email (jane@example.com)
+#   ```
+#
+#   </details>
+#
+#   _commit-check 2.17.0 · [Rules reference](https://commit-check.com/rules/)_
+#
+# A warned scope is reported exactly like a failing one — its own table row,
+# its own entry in the details block — except the marker is ⚠ rather than ✖,
+# it counts toward "passed" rather than "failed", and it never turns the
+# workflow red. A real failure elsewhere still fails the run; the verdict
+# then reads "❌ **N of M checks failed**, K warnings" and both tables appear.
+#
 # Failure:
 #
 #   <!-- commit-check-action -->
@@ -748,26 +854,43 @@ def render_report(results: list[ScopeResult]) -> str:
 
     Opens with the hidden marker and the title, then a one-line verdict —
     ``✅ **All N checks passed**`` or ``❌ **N of M checks failed**`` — then the
-    failure table (failures only) and the collapsible per-scope details.
+    failure table (failures only), a warnings table when the config listed
+    any rule under ``warn``, and the collapsible per-scope details.
+
+    A warned scope counts toward "passed", never toward "failed": it ran,
+    found something, and is reported in full, but the config asked for it to
+    be surfaced rather than enforced.
     """
     failed, total = _check_counts(results)
+    warned = _warn_count(results)
     skipped = _skip_count(results)
     unit = "check" if total == 1 else "checks"
 
     lines = [COMMENT_MARKER, REPORT_TITLE, ""]
     if failed:
-        lines.append(f"❌ **{failed} of {total} {unit} failed**")
+        verdict = f"❌ **{failed} of {total} {unit} failed**"
+        if warned:
+            verdict += f", {warned} warning{'s' if warned != 1 else ''}"
+        lines.append(verdict)
         lines.extend(["", _markdown_table(results), ""])
+        if warned:
+            lines.extend([_markdown_table(results, "warn", "Warnings"), ""])
     elif total and skipped == total:
         # Nothing ran, so there is no success to announce. Saying "all
         # checks passed" here is the defect this branch exists to prevent.
         lines.append(f"⊘ **All {total} {unit} skipped** — nothing was validated")
         lines.append("")
-    elif skipped:
-        lines.append(
-            f"✅ **{total - skipped} of {total} {unit} passed**, {skipped} skipped"
-        )
+    elif warned or skipped:
+        passed = total - skipped - warned
+        tail = []
+        if warned:
+            tail.append(f"{warned} warning{'s' if warned != 1 else ''}")
+        if skipped:
+            tail.append(f"{skipped} skipped")
+        lines.append(f"✅ **{passed} of {total} {unit} passed**, {', '.join(tail)}")
         lines.append("")
+        if warned:
+            lines.extend([_markdown_table(results, "warn", "Warnings"), ""])
     else:
         lines.append(f"✅ **All {total} {unit} passed**")
         lines.append("")
