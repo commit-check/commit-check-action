@@ -1,0 +1,23 @@
+main.py
+  s_40a9504952462c::t_ef9c2da651ad72 475-479,481-489
+  s_40a9504952462c::t_332bddc1396c5c 621,623-627,629,637-641,647-649,651-654
+  s_40a9504952462c::t_8318ef6ef738de 655-656,660
+main_test.py
+  s_40a9504952462c::t_0d214016938863 1474-1535
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "192d6f7191d8f0eab512284313970ec77592aad1",
+  "prompts": {},
+  "sessions": {
+    "s_40a9504952462c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed145837-fbfa-4f17-be3d-aac92aa6d6ff",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "shenxianpeng <xianpeng.shen@gmail.com>"
+    }
+  }
+}
