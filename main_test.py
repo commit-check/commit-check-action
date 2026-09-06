@@ -36,6 +36,7 @@ def make_check(
     value: str = "",
     error: str = "",
     suggest: str = "",
+    fix: str = "",
     docs_url: str = "",
 ) -> dict[str, str]:
     """Build a single check outcome dict as produced by commit-check JSON."""
@@ -46,8 +47,19 @@ def make_check(
         "value": value,
         "error": error,
         "suggest": suggest,
+        "fix": fix,
         "docs_url": docs_url,
     }
+
+
+#: Full hashes for scopes that carry a commit; the first seven characters
+#: are what a reader sees.
+SHA_A = "d87faca811e7017bbaa82f5c53eade0a97c108d8"
+SHA_B = "5584f462cc3c947b2ba8d3d1a5735571803ee159"
+
+#: ``git log`` output in COMMIT_LOG_FORMAT for two commits: hash, NUL, message
+#: (with its trailing newline), NUL, then git's own newline before the next.
+TWO_COMMITS_LOG = f"{SHA_A}\x00fix: first\n\x00\n{SHA_B}\x00feat: second\n\x00"
 
 
 def json_output(*checks) -> str:
@@ -60,9 +72,10 @@ def pass_scope(label: str = "Branch", value: str = "") -> main.ScopeResult:
     return main.ScopeResult(label=label, checks=[make_check("branch", value=value)])
 
 
-def fail_scope(label: str = "Commit 1/1") -> main.ScopeResult:
+def fail_scope(label: str = "Commit 1/1", sha: str = "") -> main.ScopeResult:
     return main.ScopeResult(
         label=label,
+        sha=sha,
         checks=[
             make_check(
                 "message",
@@ -72,6 +85,27 @@ def fail_scope(label: str = "Commit 1/1") -> main.ScopeResult:
                 error="The commit message should follow Conventional Commits.",
                 suggest="Use <type>(<scope>): <description>",
                 docs_url="https://commit-check.com/rules/#cc001",
+            )
+        ],
+    )
+
+
+def fix_scope(label: str = "Commit 2/3", sha: str = SHA_B) -> main.ScopeResult:
+    """A CC002 failure as commit-check 2.17 reports it: a mechanical fix, and
+    a ``suggest`` the engine derived from that same fix."""
+    return main.ScopeResult(
+        label=label,
+        sha=sha,
+        checks=[
+            make_check(
+                "subject_capitalized",
+                status="fail",
+                rule_id="CC002",
+                value="feat: add login page",
+                error="Subject must start with a capital letter",
+                suggest='Use "feat: Add login page"',
+                fix="feat: Add login page",
+                docs_url="https://commit-check.com/rules/#cc002",
             )
         ],
     )
@@ -161,8 +195,28 @@ class TestBuildCheckArgs(unittest.TestCase):
 
 class TestParseCommitMessages(unittest.TestCase):
     def test_splits_messages_and_trims_surrounding_newlines(self):
-        result = main.parse_commit_messages("\nfix: first\n\x00\nfeat: second\n\n\x00")
-        self.assertEqual(result, ["fix: first", "feat: second"])
+        result = main.parse_commit_messages(
+            f"{SHA_A}\x00\nfix: first\n\x00\n{SHA_B}\x00\nfeat: second\n\n\x00"
+        )
+        self.assertEqual(result, [(SHA_A, "fix: first"), (SHA_B, "feat: second")])
+
+    def test_real_git_log_layout(self):
+        self.assertEqual(
+            main.parse_commit_messages(TWO_COMMITS_LOG),
+            [(SHA_A, "fix: first"), (SHA_B, "feat: second")],
+        )
+
+    def test_the_format_asks_git_for_the_hash_and_the_body(self):
+        """A literal NUL cannot be an argument; git spells it %x00."""
+        self.assertEqual(main.COMMIT_LOG_FORMAT, "--pretty=format:%H%x00%B%x00")
+        self.assertNotIn("\x00", main.COMMIT_LOG_FORMAT)
+
+    def test_an_empty_message_does_not_shift_the_hashes_after_it(self):
+        output = f"{SHA_A}\x00\n\x00\n{SHA_B}\x00feat: second\n\x00"
+        self.assertEqual(main.parse_commit_messages(output), [(SHA_B, "feat: second")])
+
+    def test_empty_output_is_no_commits(self):
+        self.assertEqual(main.parse_commit_messages(""), [])
 
 
 class TestGetPrTitle(unittest.TestCase):
@@ -309,10 +363,12 @@ class TestRunPrMessageChecks(unittest.TestCase):
     def test_single_message_pass(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            scopes = main.run_pr_message_checks(["fix: something"])
+            scopes = main.run_pr_message_checks([(SHA_A, "fix: something")])
         self.assertEqual(len(scopes), 1)
         self.assertEqual(scopes[0].status, "pass")
         self.assertEqual(scopes[0].label, "Commit 1/1")
+        self.assertEqual(scopes[0].sha, SHA_A)
+        self.assertEqual(scopes[0].display_label, "Commit 1/1 (d87faca)")
         self.assertEqual(
             mock_run.call_args[0][0],
             ["commit-check", "--format", "json", "--message"],
@@ -325,9 +381,17 @@ class TestRunPrMessageChecks(unittest.TestCase):
             stdout=json_output(make_check("message", status="fail")),
         )
         with patch("main.subprocess.run", return_value=mock_result):
-            scopes = main.run_pr_message_checks(["bad commit"])
+            scopes = main.run_pr_message_checks([(SHA_A, "bad commit")])
         self.assertEqual(scopes[0].status, "fail")
         self.assertEqual(len(scopes[0].failures), 1)
+        self.assertEqual(scopes[0].sha, SHA_A)
+
+    def test_unparsable_output_still_names_the_commit(self):
+        mock_result = MagicMock(returncode=1, stdout="unexpected output")
+        with patch("main.subprocess.run", return_value=mock_result):
+            scopes = main.run_pr_message_checks([(SHA_A, "bad commit")])
+        self.assertEqual(scopes[0].raw_text, "unexpected output")
+        self.assertEqual(scopes[0].sha, SHA_A)
 
     def test_labels_commits_in_order(self):
         results = [
@@ -339,10 +403,15 @@ class TestRunPrMessageChecks(unittest.TestCase):
             MagicMock(returncode=0, stdout=json_output(make_check("message"))),
         ]
         with patch("main.subprocess.run", side_effect=results):
-            scopes = main.run_pr_message_checks(["ok", "bad", "ok"])
+            scopes = main.run_pr_message_checks(
+                [("a" * 40, "ok"), ("b" * 40, "bad"), ("c" * 40, "ok")]
+            )
+        # The label stays the bare index for the ``result`` output; the hash
+        # is appended only where a person reads it.
         self.assertEqual(
             [s.label for s in scopes], ["Commit 1/3", "Commit 2/3", "Commit 3/3"]
         )
+        self.assertEqual([s.sha for s in scopes], ["a" * 40, "b" * 40, "c" * 40])
         self.assertEqual(scopes[1].status, "fail")
 
     def test_empty_list(self):
@@ -466,18 +535,16 @@ class TestGetPrCommitMessages(unittest.TestCase):
 
 class TestGitMessageReaders(unittest.TestCase):
     def test_get_messages_from_merge_ref(self):
-        mock_result = MagicMock(
-            returncode=0, stdout="fix: first\n\x00feat: second\n\x00"
-        )
+        mock_result = MagicMock(returncode=0, stdout=TWO_COMMITS_LOG)
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
             patch("main.subprocess.run", return_value=mock_result) as mock_run,
         ):
             result = main.get_messages_from_merge_ref()
-        self.assertEqual(result, ["fix: first", "feat: second"])
+        self.assertEqual(result, [(SHA_A, "fix: first"), (SHA_B, "feat: second")])
         self.assertEqual(
             mock_run.call_args[0][0],
-            ["git", "log", "--pretty=format:%B%x00", "--reverse", "HEAD^1..HEAD^2"],
+            ["git", "log", main.COMMIT_LOG_FORMAT, "--reverse", "HEAD^1..HEAD^2"],
         )
 
     def test_merge_ref_is_never_read_on_pull_request_target(self):
@@ -496,7 +563,7 @@ class TestGitMessageReaders(unittest.TestCase):
             commands.append(command)
             if command[:2] == ["git", "rev-parse"]:
                 return MagicMock(returncode=0, stdout="x\n")
-            return MagicMock(returncode=0, stdout="fix: first\n\x00feat: second\n\x00")
+            return MagicMock(returncode=0, stdout=TWO_COMMITS_LOG)
 
         with (
             patch("main.get_pr_base_sha", return_value="base111"),
@@ -504,9 +571,9 @@ class TestGitMessageReaders(unittest.TestCase):
             patch("main.subprocess.run", side_effect=run),
         ):
             result = main.get_messages_from_event_range()
-        self.assertEqual(result, ["fix: first", "feat: second"])
+        self.assertEqual(result, [(SHA_A, "fix: first"), (SHA_B, "feat: second")])
         self.assertIn(
-            ["git", "log", "--pretty=format:%B%x00", "--reverse", "base111..head222"],
+            ["git", "log", main.COMMIT_LOG_FORMAT, "--reverse", "base111..head222"],
             commands,
         )
 
@@ -532,20 +599,36 @@ class TestGitMessageReaders(unittest.TestCase):
             self.assertEqual(main.get_messages_from_head_ref("main"), [])
 
     def test_get_messages_from_head_ref(self):
-        mock_result = MagicMock(returncode=0, stdout="fix: first\n\x00")
+        mock_result = MagicMock(returncode=0, stdout=f"{SHA_A}\x00fix: first\n\x00")
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
             result = main.get_messages_from_head_ref("main")
-        self.assertEqual(result, ["fix: first"])
+        self.assertEqual(result, [(SHA_A, "fix: first")])
         self.assertEqual(
             mock_run.call_args[0][0],
             [
                 "git",
                 "log",
-                "--pretty=format:%B%x00",
+                main.COMMIT_LOG_FORMAT,
                 "--reverse",
                 "origin/main..HEAD",
             ],
         )
+
+
+class TestHeadSha(unittest.TestCase):
+    def test_returns_the_full_hash(self):
+        mock_result = MagicMock(returncode=0, stdout=f"{SHA_A}\n")
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            self.assertEqual(main.head_sha(), SHA_A)
+        self.assertEqual(mock_run.call_args[0][0], ["git", "rev-parse", "HEAD"])
+
+    def test_no_head_is_empty(self):
+        with patch("main.subprocess.run", return_value=MagicMock(returncode=128)):
+            self.assertEqual(main.head_sha(), "")
+
+    def test_missing_git_is_empty(self):
+        with patch("main.subprocess.run", side_effect=OSError("no git")):
+            self.assertEqual(main.head_sha(), "")
 
 
 class TestRunCommitCheck(unittest.TestCase):
@@ -636,6 +719,7 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.get_pr_commit_messages", return_value=[]),
             patch("main.run_pr_message_checks") as mock_pr,
+            patch("main.head_sha", return_value=SHA_A),
             patch(
                 "main.check_scope", return_value=pass_scope("Commit message")
             ) as mock_scope,
@@ -644,7 +728,8 @@ class TestRunCommitCheck(unittest.TestCase):
             rc, results = main.run_commit_check()
         self.assertEqual(rc, 0)
         mock_pr.assert_not_called()
-        mock_scope.assert_called_once_with("Commit message", ["--message"])
+        # HEAD is the commit that was checked, so the scope names it too.
+        mock_scope.assert_called_once_with("Commit message", ["--message"], sha=SHA_A)
 
     def test_message_flag_removed_before_other_checks_in_pr(self):
         captured_args = []
@@ -691,6 +776,7 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.AUTHOR_EMAIL_ENABLED", False),
             patch("main.is_pr_event", return_value=True),
             patch("main.get_pr_commit_messages", return_value=[]),
+            patch("main.head_sha", return_value=""),
             patch(
                 "main.check_scope", return_value=pass_scope("Commit message")
             ) as mock_scope,
@@ -699,7 +785,7 @@ class TestRunCommitCheck(unittest.TestCase):
             rc, results, output = self._run_capturing_stdout()
         self.assertEqual(rc, 0)
         self.assertIn(self.SHALLOW_PR_WARNING, output)
-        mock_scope.assert_called_once_with("Commit message", ["--message"])
+        mock_scope.assert_called_once_with("Commit message", ["--message"], sha="")
 
     def test_push_without_pr_commits_does_not_warn(self):
         with (
@@ -1061,12 +1147,158 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertIn("value: bad message", output)
         self.assertIn("Suggest: Use <type>(<scope>): <description>", output)
         self.assertIn("Docs: https://commit-check.com/rules/#cc001", output)
-        # The annotation names the scope, which the title alone cannot carry.
+        # The annotation names the scope, which the title alone cannot carry,
+        # then the value and the suggestion, so it can be acted on where it
+        # is shown (the Files changed tab) without opening the step log.
         self.assertIn(
             "::error title=CC001 message::Commit 1/1: The commit message should "
-            "follow Conventional Commits.",
+            "follow Conventional Commits."
+            "%0Avalue: bad message"
+            "%0ASuggest: Use <type>(<scope>): <description>\n",
             output,
         )
+
+    def test_annotation_names_the_commit_and_carries_the_fix(self):
+        output = self._run([fix_scope("Commit 2/3", sha=SHA_B)])
+        self.assertIn(
+            "::error title=CC002 subject-capitalized::Commit 2/3 (5584f46): "
+            "Subject must start with a capital letter"
+            "%0Avalue: feat: add login page"
+            "%0AFix: feat: Add login page\n",
+            output,
+        )
+
+    def test_annotation_and_tree_print_the_same_detail_lines(self):
+        """One helper feeds both surfaces, so they cannot drift."""
+        check = fix_scope().checks[0]
+        tree = main._finding_lines(check, include_error=True)
+        annotation = main._finding_lines(check, include_error=False)
+        self.assertEqual(
+            tree,
+            [
+                "value: feat: add login page",
+                "Subject must start with a capital letter",
+                "Fix: feat: Add login page",
+            ],
+        )
+        self.assertEqual([ln for ln in tree if ln in annotation], annotation)
+
+    def test_annotation_without_an_error_still_names_the_kind_of_finding(self):
+        scope = main.ScopeResult(
+            label="Branch",
+            checks=[
+                make_check("branch", status="fail", rule_id="CC201"),
+                make_check("merge_base", status="warn", rule_id="CC202"),
+            ],
+        )
+        output = self._run([scope])
+        self.assertIn("::error title=CC201 branch::Branch: check failed\n", output)
+        self.assertIn(
+            "::warning title=CC202 merge-base::Branch: check warning\n", output
+        )
+
+    def test_fix_is_printed_once_when_suggest_only_repeats_it(self):
+        """commit-check sets suggest to ``Use "<fix>"`` when a rule has a
+        fix and no advice of its own; printing both says it twice."""
+        output = self._run([fix_scope()])
+        self.assertIn("        Fix: feat: Add login page\n", output)
+        self.assertNotIn("Suggest:", output)
+
+    def test_bespoke_suggest_and_fix_are_both_printed(self):
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            checks=[
+                make_check(
+                    "allow_wip_commits",
+                    status="fail",
+                    rule_id="CC010",
+                    value="wip: stuff",
+                    error="WIP commits are not allowed",
+                    suggest='Drop the WIP marker: "stuff"',
+                    fix="stuff",
+                )
+            ],
+        )
+        output = self._run([scope])
+        listing = output.split("::endgroup::")[0]
+        self.assertIn(
+            "        WIP commits are not allowed\n"
+            '        Suggest: Drop the WIP marker: "stuff"\n'
+            "        Fix: stuff\n",
+            listing,
+        )
+        self.assertIn(
+            "%0ASuggest: Drop the WIP marker: %22stuff%22%0AFix: stuff\n".replace(
+                "%22", '"'
+            ),
+            output,
+        )
+
+    def test_a_multi_line_fix_takes_one_row_per_line(self):
+        fix = "feat: add login page\n\nSigned-off-by: Jane Doe <jane@example.com>"
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            sha=SHA_A,
+            checks=[
+                make_check(
+                    "require_signed_off_by",
+                    status="fail",
+                    rule_id="CC012",
+                    value="feat: add login page",
+                    error="Signed-off-by not found in latest commit",
+                    suggest=f'Use "{fix}"',
+                    fix=fix,
+                )
+            ],
+        )
+        output = self._run([scope])
+        listing = output.split("::endgroup::")[0]
+        self.assertIn(
+            "        Fix: feat: add login page\n"
+            "        \n"
+            "        Signed-off-by: Jane Doe <jane@example.com>\n",
+            listing,
+        )
+        # In the annotation the same rows ride on %0A, so the trailer lands
+        # where it would in the message.
+        self.assertIn(
+            "%0AFix: feat: add login page%0A%0ASigned-off-by: "
+            "Jane Doe <jane@example.com>\n",
+            output,
+        )
+
+    def test_tree_lines_carry_the_short_sha(self):
+        results = [
+            pass_scope("Commit 1/3", value="fix: first"),
+            fix_scope("Commit 2/3", sha=SHA_B),
+            main.ScopeResult(label="Commit 3/3", sha=SHA_A, raw_text="garbage"),
+        ]
+        results[0].sha = "c" * 40
+        output = self._run(results)
+        self.assertIn("  ✔ Commit 1/3 (ccccccc) (fix: first)\n", output)
+        self.assertIn("  ✖ Commit 2/3 (5584f46) (1 failure)\n", output)
+        self.assertIn("  ✖ Commit 3/3 (d87faca)\n", output)
+        self.assertIn(
+            "::error title=commit-check: Commit 3/3 (d87faca)::output could not "
+            "be parsed\n",
+            output,
+        )
+
+    def test_failure_verdict_is_a_plain_line_not_an_annotation(self):
+        """One ::error per finding, and a verdict in words — never a second
+        annotation for the total, which GitHub counted as one more error."""
+        output = self._run([fail_scope("Commit 1/2"), fix_scope("Commit 2/2")])
+        self.assertEqual(output.count("::error"), 2)
+        self.assertNotIn("::error::", output)
+        self.assertIn("\n✖ commit-check: 2 of 2 checks failed\n", output)
+        self.assertNotIn("passed", output)
+
+    def test_failure_verdict_counts_scopes_and_names_the_warnings(self):
+        output = self._run(
+            [fail_scope("Commit 1/1"), pass_scope("PR title"), warn_scope()]
+        )
+        self.assertIn("\n✖ commit-check: 1 of 3 checks failed, 1 warning\n", output)
+        self.assertNotIn("dry-run", output)
 
     def test_failure_reason_is_printed_once(self):
         """The listing and the annotation must not both print the reason.
@@ -1152,6 +1384,7 @@ class TestRenderStepLog(unittest.TestCase):
             output,
         )
         self.assertNotIn("all checks passed", output)
+        self.assertNotIn("✖ commit-check", output)
 
     def test_dry_run_without_failures_prints_the_usual_verdict(self):
         with patch("main.DRY_RUN_ENABLED", True):
@@ -1235,6 +1468,93 @@ class TestRenderJobSummary(unittest.TestCase):
             "\n"
             f"{FOOTER}",
         )
+
+    @pin_version
+    def test_failure_golden_output_with_commits(self):
+        """Pin the report for a pull request's commits: the table row links
+        to the commit, the tree names it, and a mechanical fix is shown."""
+        results = [
+            pass_scope("PR title", value="feat: Add login page"),
+            fail_scope("Commit 1/3", sha=SHA_A),
+            fix_scope("Commit 2/3", sha=SHA_B),
+            pass_scope("Commit 3/3", value="fix: Handle timeout"),
+            pass_scope("Branch", value="feature/add-login"),
+        ]
+        results[3].sha = "37d6def82ffcc6dbfa0af2ea1ec90512d89979ae"
+        env = {"GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SERVER_URL": ""}
+        with patch.dict(os.environ, env):
+            body = main.render_report(results)
+        self.assertEqual(
+            body,
+            f"{main.COMMENT_MARKER}\n"
+            f"{main.REPORT_TITLE}\n"
+            "\n"
+            "❌ **2 of 5 checks failed**\n"
+            "\n"
+            "| Scope | Checked value | Failed checks |\n"
+            "|---|---|---|\n"
+            f"| [Commit 1/3 (d87faca)](https://github.com/acme/widgets/commit/{SHA_A})"
+            " | `bad message` | "
+            "[CC001 message](https://commit-check.com/rules/#cc001) |\n"
+            f"| [Commit 2/3 (5584f46)](https://github.com/acme/widgets/commit/{SHA_B})"
+            " | `feat: add login page` | "
+            "[CC002 subject-capitalized](https://commit-check.com/rules/#cc002) |\n"
+            "\n"
+            "<details>\n"
+            "<summary>Show all 5 checks</summary>\n"
+            "\n"
+            "```text\n"
+            "Commit message\n"
+            "  ✔ PR title (feat: Add login page)\n"
+            "  ✖ Commit 1/3 (d87faca) (1 failure)\n"
+            "      CC001 message\n"
+            "        value: bad message\n"
+            "        The commit message should follow Conventional Commits.\n"
+            "        Suggest: Use <type>(<scope>): <description>\n"
+            "  ✖ Commit 2/3 (5584f46) (1 failure)\n"
+            "      CC002 subject-capitalized\n"
+            "        value: feat: add login page\n"
+            "        Subject must start with a capital letter\n"
+            "        Fix: feat: Add login page\n"
+            "  ✔ Commit 3/3 (37d6def) (fix: Handle timeout)\n"
+            "Branch\n"
+            "  ✔ Branch (feature/add-login)\n"
+            "```\n"
+            "\n"
+            "</details>\n"
+            "\n"
+            f"{FOOTER}",
+        )
+
+    def test_table_link_honours_the_server_url(self):
+        """GitHub Enterprise Server is not github.com."""
+        env = {
+            "GITHUB_REPOSITORY": "acme/widgets",
+            "GITHUB_SERVER_URL": "https://ghe.example.com/",
+        }
+        with patch.dict(os.environ, env):
+            body = main.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
+        self.assertIn(
+            f"| [Commit 1/1 (5584f46)](https://ghe.example.com/acme/widgets/commit/{SHA_B}) |",
+            body,
+        )
+
+    def test_table_has_no_link_without_a_repository_to_link_into(self):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": ""}):
+            body = main.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
+        self.assertIn("| Commit 1/1 (5584f46) | `feat: add login page` |", body)
+        self.assertNotIn("/commit/", body)
+
+    def test_scopes_without_a_commit_are_never_linked(self):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/widgets"}):
+            body = main.render_report([fail_scope("Branch")])
+        self.assertIn("| Branch | `bad message` |", body)
+        self.assertNotIn("/commit/", body)
+
+    def test_skipped_scope_carries_the_sha_too(self):
+        scope = skip_scope("Commit 1/1")
+        scope.sha = SHA_A
+        self.assertIn("  ⊘ Commit 1/1 (d87faca) (skipped)", main.render_report([scope]))
 
     def test_a_check_is_a_thing_checked_not_a_rule_evaluation(self):
         """The total counts scopes, so it tracks the policy, not the PR size.
@@ -1418,6 +1738,22 @@ class TestSetResultOutput(unittest.TestCase):
         self.assertIn('"status": "fail"', content)
         self.assertIn('"label": "Commit 1/1"', content)
         self.assertTrue(content.strip().endswith("EOF"))
+
+    def test_scopes_carry_the_full_sha_and_an_unchanged_label(self):
+        """Downstream steps keep matching on ``label``; the hash is a new
+        field beside it, full length so it can be passed back to the API."""
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
+            main.set_result_output([fix_scope("Commit 2/3", sha=SHA_B), pass_scope()])
+        with open(output_path, encoding="utf-8") as file_obj:
+            body = file_obj.read().removeprefix("result<<EOF\n").removesuffix("\nEOF\n")
+        payload = json.loads(body)
+        self.assertEqual(payload["scopes"][0]["label"], "Commit 2/3")
+        self.assertEqual(payload["scopes"][0]["sha"], SHA_B)
+        self.assertEqual(
+            payload["scopes"][0]["checks"][0]["fix"], "feat: Add login page"
+        )
+        self.assertEqual(payload["scopes"][1]["sha"], "")
 
     def test_all_pass_status(self):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
@@ -1772,17 +2108,19 @@ class TestIsForkPr(unittest.TestCase):
 class TestLogErrorAndExit(unittest.TestCase):
     def test_exits_with_specified_code(self):
         with self.assertRaises(SystemExit) as ctx:
-            main.log_error_and_exit(0, [pass_scope()])
+            main.log_error_and_exit(0)
         self.assertEqual(ctx.exception.code, 0)
 
-    def test_failure_prints_error_summary(self):
+    def test_failure_exits_without_a_second_annotation(self):
+        """The findings are already one ::error each; a summary ::error on
+        top made GitHub count one more error than there were findings."""
         with (
             patch("builtins.print") as mock_print,
-            self.assertRaises(SystemExit),
+            self.assertRaises(SystemExit) as ctx,
         ):
-            main.log_error_and_exit(1, [fail_scope()])
-        printed = mock_print.call_args[0][0]
-        self.assertIn("::error::commit-check found 1 failure.", printed)
+            main.log_error_and_exit(1)
+        self.assertEqual(ctx.exception.code, 1)
+        mock_print.assert_not_called()
 
 
 class TestMain(unittest.TestCase):
@@ -2072,10 +2410,24 @@ class TestWarnedScopes(unittest.TestCase):
         )
         self.assertEqual([c["rule_id"] for c in mixed.warnings], ["CC201"])
 
-    def test_overall_status_and_exit_code_treat_a_warning_as_a_pass(self):
+    def test_overall_status_is_warn_but_the_exit_code_is_still_zero(self):
+        """``warn`` is for downstream steps; it must never fail the job."""
         results = [pass_scope("PR title"), warn_scope()]
-        self.assertEqual(main.overall_status(results), "pass")
+        self.assertEqual(main.overall_status(results), "warn")
         self.assertEqual(main.exit_code_for(results), 0)
+
+    def test_a_warning_outranks_a_skip_but_not_an_all_skipped_run(self):
+        self.assertEqual(main.overall_status([warn_scope(), skip_scope()]), "warn")
+        self.assertEqual(main.overall_status([skip_scope()]), "skip")
+
+    def test_result_output_reports_warn(self):
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
+            main.set_result_output([pass_scope("PR title"), warn_scope()])
+        with open(output_path, encoding="utf-8") as file_obj:
+            payload = json.loads(file_obj.read().split("\n", 1)[1].rsplit("EOF", 1)[0])
+        self.assertEqual(payload["status"], "warn")
+        self.assertEqual([s["status"] for s in payload["scopes"]], ["pass", "warn"])
 
     def test_a_real_failure_still_fails_the_run_alongside_a_warning(self):
         results = [fail_scope("Commit 1/1"), warn_scope()]

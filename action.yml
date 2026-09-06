@@ -39,7 +39,7 @@ inputs:
     default: false
 outputs:
   result:
-    description: Structured check results as JSON (status + per-scope checks). Consume with fromJSON(steps.<id>.outputs.result).
+    description: Structured check results as JSON (status pass/warn/skip/fail + per-scope label, sha and checks). Consume with fromJSON(steps.<id>.outputs.result).
     # Composite actions do not forward step outputs automatically: without this
     # mapping (and the step id it refers to) the output is always the empty
     # string, and fromJSON('') fails the calling workflow.

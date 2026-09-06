@@ -234,10 +234,29 @@ Structured check results as JSON, available to downstream steps via
    Use `dry-run` (or `continue-on-error`) when a downstream step is meant to
    read the result and decide for itself.
 
-Each scope carries the check outcomes (`rule_id`, `check`, `status`, `value`,
-`error`, `suggest`, `docs_url`) exactly as produced by
-`commit-check --format json`, so downstream jobs can build their own reports
-or gate on individual rules.
+The top-level `status` is one of:
+
+| `status` | Meaning | Exit code |
+|---|---|---|
+| `pass` | every check passed | 0 |
+| `warn` | nothing failed, but a rule listed under the config's `warn` found something | 0 |
+| `skip` | every check declined to run (for example the author is in `ignore_authors`) | 0 |
+| `fail` | at least one check failed | 1 (0 with `dry-run`) |
+
+Only `fail` is ever non-zero; `warn` exists so a downstream step can react to a
+bent-but-not-broken policy without the run turning red:
+
+```yaml
+- if: fromJSON(steps.commit-check.outputs.result).status == 'warn'
+  run: echo "passed with warnings"
+```
+
+Each entry in `scopes` has a `label` (`PR title`, `Commit 2/3`, `Branch`, ...),
+a `status` like the ones above, a `sha` (the full hash of the commit a
+`Commit N/M` or `Commit message` scope checked; empty for the others) and the
+check outcomes (`rule_id`, `check`, `status`, `value`, `error`, `suggest`,
+`fix`, `docs_url`) exactly as produced by `commit-check --format json`, so
+downstream jobs can build their own reports or gate on individual rules.
 
 ## GitHub Action Job Summary
 
@@ -261,7 +280,7 @@ Passing runs stay to one line, with the detail folded away:
 > ```text
 > Commit message
 >   ✔ PR title (feat: add login page)
->   ✔ Commit 1/2 (feat: add login page)
+>   ✔ Commit 1/2 (d87faca) (feat: add login page)
 > Branch
 >   ✔ Branch (feature/add-login)
 > ```
@@ -273,7 +292,8 @@ Passing runs stay to one line, with the detail folded away:
 ### Failure Job Summary
 
 Failures open with a count, then a table of only the scopes that failed — every
-rule ID links to its documentation — with the full tree still one click away:
+rule ID links to its documentation, and every commit to itself — with the full
+tree still one click away:
 
 > **Commit Check**
 >
@@ -281,8 +301,8 @@ rule ID links to its documentation — with the full tree still one click away:
 >
 > | Scope | Checked value | Failed checks |
 > |---|---|---|
-> | Commit 2/2 | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
-> | Branch | `my-changes` | [CC201 branch](https://commit-check.com/rules/#cc201) |
+> | [Commit 2/2 (5584f46)](https://github.com/acme/widgets/commit/5584f462cc3c947b2ba8d3d1a5735571803ee159) | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
+> | Branch | `Feature/Add-Login` | [CC201 branch](https://commit-check.com/rules/#cc201) |
 >
 > <details>
 > <summary>Show all 4 checks</summary>
@@ -290,8 +310,8 @@ rule ID links to its documentation — with the full tree still one click away:
 > ```text
 > Commit message
 >   ✔ PR title (feat: add login page)
->   ✔ Commit 1/2 (feat: add login page)
->   ✖ Commit 2/2 (1 failure)
+>   ✔ Commit 1/2 (d87faca) (feat: add login page)
+>   ✖ Commit 2/2 (5584f46) (1 failure)
 >       CC001 message
 >         value: bad msg
 >         The commit message should follow Conventional Commits.
@@ -299,9 +319,10 @@ rule ID links to its documentation — with the full tree still one click away:
 > Branch
 >   ✖ Branch (1 failure)
 >       CC201 branch
->         value: my-changes
+>         value: Feature/Add-Login
 >         The branch should follow Conventional Branch.
->         Suggest: Use <type>/<description> with allowed types
+>         Suggest: Rename the branch to "feature/Add-Login" (git branch -m feature/Add-Login)
+>         Fix: feature/Add-Login
 > ```
 >
 > </details>
@@ -311,6 +332,26 @@ rule ID links to its documentation — with the full tree still one click away:
 A scope is one thing that was checked — a commit message, the branch, the author
 — not one rule evaluation, so the total matches the ✔/✖ lines you can count and
 does not grow with the number of rules in your config.
+
+A commit scope names its commit by short hash, and the table row links to it,
+so a reviewer can jump from a failed row straight to the offending commit.
+`Fix:` is the corrected text commit-check proposes whenever the correction is
+mechanical (a capitalised subject, a dropped WIP marker, a missing sign-off
+trailer); when the suggestion is nothing more than "use the fix", only `Fix:`
+is shown.
+
+The step log prints the same tree, then one annotation per finding — shown in
+the run summary and on the Files changed tab — whose message carries the
+commit, the checked value, the suggestion and the fix on separate lines:
+
+```text
+::error title=CC001 message::Commit 2/2 (5584f46): The commit message should follow Conventional Commits.%0Avalue: bad msg%0ASuggest: Use <type>(<scope>): <description>
+::error title=CC201 branch::Branch: The branch should follow Conventional Branch.%0Avalue: Feature/Add-Login%0ASuggest: Rename the branch to "feature/Add-Login" (git branch -m feature/Add-Login)%0AFix: feature/Add-Login
+✖ commit-check: 2 of 4 checks failed
+```
+
+The verdict is a plain line rather than another `::error`, so the run's error
+count equals the number of findings.
 
 ### Skipped Job Summary
 
@@ -383,7 +424,8 @@ A warned scope is marked `⚠`, never `✖`, and a real failure elsewhere still
 fails the run — the verdict then reads `❌ **N of M checks failed**, K
 warnings` and both tables appear. In the step log, a warning becomes a
 `::warning` annotation rather than `::error`, so it never counts toward the
-run's error count.
+run's error count. The [`result`](#result) output reports the run as
+`"status": "warn"`, with exit code 0.
 
 This needs commit-check 2.17.0 or newer, which reports `"status": "warn"` in
 its JSON. Against an older engine, or a config with no `warn` list, no check

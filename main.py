@@ -5,7 +5,7 @@ The action runs ``commit-check --format json`` to collect structured check
 results (rule IDs, error messages, suggestions, docs links), then renders
 them to three output surfaces:
 
-* **step log** — grouped sections with ``::error`` annotations per rule
+* **step log** — grouped sections, then one ``::error`` annotation per finding
 * **job summary** — a Markdown policy report table
 * **PR comment** — a compact Markdown summary (idempotently updated)
 """
@@ -93,11 +93,27 @@ class ScopeResult:
     ``checks`` holds the parsed JSON check outcomes (only set when the CLI
     produced valid JSON); ``raw_text`` holds the raw CLI output when parsing
     failed (a defensive fallback so unexpected output is never swallowed).
+
+    ``sha`` is the full hash of the commit a message scope checked, or ``""``
+    for scopes that have no commit (PR title, branch, author). It is kept
+    apart from ``label`` on purpose: ``label`` ("Commit 2/3") is what the
+    ``result`` output has always carried, so downstream steps can keep
+    matching on it, and the hash is appended only where a person reads it.
     """
 
     label: str
     checks: list[dict[str, str]] = field(default_factory=list)
     raw_text: str = ""
+    sha: str = ""
+
+    @property
+    def display_label(self) -> str:
+        """The label as a reader sees it: ``Commit 2/3 (5584f46)``.
+
+        Seven characters, like ``git log --oneline``; the full hash goes
+        into the link and the ``result`` output, where it is not read by eye.
+        """
+        return f"{self.label} ({self.sha[:7]})" if self.sha else self.label
 
     @property
     def status(self) -> str:
@@ -138,21 +154,28 @@ class ScopeResult:
 
 
 def overall_status(results: list[ScopeResult]) -> str:
-    """Reduce scope statuses to one of ``pass``/``fail``/``skip``.
+    """Reduce scope statuses to one of ``pass``/``fail``/``warn``/``skip``.
 
     One function, used by every completion path, because the alternative
     is what this replaced: four separate ``all(... == "pass")`` tests, each
     correct only while exactly two statuses existed. The moment ``skip``
     appeared they all silently reclassified a skipped run as a failure.
 
-    ``skip`` requires at least one scope and all of them skipped. A ``warn``
-    scope is neither a failure nor a skip, so it falls through to ``pass``
-    here — reported in full, but it never fails the workflow.
+    Precedence is fail, then skip, then warn, then pass. ``skip`` requires
+    at least one scope and all of them skipped: nothing was validated, and a
+    warning cannot have been found where nothing ran. ``warn`` means at
+    least one scope carries a finding the config listed under ``warn`` and
+    nothing failed. It is distinct from ``pass`` so a downstream step can
+    act on a bent-but-not-broken policy without walking every scope; the
+    exit code does not distinguish the two (see ``exit_code_for``), because
+    the whole point of ``warn`` is that it never fails the workflow.
     """
     if any(scope.status == "fail" for scope in results):
         return "fail"
     if results and all(scope.status == "skip" for scope in results):
         return "skip"
+    if any(scope.status == "warn" for scope in results):
+        return "warn"
     return "pass"
 
 
@@ -340,19 +363,36 @@ def get_pr_title() -> str | None:
         return None
 
 
-def parse_commit_messages(output: str) -> list[str]:
-    """Split git log output into individual commit messages."""
+#: One commit to check: ``(full sha, message)``.
+Commit = tuple[str, str]
+
+#: ``git log`` format that yields, per commit, the full hash and the raw
+#: message as two NUL-terminated fields (``%x00`` is git's spelling of
+#: COMMIT_MESSAGE_DELIMITER; a literal NUL cannot be passed as an argument).
+#: NUL cannot appear in a hash or a message, so the split is unambiguous
+#: however many blank lines the message holds.
+COMMIT_LOG_FORMAT = "--pretty=format:%H%x00%B%x00"
+
+
+def parse_commit_messages(output: str) -> list[Commit]:
+    """Split ``git log`` output (see ``COMMIT_LOG_FORMAT``) into commits.
+
+    The fields alternate hash, message, hash, message; git puts a newline
+    between commits, which lands on the front of the next hash and is
+    stripped along with the message's trailing newline. Commits are paired
+    before empty messages are dropped, so a blank message never shifts the
+    hashes of the commits after it.
+    """
+    fields = [f.strip("\n") for f in output.split(COMMIT_MESSAGE_DELIMITER)]
     return [
-        message.strip("\n")
-        for message in output.split(COMMIT_MESSAGE_DELIMITER)
-        if message.strip("\n")
+        (sha, message) for sha, message in zip(fields[0::2], fields[1::2]) if message
     ]
 
 
-def _messages_in_range(revision_range: str) -> list[str]:
-    """Commit messages in ``revision_range``, oldest first, or ``[]``."""
+def _messages_in_range(revision_range: str) -> list[Commit]:
+    """Commits in ``revision_range`` as ``(sha, message)``, oldest first, or ``[]``."""
     result = subprocess.run(
-        ["git", "log", "--pretty=format:%B%x00", "--reverse", revision_range],
+        ["git", "log", COMMIT_LOG_FORMAT, "--reverse", revision_range],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         encoding="utf-8",
@@ -363,7 +403,26 @@ def _messages_in_range(revision_range: str) -> list[str]:
     return []
 
 
-def get_messages_from_event_range() -> list[str]:
+def head_sha() -> str:
+    """The full hash of HEAD, or ``""`` when git cannot say.
+
+    Only decoration for the non-PR ``Commit message`` scope, so a failure
+    here never fails the run: the message is still checked, just unlabelled.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def get_messages_from_event_range() -> list[Commit]:
     """Read PR commit messages between the payload's base and head commits.
 
     ``pull_request.base.sha`` and ``pull_request.head.sha`` name the pull
@@ -379,7 +438,7 @@ def get_messages_from_event_range() -> list[str]:
     return _messages_in_range(f"{base_sha}..{head_sha}")
 
 
-def get_messages_from_merge_ref() -> list[str]:
+def get_messages_from_merge_ref() -> list[Commit]:
     """Read PR commit messages from GitHub's synthetic merge commit.
 
     Only meaningful on a ``pull_request`` checkout, where HEAD is
@@ -392,13 +451,13 @@ def get_messages_from_merge_ref() -> list[str]:
     return _messages_in_range("HEAD^1..HEAD^2")
 
 
-def get_messages_from_head_ref(base_ref: str) -> list[str]:
+def get_messages_from_head_ref(base_ref: str) -> list[Commit]:
     """Read PR commit messages when the workflow checks out the head SHA."""
     return _messages_in_range(f"origin/{base_ref}..HEAD")
 
 
-def get_pr_commit_messages() -> list[str]:
-    """Get all commit messages for the current PR workflow.
+def get_pr_commit_messages() -> list[Commit]:
+    """Get all commits, as ``(sha, message)``, for the current PR workflow.
 
     The event payload's ``base.sha..head.sha`` is tried first: it names the
     pull request exactly, whatever was checked out. On a ``pull_request``
@@ -455,22 +514,28 @@ def run_check_json(
 
 
 def check_scope(
-    label: str, args: list[str], input_text: str | None = None
+    label: str, args: list[str], input_text: str | None = None, sha: str = ""
 ) -> ScopeResult:
-    """Run commit-check for one scope and wrap the outcome in a ScopeResult."""
+    """Run commit-check for one scope and wrap the outcome in a ScopeResult.
+
+    ``sha`` names the commit a message scope checked; it rides along on both
+    outcomes so an unparsable CLI response still says which commit it was.
+    """
     _rc, data, raw = run_check_json(args, input_text=input_text)
     if isinstance(data, dict):
-        return ScopeResult(label=label, checks=data.get("checks", []))
-    return ScopeResult(label=label, raw_text=raw)
+        return ScopeResult(label=label, checks=data.get("checks", []), sha=sha)
+    return ScopeResult(label=label, raw_text=raw, sha=sha)
 
 
-def run_pr_message_checks(pr_messages: list[str]) -> list[ScopeResult]:
+def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
     """Check each PR commit message individually via commit-check --message."""
     results: list[ScopeResult] = []
-    total = len(pr_messages)
-    for index, msg in enumerate(pr_messages, start=1):
+    total = len(pr_commits)
+    for index, (sha, msg) in enumerate(pr_commits, start=1):
         results.append(
-            check_scope(f"Commit {index}/{total}", ["--message"], input_text=msg)
+            check_scope(
+                f"Commit {index}/{total}", ["--message"], input_text=msg, sha=sha
+            )
         )
     return results
 
@@ -526,11 +591,11 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
 
     # ---- 2. Commit message checks -----------------------------------------
     if MESSAGE_ENABLED:
-        pr_messages = get_pr_commit_messages()
-        if pr_messages:
+        pr_commits = get_pr_commit_messages()
+        if pr_commits:
             # In PR context: check each commit individually to avoid
             # only validating the synthetic merge commit at HEAD.
-            results.extend(run_pr_message_checks(pr_messages))
+            results.extend(run_pr_message_checks(pr_commits))
             args = [a for a in args if a != "--message"]
         elif is_pr_event():
             # Falling through to HEAD validates the synthetic merge commit,
@@ -543,7 +608,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     # ---- 3. Remaining checks (branch, author, etc.) -----------------------
     # Outside a PR, check the HEAD commit message directly.
     if "--message" in args:
-        results.append(check_scope("Commit message", ["--message"]))
+        results.append(check_scope("Commit message", ["--message"], sha=head_sha()))
         args = [a for a in args if a != "--message"]
     rev = None
     if is_pr_event() and any(flag in AUTHOR_FLAGS for flag in args):
@@ -607,22 +672,50 @@ def _grouped(results: list[ScopeResult]) -> list[tuple[str, list[ScopeResult]]]:
     return groups
 
 
+def _finding_lines(check: dict[str, str], include_error: bool) -> list[str]:
+    """The detail a reader needs to act on one finding, one item per line.
+
+    ``value:`` (what was checked), the error (when ``include_error``),
+    ``Suggest:`` and ``Fix:`` — each only when the CLI filled it in. This is
+    the single source for both the tree and the annotation payload, so the
+    two cannot drift; the error is optional because the annotation carries
+    its first line in the headline instead.
+
+    ``Fix:`` is the corrected text itself, ready to paste. When a rule has a
+    fix but no bespoke advice the CLI sets ``suggest`` to ``Use "<fix>"``,
+    so printing both would say the same thing twice in a row; in exactly
+    that case only ``Fix:`` is shown. A multi-line fix (a signed-off body)
+    takes one row per line so the trailer lands where it would in the
+    message.
+    """
+    lines: list[str] = []
+    if check.get("value"):
+        lines.append(f"value: {check['value']}")
+    if include_error:
+        lines.extend(check.get("error", "").splitlines())
+    fix = check.get("fix", "")
+    suggest = check.get("suggest", "")
+    if suggest and suggest != f'Use "{fix}"':
+        lines.append(f"Suggest: {suggest}")
+    if fix:
+        first, *rest = fix.splitlines()
+        lines.append(f"Fix: {first}")
+        lines.extend(rest)
+    return lines
+
+
 def _render_findings(checks: list[dict[str, str]], include_docs: bool) -> list[str]:
     """Render the indented detail lines for a list of check entries.
 
     Shared by the failure and warning branches of ``_render_scopes`` — the
-    same rule label / value / error / suggestion / docs layout, whichever
-    list it is called with.
+    same rule label / value / error / suggestion / fix / docs layout,
+    whichever list it is called with.
     """
     lines: list[str] = []
     for check in checks:
         lines.append(f"      {_rule_label(check)}")
-        if check.get("value"):
-            lines.append(f"        value: {check['value']}")
-        for line in check.get("error", "").splitlines():
-            lines.append(f"        {line}")
-        if check.get("suggest"):
-            lines.append(f"        Suggest: {check['suggest']}")
+        detail = _finding_lines(check, include_error=True)
+        lines.extend(f"        {line}" for line in detail)
         if include_docs and check.get("docs_url"):
             lines.append(f"        Docs: {check['docs_url']}")
     return lines
@@ -642,18 +735,19 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
     """
     lines: list[str] = []
     for scope in scopes:
+        label = scope.display_label
         if scope.status == "skip":
             # Deliberately not a ✔. Nothing was validated here, and a tick
             # claiming otherwise is what made a bypassed policy look enforced.
-            lines.append(f"  ⊘ {scope.label} (skipped)")
+            lines.append(f"  ⊘ {label} (skipped)")
             continue
         if scope.status == "pass":
             value = _scope_value(scope)
-            lines.append(f"  ✔ {scope.label}{f' ({value})' if value else ''}")
+            lines.append(f"  ✔ {label}{f' ({value})' if value else ''}")
             continue
         if scope.raw_text and not scope.checks:
             # Defensive fallback: commit-check produced unexpected output.
-            lines.append(f"  ✖ {scope.label}")
+            lines.append(f"  ✖ {label}")
             lines.extend(f"      {ln}" for ln in scope.raw_text.strip().splitlines())
             continue
         # A scope's status names its worst outcome (fail beats warn), but the
@@ -664,12 +758,12 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
         failures = scope.failures
         if failures:
             count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
-            lines.append(f"  ✖ {scope.label}{count}")
+            lines.append(f"  ✖ {label}{count}")
             lines.extend(_render_findings(failures, include_docs))
         warnings = scope.warnings
         if warnings:
             count = f" ({len(warnings)} warning{'s' if len(warnings) != 1 else ''})"
-            lines.append(f"  ⚠ {scope.label}{count}")
+            lines.append(f"  ⚠ {label}{count}")
             lines.extend(_render_findings(warnings, include_docs))
     return lines
 
@@ -692,6 +786,23 @@ def _annotation_escape(text: str) -> str:
     return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
+def _annotation_body(scope: ScopeResult, check: dict[str, str]) -> str:
+    """The message of one finding's annotation, before escaping.
+
+    First line: which commit and what rule said, ``Commit 2/3 (5584f46):
+    Subject must start with a capital letter``. Then the same value /
+    Suggest / Fix rows the tree prints, so the annotation on the Files
+    changed tab is enough to act on without opening the step log. GitHub
+    renders the escaped newlines as line breaks.
+    """
+    error = check.get("error", "")
+    fallback = "check warning" if check.get("status") == "warn" else "check failed"
+    first_line = error.splitlines()[0] if error else fallback
+    lines = [f"{scope.display_label}: {first_line}"]
+    lines.extend(_finding_lines(check, include_error=False))
+    return "\n".join(lines)
+
+
 def render_step_log(results: list[ScopeResult]) -> None:
     """Print results to the step log, then emit one annotation per finding.
 
@@ -699,9 +810,11 @@ def render_step_log(results: list[ScopeResult]) -> None:
     ``::warning`` command renders as a line of its own wherever it is printed,
     so emitting one inside the indented listing broke the tree apart, and its
     ``title=`` \u2014 which is what carries the rule ID \u2014 is only shown in the
-    annotations UI, never inline. Printing the detail once in the listing and
-    the annotations after all the groups keeps the log readable and still
-    surfaces findings in the run summary and on the Files changed tab.
+    annotations UI, never inline. Printing the listing first and the
+    annotations after all the groups keeps the log readable and still
+    surfaces findings in the run summary and on the Files changed tab — where
+    the annotation is all a reader has, so its message repeats the value,
+    suggestion and fix from the tree (``_annotation_body``), one per line.
 
     A failure becomes an ``::error``, a warning a ``::warning`` \u2014 GitHub
     renders the two differently, and only the errors count toward the
@@ -727,17 +840,13 @@ def render_step_log(results: list[ScopeResult]) -> None:
             continue
         if scope.raw_text and not scope.checks:
             errors.append(
-                (f"commit-check: {scope.label}", "output could not be parsed")
+                (f"commit-check: {scope.display_label}", "output could not be parsed")
             )
             continue
         for check in scope.failures:
-            error = check.get("error", "")
-            first_line = error.splitlines()[0] if error else "check failed"
-            errors.append((_rule_label(check), f"{scope.label}: {first_line}"))
+            errors.append((_rule_label(check), _annotation_body(scope, check)))
         for check in scope.warnings:
-            error = check.get("error", "")
-            first_line = error.splitlines()[0] if error else "check warning"
-            warnings.append((_rule_label(check), f"{scope.label}: {first_line}"))
+            warnings.append((_rule_label(check), _annotation_body(scope, check)))
 
     level = "warning" if DRY_RUN_ENABLED else "error"
     for title, message in errors:
@@ -751,12 +860,22 @@ def render_step_log(results: list[ScopeResult]) -> None:
             f"::{_annotation_escape(message)}"
         )
 
-    if errors and DRY_RUN_ENABLED:
+    # The verdict is a plain line, never an ::error: the findings above are
+    # already one annotation each, and a second, untitled ::error for the
+    # total inflated the run's error count and told the reader nothing new.
+    if errors:
         failed, total = _check_counts(results)
-        print(
-            f"commit-check (dry-run): {failed} of {total} checks failed; "
-            "not failing the job"
-        )
+        if DRY_RUN_ENABLED:
+            print(
+                f"commit-check (dry-run): {failed} of {total} checks failed; "
+                "not failing the job"
+            )
+        else:
+            verdict = f"✖ commit-check: {failed} of {total} checks failed"
+            warned = _warn_count(results)
+            if warned:
+                verdict += f", {warned} warning{'s' if warned != 1 else ''}"
+            print(verdict)
     if not errors:
         skipped, warned, total = (
             _skip_count(results),
@@ -797,11 +916,6 @@ def _check_counts(results: list[ScopeResult]) -> tuple[int, int]:
     """
     failed = sum(1 for scope in results if scope.status == "fail")
     return failed, len(results)
-
-
-def _failure_count(results: list[ScopeResult]) -> int:
-    """Number of scopes that failed."""
-    return _check_counts(results)[0]
 
 
 def _skip_count(results: list[ScopeResult]) -> int:
@@ -857,8 +971,34 @@ def _markdown_table(
             links = "_output could not be parsed \u2014 see details_"
         else:
             links = " \u00b7 ".join(_rule_markdown_link(check) for check in entries)
-        rows.append(f"| {scope.label} | {value_display} | {links} |")
+        rows.append(f"| {_scope_markdown_label(scope)} | {value_display} | {links} |")
     return "\n".join(rows)
+
+
+def _commit_url(sha: str) -> str:
+    """Link to a commit on the GitHub instance the workflow runs against.
+
+    ``GITHUB_SERVER_URL`` is what makes this right on GitHub Enterprise
+    Server; without ``GITHUB_REPOSITORY`` there is nothing to link into, so
+    the caller falls back to plain text rather than guess.
+    """
+    repository = os.getenv("GITHUB_REPOSITORY", "")
+    if not (sha and repository):
+        return ""
+    server = os.getenv("GITHUB_SERVER_URL") or "https://github.com"
+    return f"{server.rstrip('/')}/{repository}/commit/{sha}"
+
+
+def _scope_markdown_label(scope: ScopeResult) -> str:
+    """The table's Scope cell: the label, linked to the commit when there is one.
+
+    The link lives here rather than in the tree because the tree is a fenced
+    code block, where Markdown does not render; the table row is the one
+    place a reader can click through to the commit.
+    """
+    url = _commit_url(scope.sha)
+    label = scope.display_label
+    return f"[{label}]({url})" if url else label
 
 
 def _markdown_details(results: list[ScopeResult]) -> str:
@@ -920,7 +1060,7 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   ```text
 #   Commit message
 #     ✔ PR title (feat: add login page)
-#     ✔ Commit 1/11 (feat: add user auth)
+#     ✔ Commit 1/11 (d87faca) (feat: add user auth)
 #   Branch
 #     ✔ Branch (feature/add-login)
 #   Author
@@ -931,6 +1071,9 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   </details>
 #
 #   _commit-check 2.13.1 · [Rules reference](https://commit-check.com/rules/)_
+#
+# A commit scope names its commit by short hash after the label, on every
+# surface; the label itself ("Commit 1/11") stays bare in the `result` output.
 #
 # Skipped (every rule declined to run — e.g. the author is in ignore_authors):
 #
@@ -994,11 +1137,12 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   <!-- commit-check-action -->
 #   ## Commit Check
 #
-#   ❌ **1 of 5 checks failed**
+#   ❌ **2 of 5 checks failed**
 #
 #   | Scope | Checked value | Failed checks |
 #   |---|---|---|
-#   | Commit 2/11 | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
+#   | [Commit 2/11 (5584f46)](https://github.com/acme/widgets/commit/5584f46…) | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
+#   | [Commit 3/11 (37d6def)](https://github.com/acme/widgets/commit/37d6def…) | `feat: add login page` | [CC002 subject-capitalized](https://commit-check.com/rules/#cc002) |
 #
 #   <details>
 #   <summary>Show all 5 checks</summary>
@@ -1006,11 +1150,16 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   ```text
 #   Commit message
 #     ✔ PR title (feat: add login page)
-#     ✖ Commit 2/11 (1 failure)
+#     ✖ Commit 2/11 (5584f46) (1 failure)
 #         CC001 message
 #           value: bad msg
 #           The commit message should follow Conventional Commits.
 #           Suggest: Use <type>(<scope>): <description>
+#     ✖ Commit 3/11 (37d6def) (1 failure)
+#         CC002 subject-capitalized
+#           value: feat: add login page
+#           Subject must start with a capital letter
+#           Fix: feat: Add login page
 #   Branch
 #     ✔ Branch (feature/add-login)
 #   ```
@@ -1019,7 +1168,22 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #
 #   _commit-check 2.13.1 · [Rules reference](https://commit-check.com/rules/)_
 #
+# The step log prints the same tree (plus a `Docs:` line per finding), then one
+# annotation per finding whose message is the tree's detail joined on `%0A`:
+#
+#   ::error title=CC002 subject-capitalized::Commit 3/11 (37d6def): Subject must start with a capital letter%0Avalue: feat: add login page%0AFix: feat: Add login page
+#   ✖ commit-check: 2 of 5 checks failed
+#
+# The verdict is a plain line, not an `::error`, so the run's error count is
+# the number of findings.
+#
 # Notes:
+# - The table's Scope cell links to the commit (GITHUB_SERVER_URL, so it is
+#   right on GitHub Enterprise Server too); the tree cannot, being a code block.
+# - `Fix:` is the corrected text the CLI proposes, when the correction is
+#   mechanical (CC002 capitalisation, CC010 WIP marker, CC012 sign-off, ...).
+#   When the CLI's `suggest` is just `Use "<fix>"`, only `Fix:` is printed. A
+#   multi-line fix takes one row per line.
 # - One check is one thing that was checked — a commit message, the branch, the
 #   author — not one rule evaluation. The total therefore matches the number of
 #   ✔/✖ lines the reader can count in the details block, and does not grow with
@@ -1141,7 +1305,12 @@ def set_result_output(results: list[ScopeResult]) -> None:
     payload = {
         "status": overall_status(results),
         "scopes": [
-            {"label": scope.label, "status": scope.status, "checks": scope.checks}
+            {
+                "label": scope.label,
+                "sha": scope.sha,
+                "status": scope.status,
+                "checks": scope.checks,
+            }
             for scope in results
         ],
     }
@@ -1338,12 +1507,16 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         return 0
 
 
-def log_error_and_exit(ret_code: int, results: list[ScopeResult]) -> None:
-    """Logs a summary error to GitHub Actions and exits with the given code."""
-    if ret_code != 0 and results:
-        failures = _failure_count(results)
-        unit = "failure" if failures == 1 else "failures"
-        print(f"::error::commit-check found {failures} {unit}.")
+def log_error_and_exit(ret_code: int) -> None:
+    """Exit with the given code.
+
+    This used to print ``::error::commit-check found N failures.`` first.
+    That was a second ``::error`` annotation on top of the one-per-finding
+    annotations ``render_step_log`` had already emitted, so GitHub counted
+    one error more than there were findings and listed an untitled entry
+    that only restated the titled ones. The verdict now lives in
+    ``render_step_log`` as a plain line, next to the passing verdicts.
+    """
     sys.exit(ret_code)
 
 
@@ -1362,7 +1535,7 @@ def main():
     if DRY_RUN_ENABLED:
         ret_code = 0
 
-    log_error_and_exit(ret_code, results)
+    log_error_and_exit(ret_code)
 
 
 if __name__ == "__main__":
