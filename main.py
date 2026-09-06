@@ -193,6 +193,15 @@ def is_pr_event() -> bool:
 #: The one fix for every "history is too shallow" finding below.
 SHALLOW_CHECKOUT_HINT = "is actions/checkout using fetch-depth: 0?"
 
+#: The pull request branch tip. On ``refs/pull/N/merge`` HEAD is a merge
+#: commit that GitHub authored, so its recorded author is
+#: ``GitHub <noreply@github.com>`` whatever the contributor configured;
+#: HEAD^2 is the commit the contributor actually made.
+PR_HEAD_REV = "HEAD^2"
+
+#: The checks whose subject is a commit's recorded author.
+AUTHOR_FLAGS = ("--author-name", "--author-email")
+
 
 def warn_shallow_checkout(problem: str, consequence: str) -> None:
     """Annotate a PR run whose clone is too shallow to do what was asked.
@@ -204,6 +213,25 @@ def warn_shallow_checkout(problem: str, consequence: str) -> None:
     """
     text = f"{problem} ({SHALLOW_CHECKOUT_HINT}); {consequence}"
     print(f"::warning title=commit-check::{_annotation_escape(text)}")
+
+
+def pr_head_rev() -> str | None:
+    """Return ``HEAD^2`` when it resolves, ``None`` on a shallow clone.
+
+    With ``fetch-depth: 1`` the merge commit's parents are not fetched and
+    ``git rev-parse HEAD^2`` fails, so the caller has to settle for HEAD.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", PR_HEAD_REV],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError:
+        return None
+    return PR_HEAD_REV if result.returncode == 0 else None
 
 
 def get_pr_title() -> str | None:
@@ -339,13 +367,22 @@ def run_pr_message_checks(pr_messages: list[str]) -> list[ScopeResult]:
     return results
 
 
-def run_other_checks(args: list[str]) -> list[ScopeResult]:
-    """Run each non-message check (branch, author) once, as its own scope."""
+def run_other_checks(args: list[str], rev: str | None = None) -> list[ScopeResult]:
+    """Run each non-message check (branch, author) once, as its own scope.
+
+    ``rev`` goes to the author checks only: it names the commit whose
+    recorded author is validated (commit-check >= 2.16.0), which in a PR is
+    the branch tip rather than GitHub's merge commit. The branch check has
+    no commit to point at, so it never takes it.
+    """
     results: list[ScopeResult] = []
     for flag in args:
         label = CHECK_LABELS.get(flag)
         if label:
-            results.append(check_scope(label, [flag]))
+            cli_args = [flag]
+            if rev and flag in AUTHOR_FLAGS:
+                cli_args += ["--rev", rev]
+            results.append(check_scope(label, cli_args))
     return results
 
 
@@ -400,7 +437,16 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     if "--message" in args:
         results.append(check_scope("Commit message", ["--message"]))
         args = [a for a in args if a != "--message"]
-    results.extend(run_other_checks(args))
+    rev = None
+    if is_pr_event() and any(flag in AUTHOR_FLAGS for flag in args):
+        rev = pr_head_rev()
+        if rev is None:
+            warn_shallow_checkout(
+                f"Could not resolve {PR_HEAD_REV} for the author checks",
+                "HEAD's author was checked instead, which on a pull request "
+                "is GitHub's merge commit",
+            )
+    results.extend(run_other_checks(args, rev=rev))
 
     exit_code = exit_code_for(results)
     return exit_code, results

@@ -576,7 +576,7 @@ class TestRunCommitCheck(unittest.TestCase):
     def test_message_flag_removed_before_other_checks_in_pr(self):
         captured_args = []
 
-        def fake_other_checks(args):
+        def fake_other_checks(args, rev=None):
             captured_args.extend(args)
             return []
 
@@ -641,6 +641,107 @@ class TestRunCommitCheck(unittest.TestCase):
         ):
             _rc, _results, output = self._run_capturing_stdout()
         self.assertNotIn("::warning", output)
+
+    @staticmethod
+    def _fake_git_and_cli(head2_resolves: bool):
+        """subprocess.run stand-in: answers rev-parse and the CLI alike."""
+        commands: list[list[str]] = []
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            if command[:2] == ["git", "rev-parse"]:
+                return MagicMock(
+                    returncode=0 if head2_resolves else 1,
+                    stdout="abc123\n" if head2_resolves else "",
+                )
+            check = command[3].lstrip("-").replace("-", "_")
+            return MagicMock(returncode=0, stdout=json_output(make_check(check)))
+
+        return run, commands
+
+    def test_pr_author_checks_read_the_branch_tip(self):
+        """On refs/pull/N/merge HEAD's author is GitHub, not the contributor."""
+        run, commands = self._fake_git_and_cli(head2_resolves=True)
+        with (
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", True),
+            patch("main.AUTHOR_NAME_ENABLED", True),
+            patch("main.AUTHOR_EMAIL_ENABLED", True),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.subprocess.run", side_effect=run),
+        ):
+            rc, results, output = self._run_capturing_stdout()
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            [s.label for s in results], ["Branch", "Author name", "Author email"]
+        )
+        self.assertIn(["git", "rev-parse", "--verify", "--quiet", "HEAD^2"], commands)
+        self.assertIn(
+            ["commit-check", "--format", "json", "--author-name", "--rev", "HEAD^2"],
+            commands,
+        )
+        self.assertIn(
+            ["commit-check", "--format", "json", "--author-email", "--rev", "HEAD^2"],
+            commands,
+        )
+        # The branch check has no commit to point at.
+        self.assertIn(["commit-check", "--format", "json", "--branch"], commands)
+        self.assertNotIn("::warning", output)
+
+    def test_pr_author_checks_fall_back_to_head_on_shallow_clone(self):
+        run, commands = self._fake_git_and_cli(head2_resolves=False)
+        with (
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", True),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.subprocess.run", side_effect=run),
+        ):
+            rc, results, output = self._run_capturing_stdout()
+        self.assertEqual(rc, 0)
+        self.assertIn(["commit-check", "--format", "json", "--author-name"], commands)
+        self.assertFalse([c for c in commands if "--rev" in c], commands)
+        warning = [ln for ln in output.splitlines() if ln.startswith("::warning")]
+        self.assertEqual(len(warning), 1, output)
+        self.assertTrue(warning[0].startswith("::warning title=commit-check::"))
+        self.assertIn("Could not resolve HEAD^2", warning[0])
+        self.assertIn("is actions/checkout using fetch-depth: 0?", warning[0])
+
+    def test_push_author_checks_never_pass_rev(self):
+        run, commands = self._fake_git_and_cli(head2_resolves=True)
+        with (
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", True),
+            patch("main.AUTHOR_EMAIL_ENABLED", True),
+            patch("main.is_pr_event", return_value=False),
+            patch("main.subprocess.run", side_effect=run),
+        ):
+            _rc, _results, output = self._run_capturing_stdout()
+        self.assertFalse([c for c in commands if c[0] == "git"], commands)
+        self.assertFalse([c for c in commands if "--rev" in c], commands)
+        self.assertNotIn("::warning", output)
+
+
+class TestPrHeadRev(unittest.TestCase):
+    def test_resolving_head2_returns_the_revision(self):
+        with patch(
+            "main.subprocess.run", return_value=MagicMock(returncode=0)
+        ) as mock_run:
+            self.assertEqual(main.pr_head_rev(), "HEAD^2")
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["git", "rev-parse", "--verify", "--quiet", "HEAD^2"],
+        )
+
+    def test_shallow_clone_returns_none(self):
+        with patch("main.subprocess.run", return_value=MagicMock(returncode=1)):
+            self.assertIsNone(main.pr_head_rev())
+
+    def test_missing_git_returns_none(self):
+        with patch("main.subprocess.run", side_effect=OSError("no git")):
+            self.assertIsNone(main.pr_head_rev())
 
 
 class TestCommitCheckVersionPin(unittest.TestCase):
