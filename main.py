@@ -215,23 +215,87 @@ def warn_shallow_checkout(problem: str, consequence: str) -> None:
     print(f"::warning title=commit-check::{_annotation_escape(text)}")
 
 
-def pr_head_rev() -> str | None:
-    """Return ``HEAD^2`` when it resolves, ``None`` on a shallow clone.
+def get_pr_head_sha() -> str | None:
+    """The pull request's head commit, from the event payload."""
+    if not is_pr_event():
+        return None
+    event_path = os.getenv("GITHUB_EVENT_PATH")
+    if not event_path:
+        return None
+    try:
+        with open(event_path, "r", encoding="utf-8") as f:
+            event = json.load(f)
+        return event.get("pull_request", {}).get("head", {}).get("sha") or None
+    except Exception as e:
+        print(f"::warning::Failed to read PR head from event: {e}", file=sys.stderr)
+        return None
 
-    With ``fetch-depth: 1`` the merge commit's parents are not fetched and
-    ``git rev-parse HEAD^2`` fails, so the caller has to settle for HEAD.
-    """
+
+def _rev_resolves(rev: str) -> bool:
+    """Whether ``rev`` names a commit the clone actually has."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", PR_HEAD_REV],
+            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             encoding="utf-8",
             check=False,
         )
     except OSError:
-        return None
-    return PR_HEAD_REV if result.returncode == 0 else None
+        return False
+    return result.returncode == 0
+
+
+def pr_head_rev() -> str | None:
+    """The commit whose recorded author the PR's author checks read.
+
+    First choice is ``pull_request.head.sha`` from the event payload: it
+    names the branch tip for ``pull_request`` and ``pull_request_target``
+    alike, whatever was checked out, as long as the clone has it. Failing
+    that, ``HEAD^2`` on a ``pull_request`` checkout, where HEAD is the
+    merge ref and its second parent is that same tip. Never ``HEAD^2`` on
+    ``pull_request_target``: there HEAD is the base branch, so ``HEAD^2``
+    is nothing, or the parent of some unrelated merge on it.
+
+    ``None`` when the clone is too shallow to hold either.
+    """
+    sha = get_pr_head_sha()
+    if sha and _rev_resolves(sha):
+        return sha
+    if os.getenv("GITHUB_EVENT_NAME") == "pull_request" and _rev_resolves(PR_HEAD_REV):
+        return PR_HEAD_REV
+    return None
+
+
+#: The rule each author check runs, for a scope that had to be skipped.
+AUTHOR_RULES = {
+    "--author-name": ("CC101", "author_name"),
+    "--author-email": ("CC102", "author_email"),
+}
+
+
+def skipped_author_scope(flag: str) -> ScopeResult:
+    """A scope recording that an author check could not run at all.
+
+    Reported as ``skip``, never as a pass: nothing was validated, and the
+    one commit the clone does hold (HEAD) has the wrong author for a pull
+    request, GitHub's merge commit or the base branch.
+    """
+    rule_id, check = AUTHOR_RULES[flag]
+    return ScopeResult(
+        label=CHECK_LABELS[flag],
+        checks=[
+            {
+                "rule_id": rule_id,
+                "check": check,
+                "status": "skip",
+                "value": "",
+                "error": "",
+                "suggest": "",
+                "docs_url": "",
+            }
+        ],
+    )
 
 
 def get_pr_title() -> str | None:
@@ -441,11 +505,18 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     if is_pr_event() and any(flag in AUTHOR_FLAGS for flag in args):
         rev = pr_head_rev()
         if rev is None:
+            # HEAD's author is GitHub's merge commit on a pull_request
+            # checkout and the base branch on pull_request_target: checking
+            # it would grade the wrong person either way. Say so, and skip.
             warn_shallow_checkout(
-                f"Could not resolve {PR_HEAD_REV} for the author checks",
-                "HEAD's author was checked instead, which on a pull request "
-                "is GitHub's merge commit",
+                "Could not resolve the pull request's head commit for the "
+                "author checks",
+                "they were skipped",
             )
+            for flag in args:
+                if flag in AUTHOR_FLAGS:
+                    results.append(skipped_author_scope(flag))
+            args = [a for a in args if a not in AUTHOR_FLAGS]
     results.extend(run_other_checks(args, rev=rev))
 
     exit_code = exit_code_for(results)
