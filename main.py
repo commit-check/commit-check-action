@@ -190,6 +190,22 @@ def is_pr_event() -> bool:
     return os.getenv("GITHUB_EVENT_NAME", "") in {"pull_request", "pull_request_target"}
 
 
+#: The one fix for every "history is too shallow" finding below.
+SHALLOW_CHECKOUT_HINT = "is actions/checkout using fetch-depth: 0?"
+
+
+def warn_shallow_checkout(problem: str, consequence: str) -> None:
+    """Annotate a PR run whose clone is too shallow to do what was asked.
+
+    ``actions/checkout`` defaults to ``fetch-depth: 1``, which leaves the
+    synthetic merge commit as the only commit in the clone. Every caller
+    hits that same root cause, so they share one message shape that names
+    the fix rather than only the symptom.
+    """
+    text = f"{problem} ({SHALLOW_CHECKOUT_HINT}); {consequence}"
+    print(f"::warning title=commit-check::{_annotation_escape(text)}")
+
+
 def get_pr_title() -> str | None:
     """Read PR title from GitHub event payload."""
     if not is_pr_event():
@@ -371,6 +387,13 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
             # only validating the synthetic merge commit at HEAD.
             results.extend(run_pr_message_checks(pr_messages))
             args = [a for a in args if a != "--message"]
+        elif is_pr_event():
+            # Falling through to HEAD validates the synthetic merge commit,
+            # "Merge X into Y", which passes CC001 by default: a shallow
+            # clone used to turn every pull request green without a word.
+            warn_shallow_checkout(
+                "Could not list the pull request's commits", "only HEAD was checked"
+            )
 
     # ---- 3. Remaining checks (branch, author, etc.) -----------------------
     # Outside a PR, check the HEAD commit message directly.

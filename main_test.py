@@ -593,6 +593,55 @@ class TestRunCommitCheck(unittest.TestCase):
         self.assertNotIn("--message", captured_args)
         self.assertIn("--branch", captured_args)
 
+    SHALLOW_PR_WARNING = (
+        "::warning title=commit-check::Could not list the pull request's commits "
+        "(is actions/checkout using fetch-depth: 0?); only HEAD was checked"
+    )
+
+    def _run_capturing_stdout(self):
+        buffer = io.StringIO()
+        with patch("sys.stdout", buffer):
+            rc, results = main.run_commit_check()
+        return rc, results, buffer.getvalue()
+
+    def test_pr_without_enumerable_commits_warns_and_checks_head(self):
+        """A shallow clone must not turn a pull request green silently.
+
+        With fetch-depth: 1 neither HEAD^1..HEAD^2 nor origin/<base>..HEAD
+        can be listed, and the fallback validates HEAD — the synthetic
+        "Merge X into Y" commit, which passes CC001 by default.
+        """
+        with (
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_commit_messages", return_value=[]),
+            patch(
+                "main.check_scope", return_value=pass_scope("Commit message")
+            ) as mock_scope,
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            rc, results, output = self._run_capturing_stdout()
+        self.assertEqual(rc, 0)
+        self.assertIn(self.SHALLOW_PR_WARNING, output)
+        mock_scope.assert_called_once_with("Commit message", ["--message"])
+
+    def test_push_without_pr_commits_does_not_warn(self):
+        with (
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=False),
+            patch("main.get_pr_commit_messages", return_value=[]),
+            patch("main.check_scope", return_value=pass_scope("Commit message")),
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            _rc, _results, output = self._run_capturing_stdout()
+        self.assertNotIn("::warning", output)
+
 
 class TestCommitCheckVersionPin(unittest.TestCase):
     """The warn rendering is inert against an engine that never emits it.
