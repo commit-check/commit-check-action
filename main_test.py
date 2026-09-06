@@ -873,6 +873,33 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertIn("unexpected output", output)
         self.assertIn("::error title=commit-check: Branch::", output)
 
+    def test_dry_run_downgrades_annotations_and_prints_verdict(self):
+        """Dry-run still reports every failure, but nothing may say "error".
+
+        The exit code is forced to 0, so an ::error annotation would count
+        toward the run's error total on a green job, and log_error_and_exit
+        prints nothing for a zero exit — leaving the log with no verdict.
+        """
+        with patch("main.DRY_RUN_ENABLED", True):
+            output = self._run([fail_scope("Commit 1/1"), pass_scope("Branch")])
+        self.assertNotIn("::error", output)
+        self.assertIn(
+            "::warning title=CC001 message::Commit 1/1: The commit message should "
+            "follow Conventional Commits.",
+            output,
+        )
+        self.assertIn(
+            "commit-check (dry-run): 1 of 2 checks failed; not failing the job",
+            output,
+        )
+        self.assertNotIn("all checks passed", output)
+
+    def test_dry_run_without_failures_prints_the_usual_verdict(self):
+        with patch("main.DRY_RUN_ENABLED", True):
+            output = self._run([pass_scope("Branch")])
+        self.assertIn("✔ commit-check: all checks passed", output)
+        self.assertNotIn("dry-run", output)
+
 
 class TestRenderJobSummary(unittest.TestCase):
     @pin_version

@@ -589,6 +589,11 @@ def render_step_log(results: list[ScopeResult]) -> None:
     A failure becomes an ``::error``, a warning a ``::warning`` \u2014 GitHub
     renders the two differently, and only the errors count toward the
     friendly one-line verdict claiming nothing failed.
+
+    Under ``dry-run`` a failure is still reported, but as a ``::warning``:
+    an ``::error`` annotation on a step that then exits 0 reads as a
+    contradiction, and the run's error count would claim a failure the job
+    did not have. The verdict line says the same thing in words.
     """
     # The tree is grouped, so it is printed group by group rather than in one
     # block: ::group:: and ::endgroup:: have to bracket each section's lines.
@@ -617,9 +622,10 @@ def render_step_log(results: list[ScopeResult]) -> None:
             first_line = error.splitlines()[0] if error else "check warning"
             warnings.append((_rule_label(check), f"{scope.label}: {first_line}"))
 
+    level = "warning" if DRY_RUN_ENABLED else "error"
     for title, message in errors:
         print(
-            f"::error title={_annotation_escape(title)}"
+            f"::{level} title={_annotation_escape(title)}"
             f"::{_annotation_escape(message)}"
         )
     for title, message in warnings:
@@ -628,6 +634,12 @@ def render_step_log(results: list[ScopeResult]) -> None:
             f"::{_annotation_escape(message)}"
         )
 
+    if errors and DRY_RUN_ENABLED:
+        failed, total = _check_counts(results)
+        print(
+            f"commit-check (dry-run): {failed} of {total} checks failed; "
+            "not failing the job"
+        )
     if not errors:
         skipped, warned, total = (
             _skip_count(results),

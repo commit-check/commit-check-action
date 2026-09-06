@@ -116,7 +116,8 @@ jobs:
 
 ### `dry-run`
 
-- **Description**: run checks without failing. exit code is 0; otherwise is 1.
+- **Description**: report failures (job summary, PR comment, and annotations
+  downgraded to warnings) but always exit 0, so the job never fails.
 - Default: `false`
 
 ### `job-summary`

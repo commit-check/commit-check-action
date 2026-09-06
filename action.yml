@@ -22,7 +22,7 @@ inputs:
     required: false
     default: false
   dry-run:
-    description: run checks without failing
+    description: report failures (summary, PR comment, annotations as warnings) but always exit 0
     required: false
     default: false
   job-summary:
