@@ -888,6 +888,11 @@ class TestGetPrHeadSha(unittest.TestCase):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
             self.assertIsNone(main.get_pr_head_sha())
 
+    def test_missing_event_path_returns_none(self):
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
+            os.environ.pop("GITHUB_EVENT_PATH", None)
+            self.assertIsNone(main.get_pr_head_sha())
+
     def test_unreadable_event_returns_none(self):
         with patch.dict(
             os.environ,
