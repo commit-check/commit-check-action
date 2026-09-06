@@ -527,6 +527,10 @@ class TestGitMessageReaders(unittest.TestCase):
             self.assertEqual(main.get_messages_from_event_range(), [])
         mock_run.assert_not_called()
 
+    def test_a_failing_git_log_yields_no_messages(self):
+        with patch("main.subprocess.run", return_value=MagicMock(returncode=128)):
+            self.assertEqual(main.get_messages_from_head_ref("main"), [])
+
     def test_get_messages_from_head_ref(self):
         mock_result = MagicMock(returncode=0, stdout="fix: first\n\x00")
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
@@ -964,9 +968,24 @@ class TestGetPrHeadSha(unittest.TestCase):
         finally:
             os.unlink(event_path)
 
+    def test_reads_the_base_sha_from_the_event(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"pull_request": {"base": {"sha": "base111"}}}, f)
+            event_path = f.name
+        try:
+            with patch.dict(
+                os.environ,
+                {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event_path},
+            ):
+                self.assertEqual(main.get_pr_base_sha(), "base111")
+                self.assertIsNone(main.get_pr_head_sha())
+        finally:
+            os.unlink(event_path)
+
     def test_not_a_pr_event_returns_none(self):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
             self.assertIsNone(main.get_pr_head_sha())
+            self.assertIsNone(main.get_pr_base_sha())
 
     def test_missing_event_path_returns_none(self):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
