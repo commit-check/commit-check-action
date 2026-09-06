@@ -1,8 +1,10 @@
 """Unit tests for main.py."""
 
+import importlib.metadata
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -590,6 +592,44 @@ class TestRunCommitCheck(unittest.TestCase):
             main.run_commit_check()
         self.assertNotIn("--message", captured_args)
         self.assertIn("--branch", captured_args)
+
+
+class TestCommitCheckVersionPin(unittest.TestCase):
+    """The warn rendering is inert against an engine that never emits it.
+
+    commit-check reports ``"status": "warn"`` from 2.17.0; the action pinned
+    2.16.0 for a release after shipping the rendering, so nobody could ever
+    see it. Both the installed package and the pin have to keep up.
+    """
+
+    MINIMUM = (2, 17, 0)
+
+    @staticmethod
+    def _parse(version: str) -> tuple[int, ...]:
+        match = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+        assert match, f"unparsable commit-check version: {version!r}"
+        return tuple(int(part) for part in match.groups())
+
+    def test_installed_commit_check_can_report_warnings(self):
+        try:
+            version = importlib.metadata.version("commit-check")
+        except importlib.metadata.PackageNotFoundError:
+            self.skipTest("commit-check is not installed")
+        self.assertGreaterEqual(
+            self._parse(version),
+            self.MINIMUM,
+            f"installed commit-check {version} predates the warn status",
+        )
+
+    def test_requirements_pin_can_report_warnings(self):
+        here = os.path.dirname(os.path.abspath(main.__file__))
+        with open(os.path.join(here, "requirements.txt"), encoding="utf-8") as f:
+            pins = dict(
+                line.strip().split("==", 1)
+                for line in f
+                if "==" in line and not line.startswith("#")
+            )
+        self.assertGreaterEqual(self._parse(pins["commit-check"]), self.MINIMUM)
 
 
 class TestRenderStepLog(unittest.TestCase):
