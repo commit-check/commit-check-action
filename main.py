@@ -536,24 +536,26 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
             value = _scope_value(scope)
             lines.append(f"  ✔ {scope.label}{f' ({value})' if value else ''}")
             continue
-        if scope.status == "warn":
-            # Reported like a failure — same detail lines — but never a ✖:
-            # a warned rule ran and found something, it just does not fail
-            # the workflow, and the marker says so at a glance.
-            warnings = scope.warnings
-            count = f" ({len(warnings)} warning{'s' if len(warnings) != 1 else ''})"
-            lines.append(f"  ⚠ {scope.label}{count}")
-            lines.extend(_render_findings(warnings, include_docs))
-            continue
         if scope.raw_text and not scope.checks:
             # Defensive fallback: commit-check produced unexpected output.
             lines.append(f"  ✖ {scope.label}")
             lines.extend(f"      {ln}" for ln in scope.raw_text.strip().splitlines())
             continue
+        # A scope's status names its worst outcome (fail beats warn), but the
+        # two are not exclusive: CC2xx covers both branch and merge_base, so
+        # one can fail while the other only warns. Render whichever of the
+        # two lists is non-empty, rather than only the one the status names —
+        # a warning on an otherwise-failing scope is still a finding to fix.
         failures = scope.failures
-        count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
-        lines.append(f"  ✖ {scope.label}{count}")
-        lines.extend(_render_findings(failures, include_docs))
+        if failures:
+            count = f" ({len(failures)} failure{'s' if len(failures) != 1 else ''})"
+            lines.append(f"  ✖ {scope.label}{count}")
+            lines.extend(_render_findings(failures, include_docs))
+        warnings = scope.warnings
+        if warnings:
+            count = f" ({len(warnings)} warning{'s' if len(warnings) != 1 else ''})"
+            lines.append(f"  ⚠ {scope.label}{count}")
+            lines.extend(_render_findings(warnings, include_docs))
     return lines
 
 
@@ -697,13 +699,15 @@ def _skip_count(results: list[ScopeResult]) -> int:
 
 
 def _warn_count(results: list[ScopeResult]) -> int:
-    """Number of scopes reported as warnings.
+    """Number of scopes that carry at least one warning.
 
-    Reported separately from the pass count, the same way skips are, so the
-    headline can say how many findings were surfaced without claiming they
-    failed anything.
+    Counts by ``scope.warnings``, not ``scope.status == "warn"``: a scope
+    whose overall status is "fail" (CC2xx covers both ``branch`` and
+    ``merge_base``, so one can fail while the other only warns) still has
+    warnings to report, and this is the count the verdict and the table use
+    to decide whether to show them.
     """
-    return sum(1 for scope in results if scope.status == "warn")
+    return sum(1 for scope in results if scope.warnings)
 
 
 def _markdown_table(
@@ -711,26 +715,32 @@ def _markdown_table(
 ) -> str:
     """Render the failure or warning table shared by summary and PR comment.
 
-    Only scopes of the given status appear, so a per-row result column would
-    read the same symbol on every row and carry no information; the pass/fail
-    picture for everything else lives in the details block.
+    A scope appears when it has an entry of the requested kind \u2014 checked via
+    ``scope.failures`` / ``scope.warnings``, not ``scope.status`` \u2014 so a scope
+    that both failed and warned gets a row in both tables. Filtering on the
+    scope's single overall status would silently drop its warnings once a
+    failure in the same scope outranked them.
     """
     rows = [
         f"| Scope | Checked value | {header} |",
         "|---|---|---|",
     ]
+    is_raw_only_failure = (
+        status == "fail"
+    )  # a raw-text scope has no checks to warn about
     for scope in results:
-        # A skipped scope has no failed checks and no checked value, so it
-        # contributed an entirely blank row \u2014 an empty accusation in a table
-        # headed "Failed checks" \u2014 before this filter existed.
-        if scope.status != status:
+        entries = scope.failures if status == "fail" else scope.warnings
+        raw_failure = is_raw_only_failure and scope.raw_text and not scope.checks
+        # A skipped or clean-passing scope has no matching entries and is not
+        # a raw-text failure, so it contributes no row \u2014 an empty accusation
+        # in a table headed "Failed checks" or "Warnings" otherwise.
+        if not entries and not raw_failure:
             continue
         value = _scope_value(scope)
         value_display = f"`{value}`" if value else "\u2014"
-        if scope.raw_text and not scope.checks:
+        if raw_failure:
             links = "_output could not be parsed \u2014 see details_"
         else:
-            entries = scope.failures if status == "fail" else scope.warnings
             links = " \u00b7 ".join(_rule_markdown_link(check) for check in entries)
         rows.append(f"| {scope.label} | {value_display} | {links} |")
     return "\n".join(rows)

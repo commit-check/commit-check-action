@@ -1731,6 +1731,68 @@ class TestWarnedScopes(unittest.TestCase):
         )
         self.assertEqual(mixed.status, "fail")
 
+    def test_a_warning_survives_reporting_on_a_scope_that_also_fails(self):
+        """The scope's status names its worst outcome, but both findings
+        still belong on every surface: the count, both tables, and the
+        details block. Filtering any of those on ``scope.status == "warn"``
+        drops this scope's warning the moment its sibling rule fails.
+        """
+        mixed = main.ScopeResult(
+            label="Branch",
+            checks=[
+                make_check(
+                    "branch",
+                    status="warn",
+                    rule_id="CC201",
+                    value="jsmith/fix-x",
+                    error="The branch should follow Conventional Branch.",
+                    suggest="Use <type>/<description>",
+                    docs_url="https://commit-check.com/rules/#cc201",
+                ),
+                make_check(
+                    "merge_base",
+                    status="fail",
+                    rule_id="CC202",
+                    value="jsmith/fix-x",
+                    error="Current branch is not rebased onto main.",
+                    docs_url="https://commit-check.com/rules/#cc202",
+                ),
+            ],
+        )
+        self.assertEqual(main._warn_count([mixed]), 1)
+
+        body = main.render_report([mixed])
+        self.assertIn("❌ **1 of 1 check failed**, 1 warning", body)
+        self.assertIn("| Scope | Checked value | Failed checks |", body)
+        self.assertIn("[CC202 merge-base](https://commit-check.com/rules/#cc202)", body)
+        self.assertIn("| Scope | Checked value | Warnings |", body)
+        self.assertIn("[CC201 branch](https://commit-check.com/rules/#cc201)", body)
+        self.assertIn("  ✖ Branch (1 failure)", body)
+        self.assertIn("      CC202 merge-base", body)
+        self.assertIn("  ⚠ Branch (1 warning)", body)
+        self.assertIn("      CC201 branch", body)
+
+    def test_step_log_and_report_agree_on_a_mixed_scope(self):
+        """The step log's ::warning annotation must not be the only surface
+        that shows this scope's warning — the report has to as well."""
+        mixed = main.ScopeResult(
+            label="Branch",
+            checks=[
+                make_check("branch", status="warn", rule_id="CC201", error="e1"),
+                make_check("merge_base", status="fail", rule_id="CC202", error="e2"),
+            ],
+        )
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            main.render_step_log([mixed])
+        step_log = buf.getvalue()
+        self.assertIn("::warning title=CC201 branch::", step_log)
+        self.assertIn("::error title=CC202 merge-base::", step_log)
+
+        body = main.render_report([mixed])
+        self.assertIn("CC201 branch", body)
+        self.assertIn("CC202 merge-base", body)
+
     def test_a_warning_outranks_a_skip_in_the_same_scope(self):
         mixed = main.ScopeResult(
             label="Author",
