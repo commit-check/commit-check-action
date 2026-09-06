@@ -393,9 +393,26 @@ class TestGetPrCommitMessages(unittest.TestCase):
             result = main.get_pr_commit_messages()
         self.assertEqual(result, [])
 
-    def test_merge_ref_is_preferred(self):
+    def test_event_range_is_preferred(self):
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch(
+                "main.get_messages_from_event_range",
+                return_value=["fix: first", "feat: second"],
+            ) as mock_range,
+            patch("main.get_messages_from_merge_ref") as mock_merge,
+            patch("main.get_messages_from_head_ref") as mock_head,
+        ):
+            result = main.get_pr_commit_messages()
+        self.assertEqual(result, ["fix: first", "feat: second"])
+        mock_range.assert_called_once()
+        mock_merge.assert_not_called()
+        mock_head.assert_not_called()
+
+    def test_merge_ref_is_next(self):
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch("main.get_messages_from_event_range", return_value=[]),
             patch(
                 "main.get_messages_from_merge_ref",
                 return_value=["fix: first", "feat: second"],
@@ -410,7 +427,7 @@ class TestGetPrCommitMessages(unittest.TestCase):
     def test_pull_request_target_is_supported(self):
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target"}),
-            patch("main.get_messages_from_merge_ref", return_value=["fix: first"]),
+            patch("main.get_messages_from_event_range", return_value=["fix: first"]),
         ):
             result = main.get_pr_commit_messages()
         self.assertEqual(result, ["fix: first"])
@@ -424,6 +441,7 @@ class TestGetPrCommitMessages(unittest.TestCase):
                     "GITHUB_BASE_REF": "main",
                 },
             ),
+            patch("main.get_messages_from_event_range", return_value=[]),
             patch("main.get_messages_from_merge_ref", return_value=[]),
             patch(
                 "main.get_messages_from_head_ref",
@@ -438,7 +456,8 @@ class TestGetPrCommitMessages(unittest.TestCase):
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
             patch(
-                "main.get_messages_from_merge_ref", side_effect=Exception("git failed")
+                "main.get_messages_from_event_range",
+                side_effect=Exception("git failed"),
             ),
         ):
             result = main.get_pr_commit_messages()
@@ -450,13 +469,63 @@ class TestGitMessageReaders(unittest.TestCase):
         mock_result = MagicMock(
             returncode=0, stdout="fix: first\n\x00feat: second\n\x00"
         )
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch("main.subprocess.run", return_value=mock_result) as mock_run,
+        ):
             result = main.get_messages_from_merge_ref()
         self.assertEqual(result, ["fix: first", "feat: second"])
         self.assertEqual(
             mock_run.call_args[0][0],
             ["git", "log", "--pretty=format:%B%x00", "--reverse", "HEAD^1..HEAD^2"],
         )
+
+    def test_merge_ref_is_never_read_on_pull_request_target(self):
+        """HEAD is the base branch there; HEAD^2 belongs to some other merge."""
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target"}),
+            patch("main.subprocess.run") as mock_run,
+        ):
+            self.assertEqual(main.get_messages_from_merge_ref(), [])
+        mock_run.assert_not_called()
+
+    def test_get_messages_from_event_range(self):
+        commands: list[list[str]] = []
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            if command[:2] == ["git", "rev-parse"]:
+                return MagicMock(returncode=0, stdout="x\n")
+            return MagicMock(returncode=0, stdout="fix: first\n\x00feat: second\n\x00")
+
+        with (
+            patch("main.get_pr_base_sha", return_value="base111"),
+            patch("main.get_pr_head_sha", return_value="head222"),
+            patch("main.subprocess.run", side_effect=run),
+        ):
+            result = main.get_messages_from_event_range()
+        self.assertEqual(result, ["fix: first", "feat: second"])
+        self.assertIn(
+            ["git", "log", "--pretty=format:%B%x00", "--reverse", "base111..head222"],
+            commands,
+        )
+
+    def test_event_range_needs_both_commits_in_the_clone(self):
+        with (
+            patch("main.get_pr_base_sha", return_value="base111"),
+            patch("main.get_pr_head_sha", return_value="head222"),
+            patch("main.subprocess.run", return_value=MagicMock(returncode=1)),
+        ):
+            self.assertEqual(main.get_messages_from_event_range(), [])
+
+    def test_event_range_without_a_payload_is_empty(self):
+        with (
+            patch("main.get_pr_base_sha", return_value=None),
+            patch("main.get_pr_head_sha", return_value=None),
+            patch("main.subprocess.run") as mock_run,
+        ):
+            self.assertEqual(main.get_messages_from_event_range(), [])
+        mock_run.assert_not_called()
 
     def test_get_messages_from_head_ref(self):
         mock_result = MagicMock(returncode=0, stdout="fix: first\n\x00")
@@ -865,6 +934,17 @@ class TestPrHeadRev(unittest.TestCase):
             patch("main.subprocess.run", side_effect=OSError("no git")),
         ):
             self.assertIsNone(main.pr_head_rev())
+
+
+class TestCheckoutHint(unittest.TestCase):
+    def test_pull_request_names_fetch_depth(self):
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
+            self.assertEqual(main.checkout_hint(), main.SHALLOW_CHECKOUT_HINT)
+
+    def test_pull_request_target_names_the_checkout(self):
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target"}):
+            self.assertEqual(main.checkout_hint(), main.TARGET_CHECKOUT_HINT)
+            self.assertIn("refs/pull/<number>/merge", main.checkout_hint())
 
 
 class TestGetPrHeadSha(unittest.TestCase):

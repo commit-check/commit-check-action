@@ -193,6 +193,22 @@ def is_pr_event() -> bool:
 #: The one fix for every "history is too shallow" finding below.
 SHALLOW_CHECKOUT_HINT = "is actions/checkout using fetch-depth: 0?"
 
+#: On pull_request_target the default checkout is the base branch, which
+#: holds none of the pull request at any depth; the fix is to check the
+#: pull request out.
+TARGET_CHECKOUT_HINT = (
+    "is the workflow checking out the pull request, e.g. "
+    "ref: refs/pull/<number>/merge with fetch-depth: 0?"
+)
+
+
+def checkout_hint() -> str:
+    """The fix for a checkout that does not hold the pull request."""
+    if os.getenv("GITHUB_EVENT_NAME") == "pull_request_target":
+        return TARGET_CHECKOUT_HINT
+    return SHALLOW_CHECKOUT_HINT
+
+
 #: The pull request branch tip. On ``refs/pull/N/merge`` HEAD is a merge
 #: commit that GitHub authored, so its recorded author is
 #: ``GitHub <noreply@github.com>`` whatever the contributor configured;
@@ -211,24 +227,34 @@ def warn_shallow_checkout(problem: str, consequence: str) -> None:
     hits that same root cause, so they share one message shape that names
     the fix rather than only the symptom.
     """
-    text = f"{problem} ({SHALLOW_CHECKOUT_HINT}); {consequence}"
+    text = f"{problem} ({checkout_hint()}); {consequence}"
     print(f"::warning title=commit-check::{_annotation_escape(text)}")
+
+
+def get_pr_event() -> dict[str, Any]:
+    """The ``pull_request`` object from the event payload, or ``{}``."""
+    if not is_pr_event():
+        return {}
+    event_path = os.getenv("GITHUB_EVENT_PATH")
+    if not event_path:
+        return {}
+    try:
+        with open(event_path, "r", encoding="utf-8") as f:
+            event = json.load(f)
+        return event.get("pull_request") or {}
+    except Exception as e:
+        print(f"::warning::Failed to read the PR from the event: {e}", file=sys.stderr)
+        return {}
 
 
 def get_pr_head_sha() -> str | None:
     """The pull request's head commit, from the event payload."""
-    if not is_pr_event():
-        return None
-    event_path = os.getenv("GITHUB_EVENT_PATH")
-    if not event_path:
-        return None
-    try:
-        with open(event_path, "r", encoding="utf-8") as f:
-            event = json.load(f)
-        return event.get("pull_request", {}).get("head", {}).get("sha") or None
-    except Exception as e:
-        print(f"::warning::Failed to read PR head from event: {e}", file=sys.stderr)
-        return None
+    return get_pr_event().get("head", {}).get("sha") or None
+
+
+def get_pr_base_sha() -> str | None:
+    """The base branch tip the pull request targets, from the event payload."""
+    return get_pr_event().get("base", {}).get("sha") or None
 
 
 def _rev_resolves(rev: str) -> bool:
@@ -323,10 +349,10 @@ def parse_commit_messages(output: str) -> list[str]:
     ]
 
 
-def get_messages_from_merge_ref() -> list[str]:
-    """Read PR commit messages from GitHub's synthetic merge commit."""
+def _messages_in_range(revision_range: str) -> list[str]:
+    """Commit messages in ``revision_range``, oldest first, or ``[]``."""
     result = subprocess.run(
-        ["git", "log", "--pretty=format:%B%x00", "--reverse", "HEAD^1..HEAD^2"],
+        ["git", "log", "--pretty=format:%B%x00", "--reverse", revision_range],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         encoding="utf-8",
@@ -335,41 +361,59 @@ def get_messages_from_merge_ref() -> list[str]:
     if result.returncode == 0 and result.stdout:
         return parse_commit_messages(result.stdout)
     return []
+
+
+def get_messages_from_event_range() -> list[str]:
+    """Read PR commit messages between the payload's base and head commits.
+
+    ``pull_request.base.sha`` and ``pull_request.head.sha`` name the pull
+    request whatever the workflow checked out, for ``pull_request`` and
+    ``pull_request_target`` alike; the range is usable whenever the clone
+    holds both commits.
+    """
+    base_sha, head_sha = get_pr_base_sha(), get_pr_head_sha()
+    if not (base_sha and head_sha):
+        return []
+    if not (_rev_resolves(head_sha) and _rev_resolves(base_sha)):
+        return []
+    return _messages_in_range(f"{base_sha}..{head_sha}")
+
+
+def get_messages_from_merge_ref() -> list[str]:
+    """Read PR commit messages from GitHub's synthetic merge commit.
+
+    Only meaningful on a ``pull_request`` checkout, where HEAD is
+    ``refs/pull/N/merge``. On ``pull_request_target`` HEAD is the base
+    branch: ``HEAD^2`` is then nothing, or the parent of some unrelated
+    merge on it, whose commits are not the pull request's.
+    """
+    if os.getenv("GITHUB_EVENT_NAME") != "pull_request":
+        return []
+    return _messages_in_range("HEAD^1..HEAD^2")
 
 
 def get_messages_from_head_ref(base_ref: str) -> list[str]:
     """Read PR commit messages when the workflow checks out the head SHA."""
-    result = subprocess.run(
-        [
-            "git",
-            "log",
-            "--pretty=format:%B%x00",
-            "--reverse",
-            f"origin/{base_ref}..HEAD",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        encoding="utf-8",
-        check=False,
-    )
-    if result.returncode == 0 and result.stdout:
-        return parse_commit_messages(result.stdout)
-    return []
+    return _messages_in_range(f"origin/{base_ref}..HEAD")
 
 
 def get_pr_commit_messages() -> list[str]:
     """Get all commit messages for the current PR workflow.
 
-    In pull_request-style workflows, actions/checkout checks out a synthetic merge
-    commit (HEAD = merge of PR branch into base). HEAD^1 is the base branch
-    tip, HEAD^2 is the PR branch tip. So HEAD^1..HEAD^2 gives all PR commits.
-    If the workflow explicitly checks out the PR head SHA instead, fall back to
-    diffing against origin/<base-ref> when that ref is available locally.
+    The event payload's ``base.sha..head.sha`` is tried first: it names the
+    pull request exactly, whatever was checked out. On a ``pull_request``
+    checkout HEAD is the synthetic merge commit, so ``HEAD^1..HEAD^2`` is
+    the same range. If the workflow checks out the PR head SHA instead,
+    diff against ``origin/<base-ref>`` when that ref is available locally.
     """
     if not is_pr_event():
         return []
 
     try:
+        messages = get_messages_from_event_range()
+        if messages:
+            return messages
+
         messages = get_messages_from_merge_ref()
         if messages:
             return messages
