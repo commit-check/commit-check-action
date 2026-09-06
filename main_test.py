@@ -1153,9 +1153,47 @@ class TestAddPrComments(unittest.TestCase):
             rc = main.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
 
+    def test_push_event_skips_comment_without_warning(self):
+        """A push has no PR to comment on, and that is not a problem.
+
+        It used to reach get_pr_number(), which raised, so every push run
+        with pr-comments enabled carried a "Unable to post PR comment"
+        warning annotation.
+        """
+        event_path = os.path.join(tempfile.mkdtemp(), "event.json")
+        with open(event_path, "w", encoding="utf-8") as f:
+            json.dump({"ref": "refs/heads/main", "pusher": {"name": "octocat"}}, f)
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_EVENT_NAME": "push",
+                    "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_EVENT_PATH": event_path,
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                },
+            ),
+            patch("main.get_pr_number") as mock_number,
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments([fail_scope()])
+        self.assertEqual(rc, 0)
+        mock_number.assert_not_called()
+        printed = [
+            call[0][0]
+            for call in mock_print.call_args_list
+            if call[0] and isinstance(call[0][0], str)
+        ]
+        self.assertFalse(
+            [line for line in printed if line.startswith("::warning")], printed
+        )
+
     def test_fork_pr_skips_comment_and_warns(self):
         with (
             patch("main.PR_COMMENTS_ENABLED", True),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
             patch("main.is_fork_pr", return_value=True),
             patch("main.JOB_SUMMARY_ENABLED", False),
             patch("builtins.print") as mock_print,
@@ -1170,6 +1208,7 @@ class TestAddPrComments(unittest.TestCase):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
             patch("main.PR_COMMENTS_ENABLED", True),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
             patch("main.is_fork_pr", return_value=True),
             patch("main.JOB_SUMMARY_ENABLED", True),
             patch("main.GITHUB_STEP_SUMMARY", summary_path),
@@ -1200,6 +1239,7 @@ class TestAddPrComments(unittest.TestCase):
                 {
                     "GITHUB_TOKEN": "token",
                     "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_EVENT_NAME": "pull_request",
                     "GITHUB_REF": "refs/pull/12/merge",
                 },
             ),
@@ -1233,6 +1273,7 @@ class TestAddPrComments(unittest.TestCase):
                 {
                     "GITHUB_TOKEN": "token",
                     "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_EVENT_NAME": "pull_request",
                     "GITHUB_REF": "refs/pull/12/merge",
                 },
             ),
@@ -1263,6 +1304,7 @@ class TestAddPrComments(unittest.TestCase):
                 {
                     "GITHUB_TOKEN": "token",
                     "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_EVENT_NAME": "pull_request",
                     "GITHUB_REF": "refs/pull/12/merge",
                 },
             ),
@@ -1317,6 +1359,7 @@ class TestAddPrCommentsFailures(unittest.TestCase):
                 {
                     "GITHUB_TOKEN": "token",
                     "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_EVENT_NAME": "pull_request",
                     "GITHUB_REF": "refs/pull/12/merge",
                 },
             ),

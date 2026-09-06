@@ -1102,6 +1102,12 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
     if not PR_COMMENTS_ENABLED:
         return 0
 
+    # A push has no pull request to comment on. This used to fall through to
+    # get_pr_number(), which raised, and every push run carried a warning.
+    if not is_pr_event():
+        print("Skipping PR comment: not a pull request event.")
+        return 0
+
     # Fork PRs triggered by the pull_request event receive a read-only token;
     # the GitHub API will always reject comment writes with 403.
     # pull_request_target events always have the configured token permissions.
