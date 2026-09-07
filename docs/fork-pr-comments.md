@@ -19,11 +19,14 @@ Everything except the comment. The action does not degrade on a fork PR:
 So a contributor pushing to a fork already gets the red check, the per-finding annotations
 on their diff, and the whole report in the job summary. The action says so in the log:
 
-```
+```text
 ::warning::Skipping PR comment: pull requests from forked repositories cannot write
 comments via the pull_request event (GITHUB_TOKEN is read-only for forks). The findings
 are in this job's summary and in the annotations on the Files changed tab.
 ```
+
+(with `job-summary: false` the message names the annotations alone, since there is no
+summary to read.)
 
 The run is **not** failed by this: `pr-comments: true` on a fork PR is a no-op, not an error.
 
@@ -73,6 +76,10 @@ jobs:
         with:
           ref: refs/pull/${{ github.event.number }}/merge   # the PR's commits
           fetch-depth: 0
+          # Required since checkout v7: without it the step refuses to place
+          # fork code in a pull_request_target job, and this workflow never
+          # reaches the action below.
+          allow-unsafe-pr-checkout: true
       - uses: commit-check/commit-check-action@v2
         with:
           message: true
@@ -81,11 +88,15 @@ jobs:
 ```
 
 > [!WARNING]
-> `pull_request_target` grants a writable token to a workflow whose checkout contains the
-> fork's code. commit-check only *reads* commit metadata and never executes the checked-out
-> tree, but any other step you add to this job runs with that token. Keep the job to the
-> checkout and this action, never cache or build from it, and never expose secrets to it.
-> See [GitHub's guidance on `pull_request_target`](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/).
+> This is the "pwn request" shape, and `allow-unsafe-pr-checkout: true` is the switch
+> `actions/checkout` makes you flip to acknowledge it. The job runs with the base
+> repository's `GITHUB_TOKEN`, its secrets, its cache scope and its runner, and the
+> checkout puts the fork's code on that runner. commit-check only *reads* commit metadata
+> and never executes the checked-out tree, but any other step you add to this job would.
+> Keep the job to exactly these two steps, never build, install or cache from the tree,
+> and never expose secrets to it. Read
+> [Securely using `pull_request_target`](https://gh.io/securely-using-pull_request_target)
+> before turning this on.
 
 ## What this page used to describe
 

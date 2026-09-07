@@ -1477,11 +1477,15 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
     # the GitHub API will always reject comment writes with 403.
     # pull_request_target events always have the configured token permissions.
     if is_fork_pr_with_readonly_token():
+        # Name only the surfaces this run actually produced: with
+        # job-summary: false there is no summary to send the reader to.
+        where = "in the annotations on the Files changed tab"
+        if JOB_SUMMARY_ENABLED and GITHUB_STEP_SUMMARY:
+            where = f"in this job's summary and {where}"
         msg = (
             "Skipping PR comment: pull requests from forked repositories "
             "cannot write comments via the pull_request event (GITHUB_TOKEN is "
-            "read-only for forks). The findings are in this job's summary and "
-            "in the annotations on the Files changed tab. "
+            f"read-only for forks). The findings are {where}. "
             "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md"
         )
         print(f"::warning::{msg}")

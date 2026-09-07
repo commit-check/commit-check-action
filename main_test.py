@@ -1900,6 +1900,37 @@ class TestAddPrComments(unittest.TestCase):
         self.assertIn("::warning::", printed)
         self.assertIn("read-only", printed)
 
+    def test_fork_pr_warning_names_only_the_surfaces_that_exist(self):
+        """With job-summary: false the warning must not send the reader to a
+        summary this run never wrote; the annotations are still named."""
+        summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch("main.is_fork_pr", return_value=True),
+            patch("main.JOB_SUMMARY_ENABLED", False),
+            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments([pass_scope()])
+        self.assertEqual(rc, 0)
+        printed = mock_print.call_args[0][0]
+        self.assertIn("annotations on the Files changed tab", printed)
+        self.assertNotIn("job's summary", printed)
+        self.assertFalse(os.path.exists(summary_path))
+
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch("main.is_fork_pr", return_value=True),
+            patch("main.JOB_SUMMARY_ENABLED", True),
+            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("builtins.print") as mock_print,
+        ):
+            main.add_pr_comments([pass_scope()])
+        printed = mock_print.call_args[0][0]
+        self.assertIn("in this job's summary and in the annotations", printed)
+
     def test_fork_pr_writes_job_summary_hint(self):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
