@@ -184,14 +184,14 @@ fails when a contributor did not install the hook.
 > [docs/fork-pr-comments.md](docs/fork-pr-comments.md) for details on how to enable
 > this feature for fork contributions.
 >
-> **Dependabot pull requests** are skipped the same way. GitHub runs
-> Dependabot-triggered `pull_request` workflows with a read-only token even
-> when the workflow requests `pull-requests: write`, so the permission is not
-> the problem: the action logs a `::warning::`, leaves the report in the job
-> summary, and the step still exits by the checks' result. To comment on them
-> too, use the [two-workflow pattern](docs/fork-pr-comments.md), or run on
-> `pull_request_target` for Dependabot only. Adding `dependabot[bot]` to
-> `ignore_authors` skips the checks for those PRs altogether.
+> **Dependabot pull requests** are not forks, but GitHub gives their
+> `pull_request` runs a read-only `GITHUB_TOKEN` by default. The `permissions`
+> key is honoured for them, so the `pull-requests: write` grant in the
+> [usage example](#usage) is enough; without it the action logs a
+> `::warning::` on the 403 and leaves the report in the job summary. Note that
+> Actions secrets are not available in Dependabot-triggered runs. Adding
+> `dependabot[bot]` to `ignore_authors` skips the checks for those PRs
+> altogether.
 >
 > Note: write-access to pull-requests requires the `pull-requests: write` permission.
 > See [usage example](#usage).

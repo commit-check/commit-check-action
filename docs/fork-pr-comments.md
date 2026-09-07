@@ -2,10 +2,7 @@
 
 When a pull request is opened from a **forked repository**, the `GITHUB_TOKEN` used by the
 `pull_request` event has **read-only** permissions by design (GitHub security policy).
-This means `pr-comments: true` cannot write a comment back to the PR. Pull requests
-opened by **Dependabot** are in the same position: GitHub runs Dependabot-triggered
-`pull_request` workflows with a read-only token even though the branch lives in your own
-repository, so everything below applies to them too.
+This means `pr-comments: true` cannot write a comment back to the PR.
 
 By default, commit-check-action handles this gracefully:
 

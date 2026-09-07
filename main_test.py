@@ -1843,30 +1843,6 @@ class TestAddPrComments(unittest.TestCase):
             [line for line in printed if line.startswith("::warning")], printed
         )
 
-    def test_dependabot_pr_takes_the_skip_path_and_names_dependabot(self):
-        with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch.dict(
-                os.environ,
-                {
-                    "GITHUB_EVENT_NAME": "pull_request",
-                    "GITHUB_ACTOR": "dependabot[bot]",
-                    "GITHUB_REF": "refs/pull/12/merge",
-                },
-            ),
-            patch("main.is_fork_pr", return_value=False),
-            patch("main.JOB_SUMMARY_ENABLED", False),
-            patch("main.get_pr_number") as mock_number,
-            patch("builtins.print") as mock_print,
-        ):
-            rc = main.add_pr_comments([fail_scope()])
-        self.assertEqual(rc, 0)
-        mock_number.assert_not_called()  # never reached the API
-        warning = mock_print.call_args_list[0][0][0]
-        self.assertTrue(warning.startswith("::warning::Skipping PR comment"), warning)
-        self.assertIn("Dependabot", warning)
-        self.assertNotIn("403", warning)
-
     def test_fork_pr_skips_comment_and_warns(self):
         with (
             patch("main.PR_COMMENTS_ENABLED", True),
@@ -2113,40 +2089,7 @@ class TestIsForkPrWithReadonlyToken(unittest.TestCase):
     def test_same_repo_not_fork(self):
         with (
             patch("main.is_fork_pr", return_value=False),
-            patch.dict(
-                os.environ,
-                {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_ACTOR": "octocat"},
-            ),
-        ):
-            self.assertFalse(main.is_fork_pr_with_readonly_token())
-
-    def test_dependabot_pull_request_has_a_readonly_token(self):
-        """A Dependabot branch is in the same repository, so is_fork_pr() is
-        False, yet GitHub hands its pull_request runs a read-only token. It
-        used to fall through to the API, take a 403, and tell the user to
-        grant a permission the workflow already had."""
-        with (
-            patch("main.is_fork_pr", return_value=False),
-            patch.dict(
-                os.environ,
-                {
-                    "GITHUB_EVENT_NAME": "pull_request",
-                    "GITHUB_ACTOR": "dependabot[bot]",
-                },
-            ),
-        ):
-            self.assertTrue(main.is_fork_pr_with_readonly_token())
-
-    def test_dependabot_pull_request_target_has_a_write_token(self):
-        with (
-            patch("main.is_fork_pr", return_value=False),
-            patch.dict(
-                os.environ,
-                {
-                    "GITHUB_EVENT_NAME": "pull_request_target",
-                    "GITHUB_ACTOR": "dependabot[bot]",
-                },
-            ),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
         ):
             self.assertFalse(main.is_fork_pr_with_readonly_token())
 

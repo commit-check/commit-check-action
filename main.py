@@ -1395,26 +1395,14 @@ def is_fork_pr() -> bool:
         return False
 
 
-#: The actor GitHub reports for pull requests Dependabot opens.
-DEPENDABOT_ACTOR = "dependabot[bot]"
-
-
 def is_fork_pr_with_readonly_token() -> bool:
-    """Returns True when this run's GITHUB_TOKEN cannot write to the pull request.
+    """Returns True when the PR is from a fork AND the event has a read-only token.
 
     Under the pull_request event, GITHUB_TOKEN is read-only for fork PRs.
-    GitHub runs Dependabot-triggered pull_request workflows with a read-only
-    token as well, although a Dependabot branch lives in the repository
-    itself, so those runs take the same path: judged by ``is_fork_pr()``
-    alone the action tried to comment, got a 403, and advised granting
-    ``pull-requests: write`` — which the workflow had already done.
-
     Under pull_request_target, GITHUB_TOKEN has the workflow's configured
-    permissions regardless of where, or from whom, the PR came.
+    permissions regardless of whether the PR is from a fork.
     """
-    if os.getenv("GITHUB_EVENT_NAME", "") == "pull_request_target":
-        return False
-    return is_fork_pr() or os.getenv("GITHUB_ACTOR", "") == DEPENDABOT_ACTOR
+    return is_fork_pr() and os.getenv("GITHUB_EVENT_NAME", "") != "pull_request_target"
 
 
 def get_pr_number() -> int:
@@ -1483,16 +1471,16 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         print("Skipping PR comment: not a pull request event.")
         return 0
 
-    # Fork PRs and Dependabot PRs triggered by the pull_request event receive
-    # a read-only token; the GitHub API will always reject comment writes with
-    # 403. pull_request_target events always have the configured permissions.
+    # Fork PRs triggered by the pull_request event receive a read-only token;
+    # the GitHub API will always reject comment writes with 403.
+    # pull_request_target events always have the configured token permissions.
     if is_fork_pr_with_readonly_token():
         msg = (
-            "Skipping PR comment: GITHUB_TOKEN is read-only for this run. "
-            "Pull requests from forked repositories, and pull requests opened "
-            "by Dependabot, cannot write comments via the pull_request event. "
+            "Skipping PR comment: pull requests from forked repositories "
+            "cannot write comments via the pull_request event (GITHUB_TOKEN is "
+            "read-only for forks). "
             "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md "
-            "for how to enable PR comments on them."
+            "for how to enable PR comments on fork PRs."
         )
         print(f"::warning::{msg}")
         if JOB_SUMMARY_ENABLED and GITHUB_STEP_SUMMARY:
@@ -1500,11 +1488,10 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
                 f.write(
                     "\n---\n"
                     "### \u2139\ufe0f PR Comment Skipped\n\n"
-                    "Pull requests from forked repositories, and pull requests "
-                    "opened by Dependabot, cannot write comments using the "
-                    "`pull_request` event because `GITHUB_TOKEN` has read-only "
-                    "permissions.\n\n"
-                    "> **\U0001f4a1 Tip:** To enable PR comments on them, see "
+                    "Pull requests from forked repositories cannot write comments "
+                    "using the `pull_request` event because `GITHUB_TOKEN` has "
+                    "read-only permissions.\n\n"
+                    "> **\U0001f4a1 Tip:** To enable PR comments on fork PRs, see "
                     "[Enabling PR Comments on Fork Pull Requests]"
                     "(https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md).\n"
                 )
