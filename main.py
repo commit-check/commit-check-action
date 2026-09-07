@@ -9,9 +9,7 @@ them to three output surfaces:
 * **job summary** — a Markdown policy report table
 * **PR comment** — a compact Markdown summary (idempotently updated)
 
-and exposes two action outputs: ``result`` (the check data as JSON) and
-``report`` (the rendered Markdown, for workflows that post the comment
-themselves).
+and exposes the check data as JSON in the ``result`` action output.
 """
 
 import json
@@ -1240,10 +1238,6 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   ``fix: handle `None` \| retry`` rather than `fix: handle `None` | retry`.
 # - The step log renders the same tree (_render_scopes); it adds the docs URL,
 #   which the Markdown report already carries on the rule ID in the table.
-# - The whole report, marker to footer, is also written verbatim to the
-#   `report` action output beside the JSON `result`, so a workflow_run job can
-#   post it for a fork pull request and produce the same comment this action
-#   would have posted itself.
 # ---------------------------------------------------------------------------
 
 
@@ -1344,20 +1338,11 @@ def add_job_summary(results: list[ScopeResult]) -> int:
 
 
 def set_result_output(results: list[ScopeResult]) -> None:
-    """Expose the results as the ``result`` and ``report`` action outputs.
+    """Expose the structured results as the ``result`` action output.
 
-    ``result`` is the structured JSON downstream steps gate on. ``report`` is
-    the rendered Markdown — the very text the job summary and the PR comment
-    show — for the one caller that cannot post it itself: a ``pull_request``
-    run on a fork has a read-only token, so it hands the report to a
-    ``workflow_run`` job that posts it verbatim (docs/fork-pr-comments.md).
-    Shipping the text rather than making that job re-render the JSON keeps
-    the fork comment identical to every other one, marker and footer
-    included, so a later run with ``pr-comments: true`` adopts it.
-
-    Both values are written through :func:`_write_output`, whose per-write
-    random delimiter keeps a line of user text (a commit body line reading
-    ``EOF``, say) from closing the heredoc early.
+    Written through :func:`_write_output`, whose per-write random delimiter
+    keeps a line of user text (a commit subject reading ``EOF``, say) from
+    closing the heredoc early.
     """
     output_path = os.getenv("GITHUB_OUTPUT")
     if not output_path:
@@ -1376,7 +1361,6 @@ def set_result_output(results: list[ScopeResult]) -> None:
     }
     with open(output_path, "a", encoding="utf-8") as f:
         _write_output(f, "result", json.dumps(payload, indent=2))
-        _write_output(f, "report", render_report(results))
 
 
 def _write_output(f: Any, name: str, value: str) -> None:
@@ -1385,9 +1369,9 @@ def _write_output(f: Any, name: str, value: str) -> None:
     The runner reads lines up to the first one equal to the delimiter and
     rejects the whole file if it never finds one, which fails the step and
     drops every output written after the bad one. A fixed ``EOF`` delimiter
-    is therefore unsafe for the report: on a failing rule it quotes the
-    commit message in full, and a body line reading ``EOF`` is legal. So the
-    delimiter is random per write, the shape actions/github-script uses.
+    is therefore unsafe: the JSON quotes commit subjects and error text as
+    they are, and a subject reading ``EOF`` is legal. So the delimiter is
+    random per write, the shape actions/github-script uses.
     """
     delimiter = f"ghadelimiter_{uuid.uuid4()}"
     while delimiter in value:  # pragma: no cover - 122 random bits
@@ -1496,9 +1480,9 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         msg = (
             "Skipping PR comment: pull requests from forked repositories "
             "cannot write comments via the pull_request event (GITHUB_TOKEN is "
-            "read-only for forks). "
-            "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md "
-            "for how to enable PR comments on fork PRs."
+            "read-only for forks). The findings are in this job's summary and "
+            "in the annotations on the Files changed tab. "
+            "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md"
         )
         print(f"::warning::{msg}")
         if JOB_SUMMARY_ENABLED and GITHUB_STEP_SUMMARY:
@@ -1508,9 +1492,10 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
                     "### \u2139\ufe0f PR Comment Skipped\n\n"
                     "Pull requests from forked repositories cannot write comments "
                     "using the `pull_request` event because `GITHUB_TOKEN` has "
-                    "read-only permissions.\n\n"
-                    "> **\U0001f4a1 Tip:** To enable PR comments on fork PRs, see "
-                    "[Enabling PR Comments on Fork Pull Requests]"
+                    "read-only permissions. The report above and the annotations "
+                    "on the Files changed tab are unaffected.\n\n"
+                    "> **\U0001f4a1 Tip:** see "
+                    "[Fork pull requests]"
                     "(https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md).\n"
                 )
         return 0

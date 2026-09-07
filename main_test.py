@@ -1777,20 +1777,19 @@ class TestSetResultOutput(unittest.TestCase):
         with open(output_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
         self.assertRegex(content, r"(?m)^result<<ghadelimiter_[0-9a-f-]{36}$")
-        self.assertRegex(content, r"(?m)^report<<ghadelimiter_[0-9a-f-]{36}$")
         self.assertIn('"status": "fail"', content)
         self.assertIn('"label": "Commit 1/1"', content)
         outputs = read_github_output(output_path)
-        self.assertEqual(set(outputs), {"result", "report"})
+        self.assertEqual(set(outputs), {"result"})
         self.assertEqual(json.loads(outputs["result"])["status"], "fail")
 
     def test_output_survives_an_eof_line_in_the_commit_body(self):
         """A commit body line reading ``EOF`` must not end the heredoc.
 
-        On a failing message rule the report quotes the whole message, so
-        that line lands in the output verbatim; with a fixed ``EOF``
-        delimiter the runner rejected the file, failed the step and dropped
-        ``report``. The runner-faithful parser raises on such a file.
+        The JSON quotes the checked value and the error text as they are, so
+        such a line lands in the output verbatim; with a fixed ``EOF``
+        delimiter the runner rejected the whole file and failed the step.
+        The runner-faithful parser raises on such a file.
         """
         results = [
             main.ScopeResult(
@@ -1810,29 +1809,11 @@ class TestSetResultOutput(unittest.TestCase):
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
             main.set_result_output(results)
         outputs = read_github_output(output_path)
-        self.assertEqual(json.loads(outputs["result"])["status"], "fail")
-        self.assertIn("EOF", outputs["report"])
-        self.assertEqual(
-            outputs["report"].splitlines(), main.render_report(results).splitlines()
-        )
-
-    @pin_version
-    def test_report_output_is_the_rendered_report_verbatim(self):
-        """``report`` is what a workflow_run job posts for a fork PR, so it
-        has to be the same bytes the action would post itself — marker,
-        title, table and footer — not a re-rendering."""
-        results = [fail_scope("Commit 1/1", sha=SHA_B), pass_scope("Branch")]
-        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
-        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
-            main.set_result_output(results)
-        outputs = read_github_output(output_path)
-        self.assertEqual(set(outputs), {"result", "report"})
-        self.assertEqual(outputs["report"], main.render_report(results))
-        self.assertTrue(outputs["report"].startswith(main.COMMENT_MARKER))
-        self.assertIn("| Scope | Checked value | Failed checks |", outputs["report"])
-        self.assertTrue(outputs["report"].endswith(FOOTER))
-        # The two outputs describe the same run.
-        self.assertEqual(json.loads(outputs["result"])["status"], "fail")
+        payload = json.loads(outputs["result"])
+        self.assertEqual(payload["status"], "fail")
+        check = payload["scopes"][0]["checks"][0]
+        self.assertEqual(check["value"], "bad Subject\n\nEOF\r\nrest of body")
+        self.assertEqual(check["suggest"], "Use\nEOF\nnow")
 
     def test_scopes_carry_the_full_sha_and_an_unchanged_label(self):
         """Downstream steps keep matching on ``label``; the hash is a new

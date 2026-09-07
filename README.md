@@ -29,7 +29,7 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 * [GitHub Action Job Summary](#github-action-job-summary)
 * [GitHub Pull Request Comments](#github-pull-request-comments)
 * [Advanced Configuration](#advanced-configuration)
-* [Fork PR Comments](docs/fork-pr-comments.md)
+* [Fork Pull Requests](docs/fork-pr-comments.md)
 * [Badging Your Repository](#badging-your-repository)
 * [Versioning](#versioning)
 
@@ -106,8 +106,8 @@ can see.
 | | GitHub Action (this repo) | [pre-commit hook](https://github.com/commit-check/commit-check#use-with-pre-commit) | [Commit Check GitHub App](https://github.com/marketplace/commit-check) |
 |---|---|---|---|
 | **Where it runs** | In your workflow, on the runner, after the push | On the contributor's machine, at `git commit` / `git push` | Hosted by commit-check; installed on the repository, no workflow file |
-| **What it checks** | Every PR commit's message, plus the PR title, branch and author checks you enable; renders a job summary, annotations, a PR comment and the `result` / `report` outputs | Message (`commit-msg` stage), branch, author; tag, force-push and files (`pre-push`) — one commit at a time, before it exists | Every commit of a push or pull request: message, branch, author (the PR title only in squash mode); reported as one **Commit Check** check run per commit |
-| **When to pick it** | You want enforcement in CI that a contributor cannot skip, per-rule outputs for later steps, or you run on GitHub Enterprise Server / need `CCHK_*` overrides | You want the fastest feedback and to stop bad commits before they are pushed; pair it with the Action, since hooks are opt-in | You want zero YAML and no Actions minutes; fork PRs get a check run without the [two-workflow pattern](docs/fork-pr-comments.md) (no PR comment, though) |
+| **What it checks** | Every PR commit's message, plus the PR title, branch and author checks you enable; renders a job summary, annotations, a PR comment and the `result` output | Message (`commit-msg` stage), branch, author; tag, force-push and files (`pre-push`) — one commit at a time, before it exists | Every commit of a push or pull request: message, branch, author (the PR title only in squash mode); reported as one **Commit Check** check run per commit |
+| **When to pick it** | You want enforcement in CI that a contributor cannot skip, per-rule outputs for later steps, or you run on GitHub Enterprise Server / need `CCHK_*` overrides | You want the fastest feedback and to stop bad commits before they are pushed; pair it with the Action, since hooks are opt-in | You want zero YAML and no Actions minutes, or feedback on [fork pull requests](docs/fork-pr-comments.md) without the Action's read-only-token limits |
 
 Most teams pair the pre-commit hook (fast, local) with the Action (enforced):
 the hook catches a bad message before it is pushed, and the Action is why CI
@@ -180,9 +180,10 @@ fails when a contributor did not install the hook.
 > [!NOTE]
 > `pr-comments` is disabled by default.
 >
-> PR comments are skipped for pull requests from forked repositories. See
-> [docs/fork-pr-comments.md](docs/fork-pr-comments.md) for details on how to enable
-> this feature for fork contributions.
+> PR comments are skipped for pull requests from forked repositories, whose
+> `GITHUB_TOKEN` is read-only. Everything else still works there: the check
+> status, the annotations and the job summary. See
+> [Fork pull requests](docs/fork-pr-comments.md).
 >
 > **Dependabot pull requests** are not forks, but GitHub gives their
 > `pull_request` runs a read-only `GITHUB_TOKEN` by default. The `permissions`
@@ -313,28 +314,6 @@ a `status` like the ones above, a `sha` (the full hash of the commit a
 check outcomes (`rule_id`, `check`, `status`, `value`, `error`, `suggest`,
 `fix`, `docs_url`) exactly as produced by `commit-check --format json`, so
 downstream jobs can build their own reports or gate on individual rules.
-
-### `report`
-
-The rendered Markdown report — byte for byte the text the
-[job summary](#github-action-job-summary) and the
-[PR comment](#github-pull-request-comments) show, opening with the
-`<!-- commit-check-action -->` marker. It exists for workflows that have to post
-the comment themselves: a `pull_request` run on a fork has a read-only token, so
-it saves the report as an artifact and a `workflow_run` job posts it verbatim —
-see [Fork PR Comments](docs/fork-pr-comments.md). Because the text is the
-action's own, that comment is later found and edited in place like any other.
-
-```yaml
-- name: Save the report
-  if: always() && steps.commit-check.outputs.report != ''
-  env:
-    REPORT: ${{ steps.commit-check.outputs.report }}
-  run: printf '%s' "$REPORT" > report.md
-```
-
-Treat `report` as text to display, not data to parse; `result` is the contract
-for that.
 
 ## GitHub Action Job Summary
 
@@ -541,10 +520,13 @@ By default, commit-check-action handles this gracefully:
 - A **notice is added to the Job Summary** explaining why and how to fix it
 - The commit checks themselves **still run normally**
 
-> **For most projects, this is sufficient** — contributors can see check results in the
-> action Job Summary. But if you *must* have PR comments on fork contributions, see
-> the **[Fork PR Comments](docs/fork-pr-comments.md)** documentation for
-> two recommended approaches with ready-to-use workflow examples.
+> **For most projects, this is sufficient** — a fork contributor already gets the red
+> check, the per-finding annotations on their diff and the full report in the job
+> summary. If you want feedback on the pull request itself, the
+> [Commit Check GitHub App](https://github.com/marketplace/commit-check) posts a check
+> run per commit with no workflow file (free on public repositories), or you can run
+> this action on `pull_request_target`. Both are covered in
+> **[Fork pull requests](docs/fork-pr-comments.md)**.
 
 ## Badging Your Repository
 
