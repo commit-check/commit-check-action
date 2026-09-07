@@ -1,155 +1,77 @@
-# Fork PR Comments
+# Fork Pull Requests
 
-When a pull request is opened from a **forked repository**, the `GITHUB_TOKEN` used by the
-`pull_request` event has **read-only** permissions by design (GitHub security policy).
-This means `pr-comments: true` cannot write a comment back to the PR.
+When a pull request comes from a **forked repository**, the `GITHUB_TOKEN` of the
+`pull_request` event is **read-only** by design (GitHub security policy). That single
+restriction is worth understanding precisely, because it costs less than it sounds like.
 
-By default, commit-check-action handles this gracefully:
+## What a fork contributor still sees
 
-- PR comment writing is **skipped** with a `::warning::` message in the logs
-- A **notice is added to the Job Summary** explaining why and how to fix it
-- The commit checks themselves **still run normally**
+Everything except the comment. The action does not degrade on a fork PR:
 
-> **For most projects, this is sufficient** — contributors can see check results in the
-> action Job Summary. But if you *must* have PR comments on fork contributions, there
-> are two recommended approaches.
+| Surface | Fork PR | Why |
+|---|---|---|
+| The check's pass/fail status | ✅ works | the job's own conclusion |
+| `::error` annotations on the **Files changed** tab | ✅ works | workflow commands are written by the runner, not the API |
+| The **job summary** — the full report table and details | ✅ works | `$GITHUB_STEP_SUMMARY` is a file on the runner |
+| The `result` output for later steps | ✅ works | `$GITHUB_OUTPUT` is a file on the runner |
+| A **PR comment** | ❌ skipped | writing a comment needs the API, and the token is read-only |
 
----
-
-## Option 1: Two-workflow pattern (recommended)
-
-This is the **official GitHub-recommended best practice** for writing PR comments from
-fork PRs. It uses the [`workflow_run`](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_run)
-event with **no security risks**.
-
-> 📁 Ready-to-use files: [`examples/commit-check-workflow-a.yml`](../examples/commit-check-workflow-a.yml)
-> and [`examples/commit-check-workflow-b.yml`](../examples/commit-check-workflow-b.yml)
-
-**How it works:**
+So a contributor pushing to a fork already gets the red check, the per-finding annotations
+on their diff, and the whole report in the job summary. The action says so in the log:
 
 ```
-  pull_request          workflow_run
-      │                      │
-      ▼                      ▼
-┌──────────────┐     ┌──────────────────┐
-│ Workflow A   │     │ Workflow B       │
-│ (checks)     │────►│ (comment writer) │
-│              │     │                  │
-│ Token: READ  │     │ Token: WRITE     │
-│ Saves result │     │ Reads artifact   │
-│ as artifact  │     │ Posts PR comment │
-└──────────────┘     └──────────────────┘
+::warning::Skipping PR comment: pull requests from forked repositories cannot write
+comments via the pull_request event (GITHUB_TOKEN is read-only for forks). The findings
+are in this job's summary and in the annotations on the Files changed tab.
 ```
 
-### Workflow A
+The run is **not** failed by this: `pr-comments: true` on a fork PR is a no-op, not an error.
 
-`.github/workflows/commit-check.yml` (triggered by `pull_request`):
+## If you want feedback on the pull request itself
+
+### Install the Commit Check GitHub App (recommended)
+
+The [Commit Check GitHub App](https://github.com/marketplace/commit-check) is not bound by
+the `pull_request` token at all: it receives the `pull_request` webhook on the **base**
+repository and acts with its own installation token. Fork pull requests are ordinary
+pull requests to it.
+
+- **No workflow file.** Install it on the repository and it runs.
+- **One check run per commit**, with the failing value, the rule and the suggested fix.
+  A check run is a first-class PR surface: it shows in the merge box and links straight
+  to the details.
+- **Free on public repositories and personal accounts** — which is where fork pull
+  requests happen. Private organization repositories need the Team plan.
+
+It reports as a check run, not as a comment. If your goal is "the contributor sees what
+failed, on the pull request, without me writing YAML", this is the shortest path.
+
+You can run the App and this action together: the App covers fork pull requests, the
+action gives you enforcement you control in CI, per-rule outputs for later steps, and
+`CCHK_*` overrides.
+
+### Or run on `pull_request_target`
+
+If you cannot install a GitHub App — GitHub Enterprise Server, or an organization policy
+that forbids it — `pull_request_target` runs in the context of the base repository, so
+`GITHUB_TOKEN` has the permissions your workflow asks for and `pr-comments: true` works
+on fork pull requests.
 
 ```yaml
-name: Commit Check
-
-on:
-  pull_request:
-    branches: ["main"]
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: commit-check/commit-check-action@v2
-        with:
-          message: true
-          branch: true
-          pr-comments: false     # comments handled by Workflow B
-          job-summary: true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: commit-check-result-${{ github.event.number }}
-          path: result.txt      # saved for Workflow B
-```
-
-> 📄 Full file: [`examples/commit-check-workflow-a.yml`](../examples/commit-check-workflow-a.yml)
-
-### Workflow B
-
-`.github/workflows/commit-check-comment.yml` (triggered by `workflow_run`):
-
-```yaml
-name: Commit Check Comment
-
-on:
-  workflow_run:
-    workflows: ["Commit Check"]   # must match Workflow A's name exactly
-    types: [completed]
-
-jobs:
-  comment:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      actions: read               # needed to download artifacts
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: commit-check-result-${{ github.event.workflow_run.pull_requests[0].number }}
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-      - name: Read result and post PR comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // See examples/commit-check-workflow-b.yml for full script
-            const fs = require('fs');
-            const prNumber = ${{ github.event.workflow_run.pull_requests[0].number }};
-            const resultText = fs.readFileSync('result.txt', 'utf8').trim();
-            const body = resultText
-              ? '# Commit-Check ❌\n```\n' + resultText + '\n```'
-              : '# Commit-Check ✔️';
-            // Creates or updates the matching PR comment
-```
-
-> 📄 Full file: [`examples/commit-check-workflow-b.yml`](../examples/commit-check-workflow-b.yml)
-
-### Key security benefits
-
-- Workflow B runs in the **base repository's context**, so `GITHUB_TOKEN` has full write
-  permissions (you explicitly grant `pull-requests: write`)
-- Workflow B **does not checkout the PR code**, so untrusted fork code never runs
-  with elevated permissions
-- The artifact only contains `result.txt` — no code or secrets
-
----
-
-## Option 2: pull_request_target (advanced, use with caution)
-
-If you understand the security implications, you can use
-[`pull_request_target`](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request_target)
-which runs in the base repository's context with **write token access**.
-
-> **⚠️ Security warning:** Never check out (`actions/checkout`) the PR's HEAD commit
-> when using `pull_request_target`. Always check out the base branch or use the
-> default merge commit. Otherwise, fork code could exfiltrate your repository's secrets.
-
-```yaml
-name: Commit Check
-
 on:
   pull_request_target:
-    branches: ["main"]
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   commit-check:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
-      # SAFE: checkout the merge commit, NOT the PR head
       - uses: actions/checkout@v7
         with:
+          ref: refs/pull/${{ github.event.number }}/merge   # the PR's commits
           fetch-depth: 0
       - uses: commit-check/commit-check-action@v2
         with:
@@ -158,9 +80,18 @@ jobs:
           pr-comments: true
 ```
 
-> ✅ With `pull_request_target`, `pr-comments: true` **does work** on fork PRs —
-> the token has the workflow's configured permissions regardless of whether the PR
-> is from a fork.
->
-> **When to use this:** Only if the two-workflow pattern is too complex for your setup
-> and you have thoroughly reviewed the security implications.
+> [!WARNING]
+> `pull_request_target` grants a writable token to a workflow whose checkout contains the
+> fork's code. commit-check only *reads* commit metadata and never executes the checked-out
+> tree, but any other step you add to this job runs with that token. Keep the job to the
+> checkout and this action, never cache or build from it, and never expose secrets to it.
+> See [GitHub's guidance on `pull_request_target`](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/).
+
+## What this page used to describe
+
+Earlier versions documented a two-workflow pattern: workflow A runs the checks on
+`pull_request` and uploads an artifact, workflow B picks it up on `workflow_run` and posts
+the comment with a writable token. It worked, but it cost two workflow files, an artifact
+round trip, `actions: read`, and smuggling the PR number through the artifact — all to move
+information the contributor could already see into a comment. The App does the same job with
+no YAML at all, so the pattern and its example workflows have been removed.

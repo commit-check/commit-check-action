@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -1727,6 +1728,47 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertIn("❌", content)
 
 
+def read_github_output(path: str) -> dict[str, str]:
+    """Parse a ``GITHUB_OUTPUT`` file the way the runner does.
+
+    A port of the loop in actions/runner's ``FileCommandManager``: a line is
+    either ``name=value`` or ``name<<delimiter``, and a heredoc value runs up
+    to the first line equal to the delimiter (CRLF counts as a newline).
+    Anything else raises, as it fails the step on a real runner, so a test
+    using this parser cannot pass on a file the runner would reject.
+    """
+    with open(path, encoding="utf-8", newline="") as file_obj:
+        lines = file_obj.read().splitlines()
+    outputs: dict[str, str] = {}
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        if not line:
+            continue
+        equals, heredoc = line.find("="), line.find("<<")
+        if equals >= 0 and (heredoc < 0 or equals < heredoc):
+            name, value = line.split("=", 1)
+            outputs[name] = value
+            continue
+        if heredoc < 0:
+            raise ValueError(f"Invalid format '{line}'")
+        name, delimiter = line.split("<<", 1)
+        if not delimiter:
+            raise ValueError("Invalid format: empty delimiter")
+        body: list[str] = []
+        while True:
+            if index >= len(lines):
+                raise ValueError(f"Matching delimiter not found '{delimiter}'")
+            current = lines[index]
+            index += 1
+            if current == delimiter:
+                break
+            body.append(current)
+        outputs[name] = "\n".join(body)
+    return outputs
+
+
 class TestSetResultOutput(unittest.TestCase):
     def test_writes_heredoc_json(self):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
@@ -1734,10 +1776,44 @@ class TestSetResultOutput(unittest.TestCase):
             main.set_result_output([fail_scope("Commit 1/1"), pass_scope("Branch")])
         with open(output_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("result<<EOF", content)
+        self.assertRegex(content, r"(?m)^result<<ghadelimiter_[0-9a-f-]{36}$")
         self.assertIn('"status": "fail"', content)
         self.assertIn('"label": "Commit 1/1"', content)
-        self.assertTrue(content.strip().endswith("EOF"))
+        outputs = read_github_output(output_path)
+        self.assertEqual(set(outputs), {"result"})
+        self.assertEqual(json.loads(outputs["result"])["status"], "fail")
+
+    def test_output_survives_an_eof_line_in_the_commit_body(self):
+        """A commit body line reading ``EOF`` must not end the heredoc.
+
+        The JSON quotes the checked value and the error text as they are, so
+        such a line lands in the output verbatim; with a fixed ``EOF``
+        delimiter the runner rejected the whole file and failed the step.
+        The runner-faithful parser raises on such a file.
+        """
+        results = [
+            main.ScopeResult(
+                label="Commit 1/1",
+                checks=[
+                    make_check(
+                        "message",
+                        status="fail",
+                        value="bad Subject\n\nEOF\r\nrest of body",
+                        error="Subject must be Conventional Commits.",
+                        suggest="Use\nEOF\nnow",
+                    )
+                ],
+            )
+        ]
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
+            main.set_result_output(results)
+        outputs = read_github_output(output_path)
+        payload = json.loads(outputs["result"])
+        self.assertEqual(payload["status"], "fail")
+        check = payload["scopes"][0]["checks"][0]
+        self.assertEqual(check["value"], "bad Subject\n\nEOF\r\nrest of body")
+        self.assertEqual(check["suggest"], "Use\nEOF\nnow")
 
     def test_scopes_carry_the_full_sha_and_an_unchanged_label(self):
         """Downstream steps keep matching on ``label``; the hash is a new
@@ -1745,9 +1821,7 @@ class TestSetResultOutput(unittest.TestCase):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
             main.set_result_output([fix_scope("Commit 2/3", sha=SHA_B), pass_scope()])
-        with open(output_path, encoding="utf-8") as file_obj:
-            body = file_obj.read().removeprefix("result<<EOF\n").removesuffix("\nEOF\n")
-        payload = json.loads(body)
+        payload = json.loads(read_github_output(output_path)["result"])
         self.assertEqual(payload["scopes"][0]["label"], "Commit 2/3")
         self.assertEqual(payload["scopes"][0]["sha"], SHA_B)
         self.assertEqual(
@@ -2424,8 +2498,7 @@ class TestWarnedScopes(unittest.TestCase):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
             main.set_result_output([pass_scope("PR title"), warn_scope()])
-        with open(output_path, encoding="utf-8") as file_obj:
-            payload = json.loads(file_obj.read().split("\n", 1)[1].rsplit("EOF", 1)[0])
+        payload = json.loads(read_github_output(output_path)["result"])
         self.assertEqual(payload["status"], "warn")
         self.assertEqual([s["status"] for s in payload["scopes"]], ["pass", "warn"])
 
@@ -2540,10 +2613,9 @@ class TestSkipCompletionSemantics(unittest.TestCase):
         try:
             with patch.dict(os.environ, {"GITHUB_OUTPUT": out_path}):
                 main.set_result_output([skip_scope(), skip_scope("Branch")])
-            written = open(out_path, encoding="utf-8").read()
+            payload = json.loads(read_github_output(out_path)["result"])
         finally:
             os.unlink(out_path)
-        payload = json.loads(written.split("result<<EOF\n", 1)[1].rsplit("\nEOF", 1)[0])
         self.assertEqual(payload["status"], "skip")
 
     def test_add_job_summary_returns_success_for_a_skipped_run(self):
@@ -2558,6 +2630,84 @@ class TestSkipCompletionSemantics(unittest.TestCase):
         finally:
             os.unlink(summary_path)
         self.assertEqual(rc, 0)
+
+
+class TestMarkdownEscaping(unittest.TestCase):
+    """User text in the report must not break the Markdown that carries it.
+
+    Commit subjects quote code, branch names and author names may contain
+    pipes; the table cell and the fenced details block have to survive both.
+    The checks below come from a real ``commit-check --format json`` run on
+    the subject ``fix: handle `None` | retry`` (all rules pass on it, so the
+    CC001 outcome is flipped to make a table row).
+    """
+
+    #: Splits a table row on the pipes that are cell separators, not on the
+    #: escaped ones inside a cell.
+    CELL_SEPARATOR = re.compile(r"(?<!\\)\|")
+
+    def _scope(self, value: str) -> main.ScopeResult:
+        return main.ScopeResult(
+            label="Commit 1/1",
+            sha=SHA_B,
+            checks=[
+                make_check(
+                    "message",
+                    status="fail",
+                    rule_id="CC001",
+                    value=value,
+                    error="The commit message should follow Conventional Commits.",
+                    docs_url="https://commit-check.com/rules/#cc001",
+                ),
+                make_check("subject_imperative", rule_id="CC003", value=value),
+            ],
+        )
+
+    def test_markdown_code_wraps_backticks_and_escapes_pipes(self):
+        cases = {
+            "plain": "`plain`",
+            "a|b": "`a\\|b`",
+            "fix: handle `None` | retry": "``fix: handle `None` \\| retry``",
+            "`x`": "`` `x` ``",
+            "``x``": "``` ``x`` ```",
+            "x`": "`` x` ``",
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(main._markdown_code(value), expected)
+
+    def test_table_row_with_backticks_and_a_pipe_keeps_three_cells(self):
+        table = main._markdown_table([self._scope("fix: handle `None` | retry")])
+        row = table.splitlines()[2]
+        # Strip the outer pipes before counting: "| a | b | c |" -> 3 cells.
+        cells = self.CELL_SEPARATOR.split(row.strip().strip("|"))
+        self.assertEqual(len(cells), 3, row)
+        self.assertEqual(cells[1].strip(), "``fix: handle `None` \\| retry``")
+        self.assertEqual(
+            cells[2].strip(), "[CC001 message](https://commit-check.com/rules/#cc001)"
+        )
+
+    def test_truncated_value_with_an_unbalanced_backtick_still_closes(self):
+        """The 60-char cap can cut inside a backtick run; the fence is chosen
+        after truncation, so the span still closes at the right place."""
+        value = "fix: " + "`x`, " * 20
+        truncated = main._scope_value(self._scope(value))
+        self.assertTrue(truncated.endswith("`x..."), truncated)  # cut mid-span
+        cell = main._markdown_code(truncated)
+        self.assertEqual(cell, f"``{truncated}``")
+
+    def test_details_fence_outgrows_a_triple_backtick_in_the_value(self):
+        details = main._markdown_details([self._scope("docs: show ``` usage")])
+        lines = details.splitlines()
+        self.assertEqual(lines[3], "````text")
+        self.assertEqual(lines[-3], "````")
+        self.assertIn("value: docs: show ``` usage", details)
+
+    def test_details_fence_stays_three_backticks_for_ordinary_values(self):
+        details = main._markdown_details([pass_scope(value="feat: add `login`")])
+        lines = details.splitlines()
+        self.assertEqual(lines[3], "```text")
+        self.assertEqual(lines[-3], "```")
 
 
 class TestSkipRenderingEdgeCases(unittest.TestCase):
@@ -2586,3 +2736,77 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("1 of 2 checks passed, 1 skipped", out)
         self.assertNotIn("all checks passed", out)
+
+
+# ---------------------------------------------------------------------------
+# Integration: the real commit-check binary
+# ---------------------------------------------------------------------------
+
+#: The JSON shape ``make_check()`` hard-codes and every renderer reads.
+CHECK_KEYS = {
+    "rule_id",
+    "check",
+    "status",
+    "value",
+    "error",
+    "suggest",
+    "fix",
+    "docs_url",
+}
+STATUSES = {"pass", "fail", "warn", "skip"}
+
+
+@unittest.skipUnless(
+    shutil.which("commit-check"),
+    "commit-check CLI not on PATH (CI installs it from requirements.txt)",
+)
+class TestRealCommitCheckBinary(unittest.TestCase):
+    """Run the pinned commit-check once, unmocked.
+
+    Every other test patches ``main.subprocess.run`` and feeds back the JSON
+    shape ``make_check()`` hard-codes, so a renamed key or a new status in
+    the CLI would leave the whole suite green while the action rendered "—"
+    for every value. This is the one place that drift can fail a build. CI
+    installs requirements.txt, so the binary is always present there; the
+    skip only spares a contributor running the suite without it.
+    """
+
+    def _run(self, message: str) -> tuple[int, dict]:
+        rc, data, raw = main.run_check_json(["--message"], input_text=message)
+        self.assertIsInstance(data, dict, f"CLI did not emit JSON:\n{raw}")
+        assert data is not None  # for the type checker; asserted above
+        self.assertIn("checks", data)
+        self.assertTrue(data["checks"], "CLI reported no checks")
+        for check in data["checks"]:
+            self.assertEqual(set(check), CHECK_KEYS, check)
+            self.assertIn(check["status"], STATUSES, check)
+            self.assertRegex(check["rule_id"], r"^CC\d{3}$")
+            self.assertTrue(
+                check["docs_url"].startswith("https://commit-check.com/rules/#")
+            )
+        return rc, data
+
+    def test_passing_message(self):
+        rc, data = self._run("fix: handle the empty case\n")
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "pass")
+        self.assertTrue(all(c["status"] == "pass" for c in data["checks"]))
+        scope = main.ScopeResult(label="Commit 1/1", checks=data["checks"])
+        self.assertEqual(scope.status, "pass")
+        self.assertEqual(main.overall_status([scope]), "pass")
+
+    def test_failing_message(self):
+        rc, data = self._run("Bad subject\n")
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "fail")
+        failed = [c for c in data["checks"] if c["status"] == "fail"]
+        self.assertEqual([c["rule_id"] for c in failed], ["CC001"])
+        self.assertTrue(failed[0]["error"])
+        scope = main.ScopeResult(label="Commit 1/1", checks=data["checks"])
+        self.assertEqual(scope.status, "fail")
+        self.assertEqual(main.overall_status([scope]), "fail")
+        # The rendered report must carry the rule link the CLI supplied.
+        self.assertIn(
+            "[CC001 message](https://commit-check.com/rules/#cc001)",
+            main.render_report([scope]),
+        )

@@ -8,12 +8,16 @@ them to three output surfaces:
 * **step log** — grouped sections, then one ``::error`` annotation per finding
 * **job summary** — a Markdown policy report table
 * **PR comment** — a compact Markdown summary (idempotently updated)
+
+and exposes the check data as JSON in the ``result`` action output.
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -686,17 +690,23 @@ def _finding_lines(check: dict[str, str], include_error: bool) -> list[str]:
     so printing both would say the same thing twice in a row; in exactly
     that case only ``Fix:`` is shown. A multi-line fix (a signed-off body)
     takes one row per line so the trailer lands where it would in the
-    message.
+    message; a multi-line value (a whole commit message on a failing rule)
+    or suggestion is split the same way, so every line of user text sits
+    inside the tree rather than at column 0.
     """
     lines: list[str] = []
     if check.get("value"):
-        lines.append(f"value: {check['value']}")
+        first, *rest = str(check["value"]).splitlines()
+        lines.append(f"value: {first}")
+        lines.extend(rest)
     if include_error:
         lines.extend(check.get("error", "").splitlines())
     fix = check.get("fix", "")
     suggest = check.get("suggest", "")
     if suggest and suggest != f'Use "{fix}"':
-        lines.append(f"Suggest: {suggest}")
+        first, *rest = suggest.splitlines()
+        lines.append(f"Suggest: {first}")
+        lines.extend(rest)
     if fix:
         first, *rest = fix.splitlines()
         lines.append(f"Fix: {first}")
@@ -966,7 +976,7 @@ def _markdown_table(
         if not entries and not raw_failure:
             continue
         value = _scope_value(scope)
-        value_display = f"`{value}`" if value else "\u2014"
+        value_display = _markdown_code(value) if value else "\u2014"
         if raw_failure:
             links = "_output could not be parsed \u2014 see details_"
         else:
@@ -1013,10 +1023,38 @@ def _markdown_details(results: list[ScopeResult]) -> str:
     _failed, total = _check_counts(results)
     unit = "check" if total == 1 else "checks"
     label = f"Show all {total} {unit}" if total else "Show details"
-    lines = ["<details>", f"<summary>{label}</summary>", "", "```text"]
-    lines.extend(_render_tree(results, include_docs=False))
-    lines.extend(["```", "", "</details>"])
+    body = _render_tree(results, include_docs=False)
+    # The tree quotes commit subjects, errors and suggestions as they are. A
+    # value with three backticks in it (a `docs:` commit showing a fence)
+    # would close a fixed ``` fence and spill the rest of the report out as
+    # prose, so the fence is one longer than any backtick run inside.
+    fence = "`" * max(3, _longest_backtick_run(body) + 1)
+    lines = ["<details>", f"<summary>{label}</summary>", "", f"{fence}text"]
+    lines.extend(body)
+    lines.extend([fence, "", "</details>"])
     return "\n".join(lines)
+
+
+def _longest_backtick_run(lines: list[str]) -> int:
+    """Length of the longest run of consecutive backticks across ``lines``."""
+    return max((len(m) for line in lines for m in re.findall(r"`+", line)), default=0)
+
+
+def _markdown_code(value: str) -> str:
+    """A code span that survives a GFM table cell.
+
+    The value is user text (a commit subject, a branch name, an author) and
+    commonly quotes code. A bare ```` `{value}` ```` breaks twice on that: a
+    backtick inside closes the span early, and an unescaped ``|`` splits the
+    cell, pushing the rule link into a fourth column the table drops. So the
+    span uses one more backtick than the longest run inside the value, pads
+    with a space when the value starts or ends with a backtick (GFM strips
+    one on each side, so the padding is invisible), and escapes ``|``, which
+    GFM honours even inside a code span when the span sits in a table cell.
+    """
+    fence = "`" * (_longest_backtick_run([value]) + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value.replace('|', chr(92) + '|')}{pad}{fence}"
 
 
 def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
@@ -1193,6 +1231,11 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 # - Values are capped at 60 characters with a literal "..." suffix, except on a
 #   failing scope, where the details block prints the value in full — it is the
 #   one value the reader has to act on and the cap can hide the reason.
+# - The Checked value cell is a code span whose backtick fence is longer than
+#   any backtick run in the value, with `|` escaped, so a subject that quotes
+#   code cannot close the span or split the row; the details fence likewise
+#   grows past any backtick run in the tree. Reading the raw Markdown, expect
+#   ``fix: handle `None` \| retry`` rather than `fix: handle `None` | retry`.
 # - The step log renders the same tree (_render_scopes); it adds the docs URL,
 #   which the Markdown report already carries on the rule ID in the table.
 # ---------------------------------------------------------------------------
@@ -1297,7 +1340,9 @@ def add_job_summary(results: list[ScopeResult]) -> int:
 def set_result_output(results: list[ScopeResult]) -> None:
     """Expose the structured results as the ``result`` action output.
 
-    Uses the heredoc form of ``GITHUB_OUTPUT`` so multi-line JSON survives.
+    Written through :func:`_write_output`, whose per-write random delimiter
+    keeps a line of user text (a commit subject reading ``EOF``, say) from
+    closing the heredoc early.
     """
     output_path = os.getenv("GITHUB_OUTPUT")
     if not output_path:
@@ -1315,9 +1360,23 @@ def set_result_output(results: list[ScopeResult]) -> None:
         ],
     }
     with open(output_path, "a", encoding="utf-8") as f:
-        f.write("result<<EOF\n")
-        f.write(json.dumps(payload, indent=2))
-        f.write("\nEOF\n")
+        _write_output(f, "result", json.dumps(payload, indent=2))
+
+
+def _write_output(f: Any, name: str, value: str) -> None:
+    """Append one multi-line output in the heredoc form ``GITHUB_OUTPUT`` takes.
+
+    The runner reads lines up to the first one equal to the delimiter and
+    rejects the whole file if it never finds one, which fails the step and
+    drops every output written after the bad one. A fixed ``EOF`` delimiter
+    is therefore unsafe: the JSON quotes commit subjects and error text as
+    they are, and a subject reading ``EOF`` is legal. So the delimiter is
+    random per write, the shape actions/github-script uses.
+    """
+    delimiter = f"ghadelimiter_{uuid.uuid4()}"
+    while delimiter in value:  # pragma: no cover - 122 random bits
+        delimiter = f"ghadelimiter_{uuid.uuid4()}"
+    f.write(f"{name}<<{delimiter}\n{value}\n{delimiter}\n")
 
 
 def is_fork_pr() -> bool:
@@ -1421,9 +1480,9 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         msg = (
             "Skipping PR comment: pull requests from forked repositories "
             "cannot write comments via the pull_request event (GITHUB_TOKEN is "
-            "read-only for forks). "
-            "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md "
-            "for how to enable PR comments on fork PRs."
+            "read-only for forks). The findings are in this job's summary and "
+            "in the annotations on the Files changed tab. "
+            "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md"
         )
         print(f"::warning::{msg}")
         if JOB_SUMMARY_ENABLED and GITHUB_STEP_SUMMARY:
@@ -1433,9 +1492,10 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
                     "### \u2139\ufe0f PR Comment Skipped\n\n"
                     "Pull requests from forked repositories cannot write comments "
                     "using the `pull_request` event because `GITHUB_TOKEN` has "
-                    "read-only permissions.\n\n"
-                    "> **\U0001f4a1 Tip:** To enable PR comments on fork PRs, see "
-                    "[Enabling PR Comments on Fork Pull Requests]"
+                    "read-only permissions. The report above and the annotations "
+                    "on the Files changed tab are unaffected.\n\n"
+                    "> **\U0001f4a1 Tip:** see "
+                    "[Fork pull requests]"
                     "(https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md).\n"
                 )
         return 0
