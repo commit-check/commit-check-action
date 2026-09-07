@@ -106,8 +106,8 @@ can see.
 | | GitHub Action (this repo) | [pre-commit hook](https://github.com/commit-check/commit-check#use-with-pre-commit) | [Commit Check GitHub App](https://github.com/marketplace/commit-check) |
 |---|---|---|---|
 | **Where it runs** | In your workflow, on the runner, after the push | On the contributor's machine, at `git commit` / `git push` | Hosted by commit-check; installed on the repository, no workflow file |
-| **What it checks** | Every PR commit, the PR title, branch and author; renders a job summary, annotations, a PR comment and the `result` / `report` outputs | Message (`commit-msg` stage), branch, author; tag, force-push and files (`pre-push`) — one commit at a time, before it exists | The pull request's commits, title and branch, reported on the pull request |
-| **When to pick it** | You want enforcement in CI that a contributor cannot skip, per-rule outputs for later steps, or you run on GitHub Enterprise Server / need `CCHK_*` overrides | You want the fastest feedback and to stop bad commits before they are pushed; pair it with the Action, since hooks are opt-in | You want zero YAML and no Actions minutes; fork PRs get comments without the [two-workflow pattern](docs/fork-pr-comments.md) |
+| **What it checks** | Every PR commit's message, plus the PR title, branch and author checks you enable; renders a job summary, annotations, a PR comment and the `result` / `report` outputs | Message (`commit-msg` stage), branch, author; tag, force-push and files (`pre-push`) — one commit at a time, before it exists | Every commit of a push or pull request: message, branch, author (the PR title only in squash mode); reported as one **Commit Check** check run per commit |
+| **When to pick it** | You want enforcement in CI that a contributor cannot skip, per-rule outputs for later steps, or you run on GitHub Enterprise Server / need `CCHK_*` overrides | You want the fastest feedback and to stop bad commits before they are pushed; pair it with the Action, since hooks are opt-in | You want zero YAML and no Actions minutes; fork PRs get a check run without the [two-workflow pattern](docs/fork-pr-comments.md) (no PR comment, though) |
 
 Most teams pair the pre-commit hook (fast, local) with the Action (enforced):
 the hook catches a bad message before it is pushed, and the Action is why CI
@@ -330,7 +330,7 @@ action's own, that comment is later found and edited in place like any other.
   if: always() && steps.commit-check.outputs.report != ''
   env:
     REPORT: ${{ steps.commit-check.outputs.report }}
-  run: printf '%s\n' "$REPORT" > report.md
+  run: printf '%s' "$REPORT" > report.md
 ```
 
 Treat `report` as text to display, not data to parse; `result` is the contract

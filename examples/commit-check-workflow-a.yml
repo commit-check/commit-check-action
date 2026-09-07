@@ -44,7 +44,7 @@ jobs:
           PR_NUMBER: ${{ github.event.number }}
         run: |
           mkdir -p commit-check-result
-          printf '%s\n' "$REPORT"    > commit-check-result/report.md
+          printf '%s' "$REPORT"      > commit-check-result/report.md
           printf '%s\n' "$RESULT"    > commit-check-result/result.json
           printf '%s\n' "$PR_NUMBER" > commit-check-result/pr-number
       - uses: actions/upload-artifact@v4

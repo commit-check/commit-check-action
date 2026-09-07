@@ -91,7 +91,7 @@ jobs:
           PR_NUMBER: ${{ github.event.number }}
         run: |
           mkdir -p commit-check-result
-          printf '%s\n' "$REPORT"    > commit-check-result/report.md
+          printf '%s' "$REPORT"      > commit-check-result/report.md
           printf '%s\n' "$RESULT"    > commit-check-result/result.json
           printf '%s\n' "$PR_NUMBER" > commit-check-result/pr-number
       - uses: actions/upload-artifact@v4
@@ -125,11 +125,14 @@ jobs:
       # Download by run id: the PR number travels inside the artifact because
       # github.event.workflow_run.pull_requests is empty for fork PRs.
       - uses: actions/download-artifact@v4
+        id: download
+        continue-on-error: true   # no artifact when A's install failed: nothing to post
         with:
           name: commit-check-result
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
       - name: Post or update the PR comment
+        if: steps.download.outcome == 'success'
         uses: actions/github-script@v7
         with:
           script: |

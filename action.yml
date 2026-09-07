@@ -70,6 +70,7 @@ runs:
         # caller's checkout: a later `git status`, linter or upload-artifact step
         # must not see our venv or wheels.
         WORK="$RUNNER_TEMP/commit-check-action"
+        rm -rf "$WORK"   # a second invocation in the same job starts clean, so the wheel glob below matches exactly one file
         mkdir -p "$WORK/wheels"
         $PYTHON_CMD -m venv "$WORK/venv"
         if [[ "$RUNNER_OS" == "Windows" ]]; then
@@ -78,8 +79,10 @@ runs:
           source "$WORK/venv/bin/activate"
         fi
 
-        # One download of the pinned closure, into the scratch dir.
-        $PYTHON_CMD -m pip download -q -d "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
+        # One download of the pinned closure, into the scratch dir. Wheels only:
+        # the offline install below cannot build an sdist, so a platform without
+        # binary wheels fails here, with pip's message, rather than later.
+        $PYTHON_CMD -m pip download -q --only-binary=:all: -d "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         # Verify the commit-check wheel's build provenance (PyGithub and the
         # transitive wheels are pinned but not attested; see README "Runner requirements").
