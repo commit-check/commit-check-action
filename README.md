@@ -24,6 +24,7 @@ A GitHub Action for checking commit message formatting, branch naming, committer
 ## Table of Contents
 
 * [Usage](#usage)
+* [Action, pre-commit hook, or GitHub App — which to use?](#action-pre-commit-hook-or-github-app--which-to-use)
 * [Optional Inputs](#optional-inputs)
 * [GitHub Action Job Summary](#github-action-job-summary)
 * [GitHub Pull Request Comments](#github-pull-request-comments)
@@ -52,7 +53,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0  # With a shallow clone only HEAD, the merge commit, is checked
+          # Required. With the default fetch-depth: 1 the clone holds only GitHub's
+          # merge commit: the PR's own commits cannot be listed, author checks are
+          # skipped, and the action warns and falls back to checking HEAD alone.
+          fetch-depth: 0
       - uses: commit-check/commit-check-action@v2
         with:
           message: true
@@ -63,8 +67,51 @@ jobs:
           pr-comments: true
 ```
 
+> [!WARNING]
+> Without `fetch-depth: 0` the action still runs, but it cannot see the pull
+> request's commits. It posts `::warning title=commit-check::Could not list the
+> pull request's commits (is actions/checkout using fetch-depth: 0?); only HEAD
+> was checked` and checks only the synthetic merge commit — whose subject
+> `Merge <sha> into <sha>` passes the default rules — so a shallow clone makes
+> every PR look green. Author checks are skipped (`⊘`) for the same reason. On
+> `pull_request_target`, also check out `refs/pull/<number>/merge`.
+
 > [!NOTE]
 > This action supports running on Linux, macOS, and Windows (`ubuntu-latest`, `macos-latest`, `windows-latest`).
+
+### Runner requirements
+
+The action is a composite step and uses what the runner already has:
+
+- **Python 3.10 or newer** on `PATH` (`python3`, or `python` on Windows). No
+  `setup-python` step is needed on GitHub-hosted runners. Everything the action
+  installs goes under `$RUNNER_TEMP`, never into your checkout.
+- **`gh` CLI** — used to verify the build-provenance attestation of the
+  `commit-check` wheel before installing it. Present on GitHub-hosted images;
+  install it on self-hosted runners or the step fails with `gh CLI not found`.
+  Only the `commit-check` wheel is attested; PyGithub and the transitive
+  dependencies are pinned by `requirements.txt` but not verified.
+- **Network access to PyPI and `api.github.com`** — the pinned wheels are
+  downloaded once per run and the attestation is fetched from GitHub.
+- **`git`** on `PATH`, and a checkout with `fetch-depth: 0` (see above).
+
+There is currently no input to skip attestation verification.
+
+## Action, pre-commit hook, or GitHub App — which to use?
+
+All three run the same `commit-check` engine against the same
+`commit-check.toml` / `cchk.toml`; they differ in where they run and what they
+can see.
+
+| | GitHub Action (this repo) | [pre-commit hook](https://github.com/commit-check/commit-check#use-with-pre-commit) | [Commit Check GitHub App](https://github.com/marketplace/commit-check) |
+|---|---|---|---|
+| **Where it runs** | In your workflow, on the runner, after the push | On the contributor's machine, at `git commit` / `git push` | Hosted by commit-check; installed on the repository, no workflow file |
+| **What it checks** | Every PR commit, the PR title, branch and author; renders a job summary, annotations, a PR comment and the `result` / `report` outputs | Message (`commit-msg` stage), branch, author; tag, force-push and files (`pre-push`) — one commit at a time, before it exists | The pull request's commits, title and branch, reported on the pull request |
+| **When to pick it** | You want enforcement in CI that a contributor cannot skip, per-rule outputs for later steps, or you run on GitHub Enterprise Server / need `CCHK_*` overrides | You want the fastest feedback and to stop bad commits before they are pushed; pair it with the Action, since hooks are opt-in | You want zero YAML and no Actions minutes; fork PRs get comments without the [two-workflow pattern](docs/fork-pr-comments.md) |
+
+Most teams pair the pre-commit hook (fast, local) with the Action (enforced):
+the hook catches a bad message before it is pushed, and the Action is why CI
+fails when a contributor did not install the hook.
 
 ## Used By
 
@@ -136,6 +183,15 @@ jobs:
 > PR comments are skipped for pull requests from forked repositories. See
 > [docs/fork-pr-comments.md](docs/fork-pr-comments.md) for details on how to enable
 > this feature for fork contributions.
+>
+> **Dependabot pull requests** are skipped the same way. GitHub runs
+> Dependabot-triggered `pull_request` workflows with a read-only token even
+> when the workflow requests `pull-requests: write`, so the permission is not
+> the problem: the action logs a `::warning::`, leaves the report in the job
+> summary, and the step still exits by the checks' result. To comment on them
+> too, use the [two-workflow pattern](docs/fork-pr-comments.md), or run on
+> `pull_request_target` for Dependabot only. Adding `dependabot[bot]` to
+> `ignore_authors` skips the checks for those PRs altogether.
 >
 > Note: write-access to pull-requests requires the `pull-requests: write` permission.
 > See [usage example](#usage).
