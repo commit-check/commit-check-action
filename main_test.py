@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -2692,3 +2693,77 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("1 of 2 checks passed, 1 skipped", out)
         self.assertNotIn("all checks passed", out)
+
+
+# ---------------------------------------------------------------------------
+# Integration: the real commit-check binary
+# ---------------------------------------------------------------------------
+
+#: The JSON shape ``make_check()`` hard-codes and every renderer reads.
+CHECK_KEYS = {
+    "rule_id",
+    "check",
+    "status",
+    "value",
+    "error",
+    "suggest",
+    "fix",
+    "docs_url",
+}
+STATUSES = {"pass", "fail", "warn", "skip"}
+
+
+@unittest.skipUnless(
+    shutil.which("commit-check"),
+    "commit-check CLI not on PATH (CI installs it from requirements.txt)",
+)
+class TestRealCommitCheckBinary(unittest.TestCase):
+    """Run the pinned commit-check once, unmocked.
+
+    Every other test patches ``main.subprocess.run`` and feeds back the JSON
+    shape ``make_check()`` hard-codes, so a renamed key or a new status in
+    the CLI would leave the whole suite green while the action rendered "—"
+    for every value. This is the one place that drift can fail a build. CI
+    installs requirements.txt, so the binary is always present there; the
+    skip only spares a contributor running the suite without it.
+    """
+
+    def _run(self, message: str) -> tuple[int, dict]:
+        rc, data, raw = main.run_check_json(["--message"], input_text=message)
+        self.assertIsInstance(data, dict, f"CLI did not emit JSON:\n{raw}")
+        assert data is not None  # for the type checker; asserted above
+        self.assertIn("checks", data)
+        self.assertTrue(data["checks"], "CLI reported no checks")
+        for check in data["checks"]:
+            self.assertEqual(set(check), CHECK_KEYS, check)
+            self.assertIn(check["status"], STATUSES, check)
+            self.assertRegex(check["rule_id"], r"^CC\d{3}$")
+            self.assertTrue(
+                check["docs_url"].startswith("https://commit-check.com/rules/#")
+            )
+        return rc, data
+
+    def test_passing_message(self):
+        rc, data = self._run("fix: handle the empty case\n")
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "pass")
+        self.assertTrue(all(c["status"] == "pass" for c in data["checks"]))
+        scope = main.ScopeResult(label="Commit 1/1", checks=data["checks"])
+        self.assertEqual(scope.status, "pass")
+        self.assertEqual(main.overall_status([scope]), "pass")
+
+    def test_failing_message(self):
+        rc, data = self._run("Bad subject\n")
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "fail")
+        failed = [c for c in data["checks"] if c["status"] == "fail"]
+        self.assertEqual([c["rule_id"] for c in failed], ["CC001"])
+        self.assertTrue(failed[0]["error"])
+        scope = main.ScopeResult(label="Commit 1/1", checks=data["checks"])
+        self.assertEqual(scope.status, "fail")
+        self.assertEqual(main.overall_status([scope]), "fail")
+        # The rendered report must carry the rule link the CLI supplied.
+        self.assertIn(
+            "[CC001 message](https://commit-check.com/rules/#cc001)",
+            main.render_report([scope]),
+        )
