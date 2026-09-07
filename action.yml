@@ -83,13 +83,9 @@ runs:
 
         # Verify the commit-check wheel's build provenance (PyGithub and the
         # transitive wheels are pinned but not attested; see README "Runner requirements").
-        if ! command -v gh >/dev/null 2>&1; then
-          echo "::error::gh CLI not found; it is required to verify the commit-check wheel attestation. Install it on this runner (preinstalled on GitHub-hosted runners)."
-          exit 1
-        fi
         WHEEL=$(ls "$WORK"/wheels/commit_check-*.whl)   # exactly one: pip download of a == pin
         if ! gh attestation verify "$WHEEL" -R commit-check/commit-check; then
-          echo "::error::Attestation verification failed for $(basename "$WHEEL"). Aborting installation."
+          echo "::error::Attestation verification failed for $(basename "$WHEEL") (self-hosted runners need the gh CLI). Aborting installation."
           exit 1
         fi
 

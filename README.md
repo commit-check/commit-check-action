@@ -88,7 +88,7 @@ The action is a composite step and uses what the runner already has:
   installs goes under `$RUNNER_TEMP`, never into your checkout.
 - **`gh` CLI** — used to verify the build-provenance attestation of the
   `commit-check` wheel before installing it. Present on GitHub-hosted images;
-  install it on self-hosted runners or the step fails with `gh CLI not found`.
+  install it on self-hosted runners or the attestation step fails.
   Only the `commit-check` wheel is attested; PyGithub and the transitive
   dependencies are pinned by `requirements.txt` but not verified.
 - **Network access to PyPI and `api.github.com`** — the pinned wheels are
