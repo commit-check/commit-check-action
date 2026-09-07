@@ -4,7 +4,7 @@
 [![Used by](https://img.shields.io/static/v1?label=Used%20by&message=165&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
 [![commit-check](https://img.shields.io/badge/commit--check-enabled-brightgreen?logo=Git&logoColor=white&color=%232c9ccd)](https://github.com/commit-check/commit-check)
-[![slsa-badge](https://slsa.dev/images/gh-badge-level3.svg?color=blue)](https://github.com/commit-check/commit-check-action/blob/a2873ca0482dd505c93fb51861c953e82fd0a186/action.yml#L59-L69)
+[![slsa-badge](https://slsa.dev/images/gh-badge-level3.svg?color=blue)](https://github.com/commit-check/commit-check-action/blob/main/action.yml#L84-L94)
 [![codecov](https://codecov.io/gh/commit-check/commit-check-action/graph/badge.svg?token=QHUDSMJGS7)](https://codecov.io/gh/commit-check/commit-check-action)
 
 A GitHub Action for checking commit message formatting, branch naming, committer name, email, commit signoff, and more.

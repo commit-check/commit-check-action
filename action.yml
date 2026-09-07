@@ -58,31 +58,44 @@ runs:
         # Platform-specific settings
         if [[ "$RUNNER_OS" == "Windows" ]]; then
           PYTHON_CMD="python"
-          VENV_ACTIVATE="venv/Scripts/activate"
         else
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             # https://github.com/pypa/setuptools/issues/3269
             export DEB_PYTHON_INSTALL_LAYOUT=deb
           fi
           PYTHON_CMD="python3"
-          VENV_ACTIVATE="venv/bin/activate"
         fi
 
-        # Set up virtual environment
-        $PYTHON_CMD -m venv venv
-        source "$VENV_ACTIVATE"
-
-        # Download artifact
-        $PYTHON_CMD -m pip download -r "$GITHUB_ACTION_PATH/requirements.txt"
-
-        # Verify artifact attestations
-        if ! gh attestation verify commit_check-*.whl -R commit-check/commit-check; then
-            echo "Artifact verification failed. Aborting installation."
-            exit 1
+        # Everything the action installs lives under $RUNNER_TEMP, never in the
+        # caller's checkout: a later `git status`, linter or upload-artifact step
+        # must not see our venv or wheels.
+        WORK="$RUNNER_TEMP/commit-check-action"
+        mkdir -p "$WORK/wheels"
+        $PYTHON_CMD -m venv "$WORK/venv"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          source "$WORK/venv/Scripts/activate"
+        else
+          source "$WORK/venv/bin/activate"
         fi
 
-        # Install artifact
-        $PYTHON_CMD -m pip install commit_check-*.whl pygithub-*.whl
+        # One download of the pinned closure, into the scratch dir.
+        $PYTHON_CMD -m pip download -q -d "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
+
+        # Verify the commit-check wheel's build provenance (PyGithub and the
+        # transitive wheels are pinned but not attested; see README "Runner requirements").
+        if ! command -v gh >/dev/null 2>&1; then
+          echo "::error::gh CLI not found; it is required to verify the commit-check wheel attestation. Install it on this runner (preinstalled on GitHub-hosted runners)."
+          exit 1
+        fi
+        WHEEL=$(ls "$WORK"/wheels/commit_check-*.whl)   # exactly one: pip download of a == pin
+        if ! gh attestation verify "$WHEEL" -R commit-check/commit-check; then
+          echo "::error::Attestation verification failed for $(basename "$WHEEL"). Aborting installation."
+          exit 1
+        fi
+
+        # Install offline from the wheels we already downloaded and verified:
+        # no second trip to PyPI, and the installed set is exactly the downloaded set.
+        $PYTHON_CMD -m pip install -q --no-cache-dir --no-index --find-links "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         $PYTHON_CMD "$GITHUB_ACTION_PATH/main.py"
       env:
