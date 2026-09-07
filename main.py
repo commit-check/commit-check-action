@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -691,17 +692,23 @@ def _finding_lines(check: dict[str, str], include_error: bool) -> list[str]:
     so printing both would say the same thing twice in a row; in exactly
     that case only ``Fix:`` is shown. A multi-line fix (a signed-off body)
     takes one row per line so the trailer lands where it would in the
-    message.
+    message; a multi-line value (a whole commit message on a failing rule)
+    or suggestion is split the same way, so every line of user text sits
+    inside the tree rather than at column 0.
     """
     lines: list[str] = []
     if check.get("value"):
-        lines.append(f"value: {check['value']}")
+        first, *rest = str(check["value"]).splitlines()
+        lines.append(f"value: {first}")
+        lines.extend(rest)
     if include_error:
         lines.extend(check.get("error", "").splitlines())
     fix = check.get("fix", "")
     suggest = check.get("suggest", "")
     if suggest and suggest != f'Use "{fix}"':
-        lines.append(f"Suggest: {suggest}")
+        first, *rest = suggest.splitlines()
+        lines.append(f"Suggest: {first}")
+        lines.extend(rest)
     if fix:
         first, *rest = fix.splitlines()
         lines.append(f"Fix: {first}")
@@ -1348,10 +1355,9 @@ def set_result_output(results: list[ScopeResult]) -> None:
     the fork comment identical to every other one, marker and footer
     included, so a later run with ``pr-comments: true`` adopts it.
 
-    Uses the heredoc form of ``GITHUB_OUTPUT`` so multi-line values survive.
-    Neither value can contain a bare ``EOF`` line: JSON lines are quoted or
-    punctuation, and every line of user text in the report is indented or
-    sits inside a table row.
+    Both values are written through :func:`_write_output`, whose per-write
+    random delimiter keeps a line of user text (a commit body line reading
+    ``EOF``, say) from closing the heredoc early.
     """
     output_path = os.getenv("GITHUB_OUTPUT")
     if not output_path:
@@ -1369,12 +1375,24 @@ def set_result_output(results: list[ScopeResult]) -> None:
         ],
     }
     with open(output_path, "a", encoding="utf-8") as f:
-        f.write("result<<EOF\n")
-        f.write(json.dumps(payload, indent=2))
-        f.write("\nEOF\n")
-        f.write("report<<EOF\n")
-        f.write(render_report(results))
-        f.write("\nEOF\n")
+        _write_output(f, "result", json.dumps(payload, indent=2))
+        _write_output(f, "report", render_report(results))
+
+
+def _write_output(f: Any, name: str, value: str) -> None:
+    """Append one multi-line output in the heredoc form ``GITHUB_OUTPUT`` takes.
+
+    The runner reads lines up to the first one equal to the delimiter and
+    rejects the whole file if it never finds one, which fails the step and
+    drops every output written after the bad one. A fixed ``EOF`` delimiter
+    is therefore unsafe for the report: on a failing rule it quotes the
+    commit message in full, and a body line reading ``EOF`` is legal. So the
+    delimiter is random per write, the shape actions/github-script uses.
+    """
+    delimiter = f"ghadelimiter_{uuid.uuid4()}"
+    while delimiter in value:  # pragma: no cover - 122 random bits
+        delimiter = f"ghadelimiter_{uuid.uuid4()}"
+    f.write(f"{name}<<{delimiter}\n{value}\n{delimiter}\n")
 
 
 def is_fork_pr() -> bool:

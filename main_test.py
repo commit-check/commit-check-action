@@ -1729,16 +1729,43 @@ class TestAddJobSummary(unittest.TestCase):
 
 
 def read_github_output(path: str) -> dict[str, str]:
-    """Parse a ``GITHUB_OUTPUT`` file of ``name<<EOF`` heredocs into a dict.
+    """Parse a ``GITHUB_OUTPUT`` file the way the runner does.
 
-    The runner accepts exactly this shape: the delimiter line closes the
-    value, and anything else is a malformed output file.
+    A port of the loop in actions/runner's ``FileCommandManager``: a line is
+    either ``name=value`` or ``name<<delimiter``, and a heredoc value runs up
+    to the first line equal to the delimiter (CRLF counts as a newline).
+    Anything else raises, as it fails the step on a real runner, so a test
+    using this parser cannot pass on a file the runner would reject.
     """
+    with open(path, encoding="utf-8", newline="") as file_obj:
+        lines = file_obj.read().splitlines()
     outputs: dict[str, str] = {}
-    with open(path, encoding="utf-8") as file_obj:
-        text = file_obj.read()
-    for match in re.finditer(r"^(\w+)<<EOF\n(.*?)\nEOF\n", text, flags=re.S | re.M):
-        outputs[match.group(1)] = match.group(2)
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        if not line:
+            continue
+        equals, heredoc = line.find("="), line.find("<<")
+        if equals >= 0 and (heredoc < 0 or equals < heredoc):
+            name, value = line.split("=", 1)
+            outputs[name] = value
+            continue
+        if heredoc < 0:
+            raise ValueError(f"Invalid format '{line}'")
+        name, delimiter = line.split("<<", 1)
+        if not delimiter:
+            raise ValueError("Invalid format: empty delimiter")
+        body: list[str] = []
+        while True:
+            if index >= len(lines):
+                raise ValueError(f"Matching delimiter not found '{delimiter}'")
+            current = lines[index]
+            index += 1
+            if current == delimiter:
+                break
+            body.append(current)
+        outputs[name] = "\n".join(body)
     return outputs
 
 
@@ -1749,10 +1776,45 @@ class TestSetResultOutput(unittest.TestCase):
             main.set_result_output([fail_scope("Commit 1/1"), pass_scope("Branch")])
         with open(output_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("result<<EOF", content)
+        self.assertRegex(content, r"(?m)^result<<ghadelimiter_[0-9a-f-]{36}$")
+        self.assertRegex(content, r"(?m)^report<<ghadelimiter_[0-9a-f-]{36}$")
         self.assertIn('"status": "fail"', content)
         self.assertIn('"label": "Commit 1/1"', content)
-        self.assertTrue(content.strip().endswith("EOF"))
+        outputs = read_github_output(output_path)
+        self.assertEqual(set(outputs), {"result", "report"})
+        self.assertEqual(json.loads(outputs["result"])["status"], "fail")
+
+    def test_output_survives_an_eof_line_in_the_commit_body(self):
+        """A commit body line reading ``EOF`` must not end the heredoc.
+
+        On a failing message rule the report quotes the whole message, so
+        that line lands in the output verbatim; with a fixed ``EOF``
+        delimiter the runner rejected the file, failed the step and dropped
+        ``report``. The runner-faithful parser raises on such a file.
+        """
+        results = [
+            main.ScopeResult(
+                label="Commit 1/1",
+                checks=[
+                    make_check(
+                        "message",
+                        status="fail",
+                        value="bad Subject\n\nEOF\r\nrest of body",
+                        error="Subject must be Conventional Commits.",
+                        suggest="Use\nEOF\nnow",
+                    )
+                ],
+            )
+        ]
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
+            main.set_result_output(results)
+        outputs = read_github_output(output_path)
+        self.assertEqual(json.loads(outputs["result"])["status"], "fail")
+        self.assertIn("EOF", outputs["report"])
+        self.assertEqual(
+            outputs["report"].splitlines(), main.render_report(results).splitlines()
+        )
 
     @pin_version
     def test_report_output_is_the_rendered_report_verbatim(self):
