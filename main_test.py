@@ -2588,6 +2588,84 @@ class TestSkipCompletionSemantics(unittest.TestCase):
         self.assertEqual(rc, 0)
 
 
+class TestMarkdownEscaping(unittest.TestCase):
+    """User text in the report must not break the Markdown that carries it.
+
+    Commit subjects quote code, branch names and author names may contain
+    pipes; the table cell and the fenced details block have to survive both.
+    The checks below come from a real ``commit-check --format json`` run on
+    the subject ``fix: handle `None` | retry`` (all rules pass on it, so the
+    CC001 outcome is flipped to make a table row).
+    """
+
+    #: Splits a table row on the pipes that are cell separators, not on the
+    #: escaped ones inside a cell.
+    CELL_SEPARATOR = re.compile(r"(?<!\\)\|")
+
+    def _scope(self, value: str) -> main.ScopeResult:
+        return main.ScopeResult(
+            label="Commit 1/1",
+            sha=SHA_B,
+            checks=[
+                make_check(
+                    "message",
+                    status="fail",
+                    rule_id="CC001",
+                    value=value,
+                    error="The commit message should follow Conventional Commits.",
+                    docs_url="https://commit-check.com/rules/#cc001",
+                ),
+                make_check("subject_imperative", rule_id="CC003", value=value),
+            ],
+        )
+
+    def test_markdown_code_wraps_backticks_and_escapes_pipes(self):
+        cases = {
+            "plain": "`plain`",
+            "a|b": "`a\\|b`",
+            "fix: handle `None` | retry": "``fix: handle `None` \\| retry``",
+            "`x`": "`` `x` ``",
+            "``x``": "``` ``x`` ```",
+            "x`": "`` x` ``",
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(main._markdown_code(value), expected)
+
+    def test_table_row_with_backticks_and_a_pipe_keeps_three_cells(self):
+        table = main._markdown_table([self._scope("fix: handle `None` | retry")])
+        row = table.splitlines()[2]
+        # Strip the outer pipes before counting: "| a | b | c |" -> 3 cells.
+        cells = self.CELL_SEPARATOR.split(row.strip().strip("|"))
+        self.assertEqual(len(cells), 3, row)
+        self.assertEqual(cells[1].strip(), "``fix: handle `None` \\| retry``")
+        self.assertEqual(
+            cells[2].strip(), "[CC001 message](https://commit-check.com/rules/#cc001)"
+        )
+
+    def test_truncated_value_with_an_unbalanced_backtick_still_closes(self):
+        """The 60-char cap can cut inside a backtick run; the fence is chosen
+        after truncation, so the span still closes at the right place."""
+        value = "fix: " + "`x`, " * 20
+        truncated = main._scope_value(self._scope(value))
+        self.assertTrue(truncated.endswith("`x..."), truncated)  # cut mid-span
+        cell = main._markdown_code(truncated)
+        self.assertEqual(cell, f"``{truncated}``")
+
+    def test_details_fence_outgrows_a_triple_backtick_in_the_value(self):
+        details = main._markdown_details([self._scope("docs: show ``` usage")])
+        lines = details.splitlines()
+        self.assertEqual(lines[3], "````text")
+        self.assertEqual(lines[-3], "````")
+        self.assertIn("value: docs: show ``` usage", details)
+
+    def test_details_fence_stays_three_backticks_for_ordinary_values(self):
+        details = main._markdown_details([pass_scope(value="feat: add `login`")])
+        lines = details.splitlines()
+        self.assertEqual(lines[3], "```text")
+        self.assertEqual(lines[-3], "```")
+
+
 class TestSkipRenderingEdgeCases(unittest.TestCase):
     def test_failure_table_omits_skipped_scopes(self):
         """A skipped scope has no failed checks, so it must not get a row.

@@ -16,6 +16,7 @@ themselves).
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -970,7 +971,7 @@ def _markdown_table(
         if not entries and not raw_failure:
             continue
         value = _scope_value(scope)
-        value_display = f"`{value}`" if value else "\u2014"
+        value_display = _markdown_code(value) if value else "\u2014"
         if raw_failure:
             links = "_output could not be parsed \u2014 see details_"
         else:
@@ -1017,10 +1018,38 @@ def _markdown_details(results: list[ScopeResult]) -> str:
     _failed, total = _check_counts(results)
     unit = "check" if total == 1 else "checks"
     label = f"Show all {total} {unit}" if total else "Show details"
-    lines = ["<details>", f"<summary>{label}</summary>", "", "```text"]
-    lines.extend(_render_tree(results, include_docs=False))
-    lines.extend(["```", "", "</details>"])
+    body = _render_tree(results, include_docs=False)
+    # The tree quotes commit subjects, errors and suggestions as they are. A
+    # value with three backticks in it (a `docs:` commit showing a fence)
+    # would close a fixed ``` fence and spill the rest of the report out as
+    # prose, so the fence is one longer than any backtick run inside.
+    fence = "`" * max(3, _longest_backtick_run(body) + 1)
+    lines = ["<details>", f"<summary>{label}</summary>", "", f"{fence}text"]
+    lines.extend(body)
+    lines.extend([fence, "", "</details>"])
     return "\n".join(lines)
+
+
+def _longest_backtick_run(lines: list[str]) -> int:
+    """Length of the longest run of consecutive backticks across ``lines``."""
+    return max((len(m) for line in lines for m in re.findall(r"`+", line)), default=0)
+
+
+def _markdown_code(value: str) -> str:
+    """A code span that survives a GFM table cell.
+
+    The value is user text (a commit subject, a branch name, an author) and
+    commonly quotes code. A bare ```` `{value}` ```` breaks twice on that: a
+    backtick inside closes the span early, and an unescaped ``|`` splits the
+    cell, pushing the rule link into a fourth column the table drops. So the
+    span uses one more backtick than the longest run inside the value, pads
+    with a space when the value starts or ends with a backtick (GFM strips
+    one on each side, so the padding is invisible), and escapes ``|``, which
+    GFM honours even inside a code span when the span sits in a table cell.
+    """
+    fence = "`" * (_longest_backtick_run([value]) + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value.replace('|', chr(92) + '|')}{pad}{fence}"
 
 
 def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
@@ -1197,6 +1226,11 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 # - Values are capped at 60 characters with a literal "..." suffix, except on a
 #   failing scope, where the details block prints the value in full — it is the
 #   one value the reader has to act on and the cap can hide the reason.
+# - The Checked value cell is a code span whose backtick fence is longer than
+#   any backtick run in the value, with `|` escaped, so a subject that quotes
+#   code cannot close the span or split the row; the details fence likewise
+#   grows past any backtick run in the tree. Reading the raw Markdown, expect
+#   ``fix: handle `None` \| retry`` rather than `fix: handle `None` | retry`.
 # - The step log renders the same tree (_render_scopes); it adds the docs URL,
 #   which the Markdown report already carries on the rule ID in the table.
 # - The whole report, marker to footer, is also written verbatim to the
