@@ -1727,6 +1727,20 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertIn("❌", content)
 
 
+def read_github_output(path: str) -> dict[str, str]:
+    """Parse a ``GITHUB_OUTPUT`` file of ``name<<EOF`` heredocs into a dict.
+
+    The runner accepts exactly this shape: the delimiter line closes the
+    value, and anything else is a malformed output file.
+    """
+    outputs: dict[str, str] = {}
+    with open(path, encoding="utf-8") as file_obj:
+        text = file_obj.read()
+    for match in re.finditer(r"^(\w+)<<EOF\n(.*?)\nEOF\n", text, flags=re.S | re.M):
+        outputs[match.group(1)] = match.group(2)
+    return outputs
+
+
 class TestSetResultOutput(unittest.TestCase):
     def test_writes_heredoc_json(self):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
@@ -1739,15 +1753,31 @@ class TestSetResultOutput(unittest.TestCase):
         self.assertIn('"label": "Commit 1/1"', content)
         self.assertTrue(content.strip().endswith("EOF"))
 
+    @pin_version
+    def test_report_output_is_the_rendered_report_verbatim(self):
+        """``report`` is what a workflow_run job posts for a fork PR, so it
+        has to be the same bytes the action would post itself — marker,
+        title, table and footer — not a re-rendering."""
+        results = [fail_scope("Commit 1/1", sha=SHA_B), pass_scope("Branch")]
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
+            main.set_result_output(results)
+        outputs = read_github_output(output_path)
+        self.assertEqual(set(outputs), {"result", "report"})
+        self.assertEqual(outputs["report"], main.render_report(results))
+        self.assertTrue(outputs["report"].startswith(main.COMMENT_MARKER))
+        self.assertIn("| Scope | Checked value | Failed checks |", outputs["report"])
+        self.assertTrue(outputs["report"].endswith(FOOTER))
+        # The two outputs describe the same run.
+        self.assertEqual(json.loads(outputs["result"])["status"], "fail")
+
     def test_scopes_carry_the_full_sha_and_an_unchanged_label(self):
         """Downstream steps keep matching on ``label``; the hash is a new
         field beside it, full length so it can be passed back to the API."""
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
             main.set_result_output([fix_scope("Commit 2/3", sha=SHA_B), pass_scope()])
-        with open(output_path, encoding="utf-8") as file_obj:
-            body = file_obj.read().removeprefix("result<<EOF\n").removesuffix("\nEOF\n")
-        payload = json.loads(body)
+        payload = json.loads(read_github_output(output_path)["result"])
         self.assertEqual(payload["scopes"][0]["label"], "Commit 2/3")
         self.assertEqual(payload["scopes"][0]["sha"], SHA_B)
         self.assertEqual(
@@ -2424,8 +2454,7 @@ class TestWarnedScopes(unittest.TestCase):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
             main.set_result_output([pass_scope("PR title"), warn_scope()])
-        with open(output_path, encoding="utf-8") as file_obj:
-            payload = json.loads(file_obj.read().split("\n", 1)[1].rsplit("EOF", 1)[0])
+        payload = json.loads(read_github_output(output_path)["result"])
         self.assertEqual(payload["status"], "warn")
         self.assertEqual([s["status"] for s in payload["scopes"]], ["pass", "warn"])
 
@@ -2540,10 +2569,9 @@ class TestSkipCompletionSemantics(unittest.TestCase):
         try:
             with patch.dict(os.environ, {"GITHUB_OUTPUT": out_path}):
                 main.set_result_output([skip_scope(), skip_scope("Branch")])
-            written = open(out_path, encoding="utf-8").read()
+            payload = json.loads(read_github_output(out_path)["result"])
         finally:
             os.unlink(out_path)
-        payload = json.loads(written.split("result<<EOF\n", 1)[1].rsplit("\nEOF", 1)[0])
         self.assertEqual(payload["status"], "skip")
 
     def test_add_job_summary_returns_success_for_a_skipped_run(self):

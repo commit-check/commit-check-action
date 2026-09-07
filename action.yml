@@ -44,6 +44,9 @@ outputs:
     # mapping (and the step id it refers to) the output is always the empty
     # string, and fromJSON('') fails the calling workflow.
     value: ${{ steps.commit-check.outputs.result }}
+  report:
+    description: The rendered Markdown report, byte for byte what the job summary and PR comment show. Save it as an artifact from a pull_request run and post it verbatim from a workflow_run job to comment on fork pull requests (see docs/fork-pr-comments.md).
+    value: ${{ steps.commit-check.outputs.report }}
 
 runs:
   using: "composite"

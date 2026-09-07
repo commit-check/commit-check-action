@@ -8,6 +8,10 @@ them to three output surfaces:
 * **step log** — grouped sections, then one ``::error`` annotation per finding
 * **job summary** — a Markdown policy report table
 * **PR comment** — a compact Markdown summary (idempotently updated)
+
+and exposes two action outputs: ``result`` (the check data as JSON) and
+``report`` (the rendered Markdown, for workflows that post the comment
+themselves).
 """
 
 import json
@@ -1195,6 +1199,10 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #   one value the reader has to act on and the cap can hide the reason.
 # - The step log renders the same tree (_render_scopes); it adds the docs URL,
 #   which the Markdown report already carries on the rule ID in the table.
+# - The whole report, marker to footer, is also written verbatim to the
+#   `report` action output beside the JSON `result`, so a workflow_run job can
+#   post it for a fork pull request and produce the same comment this action
+#   would have posted itself.
 # ---------------------------------------------------------------------------
 
 
@@ -1295,9 +1303,21 @@ def add_job_summary(results: list[ScopeResult]) -> int:
 
 
 def set_result_output(results: list[ScopeResult]) -> None:
-    """Expose the structured results as the ``result`` action output.
+    """Expose the results as the ``result`` and ``report`` action outputs.
 
-    Uses the heredoc form of ``GITHUB_OUTPUT`` so multi-line JSON survives.
+    ``result`` is the structured JSON downstream steps gate on. ``report`` is
+    the rendered Markdown — the very text the job summary and the PR comment
+    show — for the one caller that cannot post it itself: a ``pull_request``
+    run on a fork has a read-only token, so it hands the report to a
+    ``workflow_run`` job that posts it verbatim (docs/fork-pr-comments.md).
+    Shipping the text rather than making that job re-render the JSON keeps
+    the fork comment identical to every other one, marker and footer
+    included, so a later run with ``pr-comments: true`` adopts it.
+
+    Uses the heredoc form of ``GITHUB_OUTPUT`` so multi-line values survive.
+    Neither value can contain a bare ``EOF`` line: JSON lines are quoted or
+    punctuation, and every line of user text in the report is indented or
+    sits inside a table row.
     """
     output_path = os.getenv("GITHUB_OUTPUT")
     if not output_path:
@@ -1317,6 +1337,9 @@ def set_result_output(results: list[ScopeResult]) -> None:
     with open(output_path, "a", encoding="utf-8") as f:
         f.write("result<<EOF\n")
         f.write(json.dumps(payload, indent=2))
+        f.write("\nEOF\n")
+        f.write("report<<EOF\n")
+        f.write(render_report(results))
         f.write("\nEOF\n")
 
 

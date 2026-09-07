@@ -1,10 +1,12 @@
 # Workflow A: Run commit checks on pull_request events.
 #
-# This workflow is triggered by pull_request and runs commit checks.
-# It uploads the result as an artifact so Workflow B (commit-check-comment.yml)
-# can read it and post a PR comment with full write permissions.
+# This workflow is triggered by pull_request and runs the checks. On a pull
+# request from a fork its GITHUB_TOKEN is read-only, so it cannot comment;
+# instead it saves the action's `report` and `result` outputs as an artifact
+# for Workflow B (commit-check-comment.yml), which runs with write permissions
+# in the base repository and posts the report as the PR comment.
 #
-# See https://github.com/commit-check/commit-check-action#fork-pr-comments
+# See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md
 
 name: Commit Check
 
@@ -15,19 +17,38 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: commit-check/commit-check-action@v2
+        id: commit-check
         with:
           message: true
           branch: true
           pr-comments: false  # comments handled by Workflow B
           job-summary: true
 
-      # Save results so Workflow B can post a PR comment
+      # The action exits 1 on a failure, so both steps below need `always()`
+      # or the artifact is missing on exactly the runs that need a comment.
+      # The outputs are written before the action exits, so they are present
+      # on failing runs too; the second condition only skips the upload when
+      # the action itself could not run.
+      - name: Save the report for Workflow B
+        if: always() && steps.commit-check.outputs.report != ''
+        env:
+          REPORT: ${{ steps.commit-check.outputs.report }}
+          RESULT: ${{ steps.commit-check.outputs.result }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          mkdir -p commit-check-result
+          printf '%s\n' "$REPORT"    > commit-check-result/report.md
+          printf '%s\n' "$RESULT"    > commit-check-result/result.json
+          printf '%s\n' "$PR_NUMBER" > commit-check-result/pr-number
       - uses: actions/upload-artifact@v4
+        if: always() && steps.commit-check.outputs.report != ''
         with:
-          name: commit-check-result-${{ github.event.number }}
-          path: result.txt
+          name: commit-check-result
+          path: commit-check-result/

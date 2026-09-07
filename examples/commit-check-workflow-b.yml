@@ -1,14 +1,16 @@
-# Workflow B: Post PR comment after commit checks complete.
+# Workflow B: Post the PR comment after Workflow A completes.
 #
-# This workflow is triggered by the workflow_run event from Workflow A.
-# It runs in the base repository's context with full write permissions,
-# making it safe for fork PRs (no checkout of fork code).
+# This workflow is triggered by the workflow_run event from Workflow A. It
+# runs in the base repository's context with the permissions granted below,
+# which makes it safe for fork PRs: it never checks out the fork's code, it
+# only downloads the artifact Workflow A saved and posts report.md verbatim.
 #
 # Prerequisites:
-#   - Workflow A (commit-check.yml) must exist and upload an artifact named
-#     commit-check-result-<PR-number> containing result.txt
+#   - Workflow A (commit-check.yml) must exist, be named "Commit Check", and
+#     upload an artifact named commit-check-result containing report.md and
+#     pr-number (see commit-check-workflow-a.yml).
 #
-# See https://github.com/commit-check/commit-check-action#fork-pr-comments
+# See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md
 
 name: Commit Check Comment
 
@@ -22,36 +24,40 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-      actions: read  # needed to download artifacts
+      actions: read  # needed to download another run's artifact
     steps:
+      # Download by run id: the PR number travels inside the artifact because
+      # github.event.workflow_run.pull_requests is empty for fork PRs.
       - uses: actions/download-artifact@v4
         with:
-          name: commit-check-result-${{ github.event.workflow_run.pull_requests[0].number }}
+          name: commit-check-result
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
-      - name: Read result and post PR comment
+      - name: Post or update the PR comment
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const prNumber = ${{ github.event.workflow_run.pull_requests[0].number }};
-            const resultText = fs.readFileSync('result.txt', 'utf8').trim();
+            const prNumber = Number(fs.readFileSync('pr-number', 'utf8').trim());
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`Artifact carries no pull request number (got ${JSON.stringify(prNumber)})`);
+              return;
+            }
 
-            const successTitle = '# Commit-Check ✔️';
-            const failureTitle = '# Commit-Check ❌';
-            const body = resultText
-              ? `${failureTitle}\n\`\`\`\n${resultText}\n\`\`\``
-              : successTitle;
+            // report.md is the action's `report` output: the same Markdown the
+            // action posts itself, opening with the marker it uses to find its
+            // own comment. Posting it unchanged means a later run with
+            // `pr-comments: true` edits this comment instead of adding one.
+            const body = fs.readFileSync('report.md', 'utf8');
+            const MARKER = '<!-- commit-check-action -->';
 
-            const { data: comments } = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
               issue_number: prNumber,
+              per_page: 100,
             });
-
-            const existing = comments.find(c =>
-              c.body.startsWith(successTitle) || c.body.startsWith(failureTitle)
-            );
+            const existing = comments.find(c => (c.body ?? '').startsWith(MARKER));
 
             if (existing) {
               await github.rest.issues.updateComment({

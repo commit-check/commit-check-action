@@ -258,6 +258,28 @@ check outcomes (`rule_id`, `check`, `status`, `value`, `error`, `suggest`,
 `fix`, `docs_url`) exactly as produced by `commit-check --format json`, so
 downstream jobs can build their own reports or gate on individual rules.
 
+### `report`
+
+The rendered Markdown report — byte for byte the text the
+[job summary](#github-action-job-summary) and the
+[PR comment](#github-pull-request-comments) show, opening with the
+`<!-- commit-check-action -->` marker. It exists for workflows that have to post
+the comment themselves: a `pull_request` run on a fork has a read-only token, so
+it saves the report as an artifact and a `workflow_run` job posts it verbatim —
+see [Fork PR Comments](docs/fork-pr-comments.md). Because the text is the
+action's own, that comment is later found and edited in place like any other.
+
+```yaml
+- name: Save the report
+  if: always() && steps.commit-check.outputs.report != ''
+  env:
+    REPORT: ${{ steps.commit-check.outputs.report }}
+  run: printf '%s\n' "$REPORT" > report.md
+```
+
+Treat `report` as text to display, not data to parse; `result` is the contract
+for that.
+
 ## GitHub Action Job Summary
 
 By default, commit-check-action results are shown on the job summary page of the
