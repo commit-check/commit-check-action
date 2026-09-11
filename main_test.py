@@ -308,7 +308,7 @@ class TestRunCheckJson(unittest.TestCase):
         self.assertTrue(mock_run.call_args[1]["text"])
 
     def test_invalid_json_returns_none_with_raw_output(self):
-        mock_result = MagicMock(returncode=1, stdout="Commit rejected.\n")
+        mock_result = MagicMock(returncode=1, stdout="Commit rejected.\n", stderr="")
         with patch("main.subprocess.run", return_value=mock_result):
             rc, data, raw = main.run_check_json(["--branch"])
         self.assertEqual(rc, 1)
@@ -352,7 +352,7 @@ class TestCheckScope(unittest.TestCase):
         self.assertEqual(scope.failures[0]["rule_id"], "CC001")
 
     def test_invalid_json_falls_back_to_raw_text(self):
-        mock_result = MagicMock(returncode=1, stdout="unexpected output")
+        mock_result = MagicMock(returncode=1, stdout="unexpected output", stderr="")
         with patch("main.subprocess.run", return_value=mock_result):
             scope = main.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.label, "Branch")
@@ -388,7 +388,7 @@ class TestRunPrMessageChecks(unittest.TestCase):
         self.assertEqual(scopes[0].sha, SHA_A)
 
     def test_unparsable_output_still_names_the_commit(self):
-        mock_result = MagicMock(returncode=1, stdout="unexpected output")
+        mock_result = MagicMock(returncode=1, stdout="unexpected output", stderr="")
         with patch("main.subprocess.run", return_value=mock_result):
             scopes = main.run_pr_message_checks([(SHA_A, "bad commit")])
         self.assertEqual(scopes[0].raw_text, "unexpected output")
@@ -2841,3 +2841,78 @@ class TestRealCommitCheckBinary(unittest.TestCase):
             "[CC001 message](https://commit-check.com/rules/#cc001)",
             main.render_report([scope]),
         )
+
+
+class TestStderrIsNotPartOfTheJson(unittest.TestCase):
+    """stdout is the JSON; stderr is what the CLI has to say to a person.
+
+    Merging the two fed notices to json.loads, and an unparsable response is
+    a failure as far as ScopeResult is concerned -- so a passing run went
+    red the moment the CLI gained something to say. It has several such
+    lines, printed under --format json as well: a parent config it could not
+    fetch, a flag whose every rule the config switched off, a dry run that
+    softened its own verdict.
+    """
+
+    #: What the CLI prints when --branch is asked for and the repository's
+    #: config has switched every branch rule off.
+    NOTICE = (
+        "⊘ --branch requested but no branch rules are configured "
+        "(conventional_branch = false and no require_rebase_target)\n"
+    )
+
+    def setUp(self):
+        main._RELAYED_NOTICES.clear()
+
+    def test_the_two_streams_are_read_separately(self):
+        mock_result = MagicMock(returncode=0, stdout="{}", stderr="")
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            main.run_check_json(["--branch"])
+        self.assertIs(mock_run.call_args[1]["stderr"], main.subprocess.PIPE)
+
+    def test_a_notice_does_not_break_the_json(self):
+        mock_result = MagicMock(
+            returncode=0,
+            stdout=json_output(make_check("branch")),
+            stderr=self.NOTICE,
+        )
+        with patch("main.subprocess.run", return_value=mock_result):
+            with patch.object(sys, "stderr", io.StringIO()):
+                rc, data, raw = main.run_check_json(["--branch"])
+        self.assertEqual(rc, 0)
+        self.assertIsNotNone(data)
+        self.assertEqual(data["status"], "pass")
+        # And the scope built from it is a pass, not the "unparsable" fail.
+        self.assertEqual(main.check_scope("Branch", ["--branch"]).label, "Branch")
+
+    def test_a_notice_alone_does_not_fail_the_scope(self):
+        mock_result = MagicMock(returncode=0, stdout=json_output(), stderr=self.NOTICE)
+        with patch("main.subprocess.run", return_value=mock_result):
+            with patch.object(sys, "stderr", io.StringIO()):
+                scope = main.check_scope("Branch", ["--branch"])
+        self.assertEqual(scope.status, "pass")
+        self.assertEqual(scope.raw_text, "")
+
+    def test_notices_reach_the_job_log_once(self):
+        mock_result = MagicMock(
+            returncode=0, stdout=json_output(make_check("branch")), stderr=self.NOTICE
+        )
+        fake_err = io.StringIO()
+        with patch("main.subprocess.run", return_value=mock_result):
+            with patch.object(sys, "stderr", fake_err):
+                for _ in range(3):
+                    main.run_check_json(["--branch"])
+        printed = fake_err.getvalue()
+        self.assertIn("--branch requested but no branch rules are configured", printed)
+        # Once, not once per scope and per commit in the pull request.
+        self.assertEqual(printed.count("commit-check: ⊘"), 1)
+
+    def test_unparsable_output_keeps_both_streams(self):
+        mock_result = MagicMock(
+            returncode=2, stdout="", stderr="Error: cchk.toml: Expected ']'\n"
+        )
+        with patch("main.subprocess.run", return_value=mock_result):
+            with patch.object(sys, "stderr", io.StringIO()):
+                scope = main.check_scope("Branch", ["--branch"])
+        self.assertEqual(scope.status, "fail")
+        self.assertIn("Expected ']'", scope.raw_text)
