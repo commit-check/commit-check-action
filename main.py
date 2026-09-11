@@ -492,29 +492,66 @@ def get_pr_commit_messages() -> list[Commit]:
     return []
 
 
+#: Notices already relayed, so one repeated across every scope is shown once.
+_RELAYED_NOTICES: set[str] = set()
+
+
+def _relay_cli_notices(text: str) -> None:
+    """Put the CLI's stderr in the job log, without repeating it.
+
+    The Action runs commit-check once per scope and once per commit in the
+    pull request, and a notice about the configuration is the same every
+    time; printed on each run it would bury the findings.
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        if line and line not in _RELAYED_NOTICES:
+            _RELAYED_NOTICES.add(line)
+            print(f"commit-check: {line}", file=sys.stderr)
+
+
 def run_check_json(
     args: list[str], input_text: str | None = None
 ) -> tuple[int, dict[str, Any] | None, str]:
     """Run ``commit-check --format json`` and return (exit code, parsed JSON, raw output).
 
+    The CLI's contract is that stdout holds the JSON and nothing else, while
+    stderr carries what it has to say to a person: a parent config it could
+    not fetch, a flag whose every rule the config switched off, a dry run
+    that softened its own verdict. Those lines are not JSON, so they are
+    read separately and relayed to the job log rather than handed to the
+    parser -- merged into stdout they turned a passing run into an
+    unparsable one, which ScopeResult reports as a failure.
+
     The parsed JSON is ``None`` when the CLI did not produce valid JSON; the
-    raw output is kept so callers can fall back to showing it as text.
+    raw output is kept so callers can fall back to showing it as text, and
+    in that case it carries both streams so nothing the CLI said is lost.
     """
     command = ["commit-check", "--format", "json"] + args
     result = subprocess.run(
         command,
         input=input_text,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         check=False,
     )
-    raw = result.stdout or ""
+    out = result.stdout or ""
+    err = result.stderr or ""
+    _relay_cli_notices(err)
     try:
-        return result.returncode, json.loads(raw), raw
+        return result.returncode, json.loads(out), out
     except json.JSONDecodeError:
-        return result.returncode, None, raw
+        # Whatever went wrong, the operator needs everything the CLI said,
+        # so stderr joins stdout here -- and only here, where there is no
+        # JSON left to protect. It is often the whole story: a config the
+        # CLI refused leaves stdout empty and prints "Error: ..." on stderr,
+        # and dropping it would leave an empty raw_text that reads as a pass.
+        if not err.strip():
+            return result.returncode, None, out
+        parts = [part for part in (out.strip(), err.strip()) if part]
+        return result.returncode, None, "\n".join(parts)
 
 
 def check_scope(
