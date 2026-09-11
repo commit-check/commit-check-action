@@ -1,0 +1,21 @@
+main.py
+  s_80a77d656a1a9b::t_18925de67d031c 495-512,518-525,527-528,535,540-542,544,546-554
+main_test.py
+  s_80a77d656a1a9b::t_87c81fb4c27191 311,355,391,2844-2918
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5577e74fd89e7d2871614ffe2bf20ad05b31161f",
+  "prompts": {},
+  "sessions": {
+    "s_80a77d656a1a9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "555f20c1-3e19-461a-ac92-9c2e4ce6e933",
+        "model": "claude-opus-5"
+      },
+      "human_author": "shenxianpeng <xianpeng.shen@gmail.com>"
+    }
+  }
+}
