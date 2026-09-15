@@ -1,0 +1,21 @@
+main.py
+  s_372643545cf36e::t_7af1ae5f3d1b9b 514,529-534,545
+main_test.py
+  s_372643545cf36e::t_008e90b00434e6 2803-2814,2817-2821,2823-2825
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c2192eb1cd030f87e78f9fe8f46ca47027d6526a",
+  "prompts": {},
+  "sessions": {
+    "s_372643545cf36e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf0a6471-ef8d-4f90-9d78-27576d4ecf86",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Xianpeng Shen <xianpeng.shen@gmail.com>"
+    }
+  }
+}
