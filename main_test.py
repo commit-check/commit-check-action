@@ -2800,10 +2800,47 @@ class TestRealCommitCheckBinary(unittest.TestCase):
     for every value. This is the one place that drift can fail a build. CI
     installs requirements.txt, so the binary is always present there; the
     skip only spares a contributor running the suite without it.
+
+    The CLI runs on its built-in defaults, with nothing ambient reaching it.
+    A message piped in here describes no commit, so the verdict must not
+    depend on who committed last, on what the org config says this week, or
+    on a contributor's ``CCHK_*`` variables -- and unpinned, it depended on
+    all three. It read this repo's ``commit-check.toml``, which inherits the
+    org config over the network, and on a runner with no git identity the
+    CLI weighs ``ignore_authors`` against the author of ``HEAD`` instead. On
+    a Dependabot PR that author is ``dependabot[bot]``, which the org config
+    ignores, so every message check skipped and ``test_passing_message``
+    saw ``skip`` where it asserted ``pass`` (#284). commit-check's own suite
+    pins the same two lookups for the same reason (its ``pinned_author``
+    fixture); this is that pin, from outside the process.
     """
 
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        # An empty config, named explicitly: the CLI reads this file and looks
+        # for no other, so every rule is at its default and ``ignore_authors``
+        # names nobody.
+        self.config = os.path.join(tmp.name, "cchk.toml")
+        with open(self.config, "w", encoding="utf-8"):
+            pass
+        # A known identity at git's global and system levels, so the CLI's
+        # author lookup never falls through to ``HEAD``; and no ``CCHK_*``
+        # variable, since the environment overrides the file.
+        gitconfig = os.path.join(tmp.name, "gitconfig")
+        with open(gitconfig, "w", encoding="utf-8") as f:
+            f.write("[user]\n\tname = test-author\n\temail = test@example.com\n")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("CCHK_")}
+        env["GIT_CONFIG_GLOBAL"] = gitconfig
+        env["GIT_CONFIG_SYSTEM"] = gitconfig
+        env_patch = patch.dict(os.environ, env, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
     def _run(self, message: str) -> tuple[int, dict]:
-        rc, data, raw = main.run_check_json(["--message"], input_text=message)
+        rc, data, raw = main.run_check_json(
+            ["--message", "--config", self.config], input_text=message
+        )
         self.assertIsInstance(data, dict, f"CLI did not emit JSON:\n{raw}")
         assert data is not None  # for the type checker; asserted above
         self.assertIn("checks", data)
