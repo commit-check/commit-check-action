@@ -2800,10 +2800,29 @@ class TestRealCommitCheckBinary(unittest.TestCase):
     for every value. This is the one place that drift can fail a build. CI
     installs requirements.txt, so the binary is always present there; the
     skip only spares a contributor running the suite without it.
+
+    Run from an isolated, empty directory rather than the checked-out repo:
+    this repo's own ``commit-check.toml`` inherits the org's shared config
+    over the network, and a message piped in here is deliberately unrelated
+    to any real commit, so neither that config nor ``git``'s notion of the
+    current author (nor, through it, ``ignore_authors``) belongs in a test
+    about the CLI's JSON contract. A previous version of this test ran from
+    the repo as checked out, so it inherited both -- and, having no git
+    identity of its own, additionally fell back to HEAD's actual author to
+    weigh against ``ignore_authors``. On a Dependabot PR that author is
+    ``dependabot[bot]``, which the org config ignores, so the message check
+    silently skipped instead of running, regardless of the message.
     """
 
+    def setUp(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        self._cwd = tmpdir.name
+
     def _run(self, message: str) -> tuple[int, dict]:
-        rc, data, raw = main.run_check_json(["--message"], input_text=message)
+        rc, data, raw = main.run_check_json(
+            ["--message"], input_text=message, cwd=self._cwd
+        )
         self.assertIsInstance(data, dict, f"CLI did not emit JSON:\n{raw}")
         assert data is not None  # for the type checker; asserted above
         self.assertIn("checks", data)

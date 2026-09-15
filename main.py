@@ -511,7 +511,7 @@ def _relay_cli_notices(text: str) -> None:
 
 
 def run_check_json(
-    args: list[str], input_text: str | None = None
+    args: list[str], input_text: str | None = None, cwd: str | None = None
 ) -> tuple[int, dict[str, Any] | None, str]:
     """Run ``commit-check --format json`` and return (exit code, parsed JSON, raw output).
 
@@ -526,6 +526,12 @@ def run_check_json(
     The parsed JSON is ``None`` when the CLI did not produce valid JSON; the
     raw output is kept so callers can fall back to showing it as text, and
     in that case it carries both streams so nothing the CLI said is lost.
+
+    ``cwd`` picks the directory the CLI runs from -- left at ``None`` (the
+    caller's own cwd) for the real action, where that directory is the
+    checked-out repository on purpose. A caller that wants no config file,
+    no ``ignore_authors``, and no ``git`` state to leak in (the unmocked
+    binary test, notably) passes an isolated directory instead.
     """
     command = ["commit-check", "--format", "json"] + args
     result = subprocess.run(
@@ -536,6 +542,7 @@ def run_check_json(
         text=True,
         encoding="utf-8",
         check=False,
+        cwd=cwd,
     )
     out = result.stdout or ""
     err = result.stderr or ""
