@@ -31,6 +31,18 @@ jobs:
         with:
           python-version: ${{ matrix.py }}
 
+      # actions/checkout sets no git identity. TestRealCommitCheckBinary pipes
+      # a message to the real commit-check binary, unset from any commit --
+      # with no local user.name, commit-check falls back to the checked-out
+      # HEAD commit's own author to test against ignore_authors. On a
+      # Dependabot PR that author is "dependabot[bot]", which the org's
+      # inherited config ignores, so the check silently skips instead of
+      # running. A neutral identity keeps the test about the piped message.
+      - name: Configure a git identity for the test suite
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

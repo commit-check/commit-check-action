@@ -18,6 +18,13 @@ jobs:
         with:
           # 3.10 is the real floor, see test.yml
           python-version: "3.10"
+      # See test.yml: TestRealCommitCheckBinary needs a non-ignored git
+      # identity, or commit-check falls back to HEAD's own author (e.g.
+      # dependabot[bot] on a dependency-bump PR) and silently skips.
+      - name: Configure a git identity for the test suite
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
