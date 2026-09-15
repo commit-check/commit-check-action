@@ -1,0 +1,21 @@
+.github/workflows/test.yml
+  s_372643545cf36e::t_886377844a5fce 34-45
+.github/workflows/coverage.yml
+  s_372643545cf36e::t_a1f7042eb89591 21-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8986da9c3f004d665f0b7f223a77a755705b414f",
+  "prompts": {},
+  "sessions": {
+    "s_372643545cf36e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf0a6471-ef8d-4f90-9d78-27576d4ecf86",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+    }
+  }
+}
