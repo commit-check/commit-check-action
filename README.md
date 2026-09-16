@@ -148,7 +148,7 @@ fails when a contributor did not install the hook.
 
 ### `branch`
 
-- **Description**: check git branch name following [Conventional Branch](https://conventional-branch.github.io/).
+- **Description**: check git branch name following [Conventional Branch](https://conventionalbranch.org/).
 - Default: `true`
 
 ### `author-name`
