@@ -3,7 +3,7 @@
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/commit-check/commit-check-action?color=blue)
 [![Used by](https://img.shields.io/static/v1?label=Used%20by&message=167&color=informational&logo=slickpic)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![GitHub marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-blue)](https://github.com/marketplace/actions/commit-check-action)
-[![commit-check](https://img.shields.io/badge/commit--check-enabled-brightgreen?logo=Git&logoColor=white&color=%232c9ccd)](https://github.com/commit-check/commit-check)
+[![commit-check](https://img.shields.io/badge/commit--check-enabled-2c9ccd?labelColor=0b1620&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI%2bPHBhdGggZD0iTTIxIDM0TDMwIDQzTDQ3IDIyIiBmaWxsPSJub25lIiBzdHJva2U9IiMyQzlDQ0QiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8%2bPGNpcmNsZSBjeD0iMjEiIGN5PSIzNCIgcj0iNyIgZmlsbD0iIzBCMTYyMCIgc3Ryb2tlPSIjMkM5Q0NEIiBzdHJva2Utd2lkdGg9IjUiLz48L3N2Zz4K)](https://commit-check.com)
 [![slsa-badge](https://slsa.dev/images/gh-badge-level3.svg?color=blue)](https://github.com/commit-check/commit-check-action/blob/main/action.yml#L84-L94)
 [![codecov](https://codecov.io/gh/commit-check/commit-check-action/graph/badge.svg?token=QHUDSMJGS7)](https://codecov.io/gh/commit-check/commit-check-action)
 
