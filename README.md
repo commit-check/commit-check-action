@@ -103,7 +103,7 @@ All three run the same `commit-check` engine against the same
 `commit-check.toml` / `cchk.toml`; they differ in where they run and what they
 can see.
 
-| | GitHub Action (this repo) | [pre-commit hook](https://github.com/commit-check/commit-check#use-with-pre-commit) | [Commit Check GitHub App](https://github.com/marketplace/commit-check) |
+| | GitHub Action (this repo) | [pre-commit hook](https://github.com/commit-check/commit-check#use-with-pre-commit) | [Commit Check GitHub App](https://github.com/apps/commit-check) |
 |---|---|---|---|
 | **Where it runs** | In your workflow, on the runner, after the push | On the contributor's machine, at `git commit` / `git push` | Hosted by commit-check; installed on the repository, no workflow file |
 | **What it checks** | Every PR commit's message, plus the PR title, branch and author checks you enable; renders a job summary, annotations, a PR comment and the `result` output | Message (`commit-msg` stage), branch, author; tag, force-push and files (`pre-push`) — one commit at a time, before it exists | Every commit of a push or pull request: message, branch, author (the PR title only in squash mode); reported as one **Commit Check** check run per commit |
@@ -523,7 +523,7 @@ By default, commit-check-action handles this gracefully:
 > **For most projects, this is sufficient** — a fork contributor already gets the red
 > check, the per-finding annotations on their diff and the full report in the job
 > summary. If you want feedback on the pull request itself, the
-> [Commit Check GitHub App](https://github.com/marketplace/commit-check) posts a check
+> [Commit Check GitHub App](https://github.com/apps/commit-check) posts a check
 > run per commit with no workflow file (free on public repositories), or you can run
 > this action on `pull_request_target`. Both are covered in
 > **[Fork pull requests](docs/fork-pr-comments.md)**.
