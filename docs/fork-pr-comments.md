@@ -34,7 +34,7 @@ The run is **not** failed by this: `pr-comments: true` on a fork PR is a no-op, 
 
 ### Install the Commit Check GitHub App (recommended)
 
-The [Commit Check GitHub App](https://github.com/marketplace/commit-check) is not bound by
+The [Commit Check GitHub App](https://github.com/apps/commit-check) is not bound by
 the `pull_request` token at all: it receives the `pull_request` webhook on the **base**
 repository and acts with its own installation token. Fork pull requests are ordinary
 pull requests to it.
