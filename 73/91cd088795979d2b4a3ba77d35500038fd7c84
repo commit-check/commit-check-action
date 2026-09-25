@@ -1,0 +1,21 @@
+README.md
+  s_39b40faf32868b::t_d3a2c4e84b5a06 106,526
+docs/fork-pr-comments.md
+  s_39b40faf32868b::t_e3e6a2d0420faf 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7391cd088795979d2b4a3ba77d35500038fd7c84",
+  "prompts": {},
+  "sessions": {
+    "s_39b40faf32868b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f0debcf5-afa4-4c60-b136-cd927a4ddf57",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Xianpeng Shen <xianpeng.shen@gmail.com>"
+    }
+  }
+}
