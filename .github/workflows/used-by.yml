@@ -19,6 +19,12 @@ jobs:
         with:
           repo: '${{ github.repository }}'
           update-badge: 'true'
+          # used-by appends these to the shields.io query string as they are,
+          # which is how the logo also carries the brand's label color. The
+          # badge it writes must match README.md's byte for byte, or this job
+          # opens a pull request every week that only restyles it.
+          badge-color: '2c9ccd'
+          badge-logo: 'github&logoColor=white&labelColor=0b1620'
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
