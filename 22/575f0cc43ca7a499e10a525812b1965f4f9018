@@ -1,0 +1,21 @@
+.github/workflows/used-by.yml
+  s_2d998574dcd18b::t_229a64e66444db 22-27
+README.md
+  s_2d998574dcd18b::t_2299826612df4d 1,3-6,8,10-14,16-20,22,24-27,31,63-66,69-70,72,74-83,86-88,90,92-94,105-107,109,111-113,115-147,149,151-158,207,209-211,213-217,219-221,223,225-247,249,251-252,254,256-266,268,270,272-273,275-281,283-287,289,291,293,295-296,299,301-303,305-306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "22575f0cc43ca7a499e10a525812b1965f4f9018",
+  "prompts": {},
+  "sessions": {
+    "s_2d998574dcd18b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a569585-25a8-4bf9-ad35-9992f6f6ba0f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Xianpeng Shen <xianpeng.shen@gmail.com>"
+    }
+  }
+}
