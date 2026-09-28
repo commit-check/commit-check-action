@@ -458,6 +458,12 @@ class TestRunOtherChecks(unittest.TestCase):
 
 
 class TestGetPrCommitMessages(unittest.TestCase):
+    def setUp(self):
+        # Never the event of whatever CI run the tests happen to be in.
+        patcher = patch("main.get_pr_event", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_non_pr_event_returns_empty(self):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
             result = main.get_pr_commit_messages()
@@ -501,6 +507,32 @@ class TestGetPrCommitMessages(unittest.TestCase):
         ):
             result = main.get_pr_commit_messages()
         self.assertEqual(result, ["fix: first"])
+
+    def test_a_range_cut_short_by_a_shallow_clone_asks_the_api(self):
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch("main.get_messages_from_event_range", return_value=[("b2", "fix")]),
+            patch("main.get_pr_event", return_value={"commits": 2}),
+            patch("main.get_messages_from_api", return_value=[]) as api,
+            patch("main.warn_shallow_checkout") as warn,
+        ):
+            # The API cannot help either: check what the clone had, and say so.
+            self.assertEqual(main.get_pr_commit_messages(), [("b2", "fix")])
+        api.assert_called_once()
+        self.assertIn("Only 1 of the pull request's 2 commits", warn.call_args[0][0])
+
+    def test_asks_the_api_when_the_clone_holds_none_of_them(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": "main"},
+            ),
+            patch("main.get_messages_from_event_range", return_value=[]),
+            patch("main.get_messages_from_merge_ref", return_value=[]),
+            patch("main.get_messages_from_head_ref", return_value=[]),
+            patch("main.get_messages_from_api", return_value=[("a1", "feat: one")]),
+        ):
+            self.assertEqual(main.get_pr_commit_messages(), [("a1", "feat: one")])
 
     def test_falls_back_to_base_ref_when_merge_ref_is_unavailable(self):
         with (
@@ -1025,6 +1057,81 @@ class TestPrHeadRev(unittest.TestCase):
             patch("main.subprocess.run", side_effect=OSError("no git")),
         ):
             self.assertIsNone(main.pr_head_rev())
+
+
+class TestFetchPrHead(unittest.TestCase):
+    def test_a_head_the_clone_lacks_is_fetched_without_history(self):
+        # rev-parse fails, the fetch succeeds, rev-parse now resolves.
+        run = MagicMock(
+            side_effect=[
+                MagicMock(returncode=1),
+                MagicMock(returncode=0),
+                MagicMock(returncode=0),
+            ]
+        )
+        with (
+            patch("main.get_pr_head_sha", return_value="abc123"),
+            patch("main.subprocess.run", run),
+        ):
+            self.assertEqual(main.pr_head_rev(), "abc123")
+        self.assertEqual(
+            run.call_args_list[1][0][0],
+            ["git", "fetch", "--no-tags", "--quiet", "--depth=1", "origin", "abc123"],
+        )
+
+    def test_a_fetch_without_git_gives_up(self):
+        with patch("main.subprocess.run", side_effect=OSError("no git")):
+            self.assertFalse(main._fetch_commit("abc123"))
+
+
+class TestGetMessagesFromApi(unittest.TestCase):
+    """A clone without the pull request's commits lists them through the API."""
+
+    def _run(self, total, api_commits, head="b2"):
+        pull = MagicMock()
+        pull.get_commits.return_value = [
+            MagicMock(sha=sha, commit=MagicMock(message=msg))
+            for sha, msg in api_commits
+        ]
+        github_module = MagicMock()
+        github_module.Github.return_value.get_repo.return_value.get_pull.return_value = (
+            pull
+        )
+        env = {
+            "GITHUB_TOKEN": "token",
+            "GITHUB_REPOSITORY": "owner/repo",
+            "GITHUB_API_URL": "https://ghe.example.com/api/v3",
+        }
+        with (
+            patch.dict(os.environ, env),
+            patch("main.get_pr_event", return_value={"number": 7, "commits": total}),
+            patch("main.get_pr_head_sha", return_value=head),
+            patch.dict(sys.modules, {"github": github_module}),
+        ):
+            return main.get_messages_from_api(), github_module
+
+    def test_lists_the_commits_oldest_first(self):
+        commits = [("a1", "feat: one"), ("b2", "fix: two")]
+        result, github_module = self._run(2, commits)
+        self.assertEqual(result, commits)
+        self.assertEqual(
+            github_module.Github.call_args[1]["base_url"],
+            "https://ghe.example.com/api/v3",
+        )
+
+    def test_a_list_that_ends_elsewhere_is_not_used(self):
+        # A force push after the event: same count, other commits.
+        result, _ = self._run(2, [("a1", "feat: one"), ("c3", "fix: other")])
+        self.assertEqual(result, [])
+
+    def test_a_partial_list_is_not_used(self):
+        result, _ = self._run(3, [("a1", "feat: one"), ("b2", "fix: two")])
+        self.assertEqual(result, [])
+
+    def test_more_than_the_api_returns_is_left_unlisted(self):
+        result, github_module = self._run(main.API_COMMIT_LIMIT + 1, [])
+        self.assertEqual(result, [])
+        github_module.Github.assert_not_called()
 
 
 class TestCheckoutHint(unittest.TestCase):

@@ -299,6 +299,21 @@ def _rev_resolves(rev: str) -> bool:
     return result.returncode == 0
 
 
+def _fetch_commit(sha: str) -> bool:
+    """Fetch one commit, without its history, into a clone that lacks it."""
+    try:
+        result = subprocess.run(
+            ["git", "fetch", "--no-tags", "--quiet", "--depth=1", "origin", sha],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and _rev_resolves(sha)
+
+
 def pr_head_rev() -> str | None:
     """The commit whose recorded author the PR's author checks read.
 
@@ -308,12 +323,13 @@ def pr_head_rev() -> str | None:
     that, ``HEAD^2`` on a ``pull_request`` checkout, where HEAD is the
     merge ref and its second parent is that same tip. Never ``HEAD^2`` on
     ``pull_request_target``: there HEAD is the base branch, so ``HEAD^2``
-    is nothing, or the parent of some unrelated merge on it.
+    is nothing, or the parent of some unrelated merge on it. A shallow clone
+    that lacks the tip gets it fetched, without its history.
 
-    ``None`` when the clone is too shallow to hold either.
+    ``None`` when neither can be had.
     """
     sha = get_pr_head_sha()
-    if sha and _rev_resolves(sha):
+    if sha and (_rev_resolves(sha) or _fetch_commit(sha)):
         return sha
     if os.getenv("GITHUB_EVENT_NAME") == "pull_request" and _rev_resolves(PR_HEAD_REV):
         return PR_HEAD_REV
@@ -460,6 +476,37 @@ def get_messages_from_head_ref(base_ref: str) -> list[Commit]:
     return _messages_in_range(f"origin/{base_ref}..HEAD")
 
 
+#: The most commits GitHub's pull request commits endpoint returns.
+API_COMMIT_LIMIT = 250
+
+
+def get_messages_from_api() -> list[Commit]:
+    """The pull request's commits from the REST API, for a clone without them.
+
+    The default ``actions/checkout`` clone holds only GitHub's merge commit.
+    Deepening it cannot list a pull request that merged its base branch in;
+    the API lists any pull request exactly. It stops at 250 commits, so a
+    longer one is left unlisted rather than checked in part.
+    """
+    pr = get_pr_event()
+    number, total = pr.get("number"), pr.get("commits", 0)
+    token, repo = os.getenv("GITHUB_TOKEN"), os.getenv("GITHUB_REPOSITORY")
+    if not (number and token and repo) or total > API_COMMIT_LIMIT:
+        return []
+    from github import Auth, Github  # type: ignore
+
+    api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+    pull = (
+        Github(auth=Auth.Token(token), base_url=api_url).get_repo(repo).get_pull(number)
+    )
+    commits = [(c.sha, c.commit.message) for c in pull.get_commits()]
+    # A force push after the event can leave the same count but other commits.
+    head = get_pr_head_sha()
+    if len(commits) != total or (head and commits[-1][0] != head):
+        return []
+    return commits
+
+
 def get_pr_commit_messages() -> list[Commit]:
     """Get all commits, as ``(sha, message)``, for the current PR workflow.
 
@@ -468,22 +515,32 @@ def get_pr_commit_messages() -> list[Commit]:
     checkout HEAD is the synthetic merge commit, so ``HEAD^1..HEAD^2`` is
     the same range. If the workflow checks out the PR head SHA instead,
     diff against ``origin/<base-ref>`` when that ref is available locally.
+    A clone that holds none of these, or only part of the pull request (a
+    shallow boundary ends a range early), asks the API.
     """
     if not is_pr_event():
         return []
 
     try:
-        messages = get_messages_from_event_range()
-        if messages:
-            return messages
-
-        messages = get_messages_from_merge_ref()
-        if messages:
-            return messages
-
         base_ref = os.getenv("GITHUB_BASE_REF", "")
-        if base_ref:
-            return get_messages_from_head_ref(base_ref)
+        messages = (
+            get_messages_from_event_range()
+            or get_messages_from_merge_ref()
+            or (get_messages_from_head_ref(base_ref) if base_ref else [])
+        )
+        total = get_pr_event().get("commits")
+        if messages and (not total or len(messages) == total):
+            return messages
+        from_api = get_messages_from_api()
+        if from_api:
+            return from_api
+        if messages:
+            warn_shallow_checkout(
+                f"Only {len(messages)} of the pull request's {total} commits "
+                "could be listed",
+                "the others were not checked",
+            )
+        return messages
     except Exception as e:
         print(
             f"::warning::Failed to retrieve PR commit messages: {e}",

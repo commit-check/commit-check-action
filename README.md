@@ -46,9 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Required. With the default fetch-depth: 1 the clone holds only GitHub's
-          # merge commit: the PR's own commits cannot be listed, author checks are
-          # skipped, and the action warns and falls back to checking HEAD alone.
+          # Recommended: the action then reads the PR's commits from the clone.
+          # With the default fetch-depth: 1 it asks the GitHub API instead.
           fetch-depth: 0
       - uses: commit-check/commit-check-action@v2
         with:
@@ -60,11 +59,13 @@ jobs:
           pr-comments: true
 ```
 
-> [!IMPORTANT]
-> Keep `fetch-depth: 0`. A shallow clone holds only GitHub's merge commit,
-> whose `Merge <sha> into <sha>` subject passes the default rules, so every
-> pull request would look green; the action warns when it happens. On
-> `pull_request_target`, also check out `refs/pull/<number>/merge`.
+> [!NOTE]
+> `fetch-depth: 0` is recommended, not required. A shallow clone holds only
+> GitHub's merge commit, so the action lists the pull request's commits
+> through the API — up to 250, with `pull-requests: read` — and fetches the
+> head commit for the author checks. If the commits cannot be listed, it warns
+> and checks HEAD alone; if the head commit cannot be fetched, it warns and
+> skips the author checks.
 
 Runs on `ubuntu-latest`, `macos-latest` and `windows-latest`. Self-hosted
 runners need a few tools — see [Good to know](#good-to-know).
@@ -263,7 +264,7 @@ The action is a composite step and uses what the runner already has:
   dependencies are pinned by `requirements.txt` but not verified.
 - **Network access to PyPI and `api.github.com`** — the pinned wheels are
   downloaded once per run and the attestation is fetched from GitHub.
-- **`git`** on `PATH`, and a checkout with `fetch-depth: 0` (see above).
+- **`git`** on `PATH`.
 
 There is currently no input to skip attestation verification.
 
