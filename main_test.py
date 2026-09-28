@@ -458,6 +458,12 @@ class TestRunOtherChecks(unittest.TestCase):
 
 
 class TestGetPrCommitMessages(unittest.TestCase):
+    def setUp(self):
+        # Never the event of whatever CI run the tests happen to be in.
+        patcher = patch("main.get_pr_event", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_non_pr_event_returns_empty(self):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
             result = main.get_pr_commit_messages()
@@ -501,6 +507,17 @@ class TestGetPrCommitMessages(unittest.TestCase):
         ):
             result = main.get_pr_commit_messages()
         self.assertEqual(result, ["fix: first"])
+
+    def test_a_range_cut_short_by_a_shallow_clone_asks_the_api(self):
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch("main.get_messages_from_event_range", return_value=[("b2", "fix")]),
+            patch("main.get_pr_event", return_value={"commits": 2}),
+            patch("main.get_messages_from_api", return_value=[]) as api,
+        ):
+            # The API cannot help either: keep what the clone had.
+            self.assertEqual(main.get_pr_commit_messages(), [("b2", "fix")])
+        api.assert_called_once()
 
     def test_asks_the_api_when_the_clone_holds_none_of_them(self):
         with (
@@ -1060,11 +1077,15 @@ class TestFetchPrHead(unittest.TestCase):
             ["git", "fetch", "--no-tags", "--quiet", "--depth=1", "origin", "abc123"],
         )
 
+    def test_a_fetch_without_git_gives_up(self):
+        with patch("main.subprocess.run", side_effect=OSError("no git")):
+            self.assertFalse(main._fetch_commit("abc123"))
+
 
 class TestGetMessagesFromApi(unittest.TestCase):
     """A clone without the pull request's commits lists them through the API."""
 
-    def _run(self, total, api_commits):
+    def _run(self, total, api_commits, head="b2"):
         pull = MagicMock()
         pull.get_commits.return_value = [
             MagicMock(sha=sha, commit=MagicMock(message=msg))
@@ -1082,6 +1103,7 @@ class TestGetMessagesFromApi(unittest.TestCase):
         with (
             patch.dict(os.environ, env),
             patch("main.get_pr_event", return_value={"number": 7, "commits": total}),
+            patch("main.get_pr_head_sha", return_value=head),
             patch.dict(sys.modules, {"github": github_module}),
         ):
             return main.get_messages_from_api(), github_module
@@ -1094,6 +1116,11 @@ class TestGetMessagesFromApi(unittest.TestCase):
             github_module.Github.call_args[1]["base_url"],
             "https://ghe.example.com/api/v3",
         )
+
+    def test_a_list_that_ends_elsewhere_is_not_used(self):
+        # A force push after the event: same count, other commits.
+        result, _ = self._run(2, [("a1", "feat: one"), ("c3", "fix: other")])
+        self.assertEqual(result, [])
 
     def test_a_partial_list_is_not_used(self):
         result, _ = self._run(3, [("a1", "feat: one"), ("b2", "fix: two")])

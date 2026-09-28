@@ -63,8 +63,9 @@ jobs:
 > `fetch-depth: 0` is recommended, not required. A shallow clone holds only
 > GitHub's merge commit, so the action lists the pull request's commits
 > through the API — up to 250, with `pull-requests: read` — and fetches the
-> head commit for the author checks. If neither works it warns and checks
-> HEAD alone.
+> head commit for the author checks. If the commits cannot be listed, it warns
+> and checks HEAD alone; if the head commit cannot be fetched, it warns and
+> skips the author checks.
 
 Runs on `ubuntu-latest`, `macos-latest` and `windows-latest`. Self-hosted
 runners need a few tools — see [Good to know](#good-to-know).

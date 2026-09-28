@@ -500,7 +500,11 @@ def get_messages_from_api() -> list[Commit]:
         Github(auth=Auth.Token(token), base_url=api_url).get_repo(repo).get_pull(number)
     )
     commits = [(c.sha, c.commit.message) for c in pull.get_commits()]
-    return commits if len(commits) == total else []
+    # A force push after the event can leave the same count but other commits.
+    head = get_pr_head_sha()
+    if len(commits) != total or (head and commits[-1][0] != head):
+        return []
+    return commits
 
 
 def get_pr_commit_messages() -> list[Commit]:
@@ -511,27 +515,23 @@ def get_pr_commit_messages() -> list[Commit]:
     checkout HEAD is the synthetic merge commit, so ``HEAD^1..HEAD^2`` is
     the same range. If the workflow checks out the PR head SHA instead,
     diff against ``origin/<base-ref>`` when that ref is available locally.
-    A clone that holds none of these asks the API.
+    A clone that holds none of these, or only part of the pull request (a
+    shallow boundary ends a range early), asks the API.
     """
     if not is_pr_event():
         return []
 
     try:
-        messages = get_messages_from_event_range()
-        if messages:
-            return messages
-
-        messages = get_messages_from_merge_ref()
-        if messages:
-            return messages
-
         base_ref = os.getenv("GITHUB_BASE_REF", "")
-        if base_ref:
-            messages = get_messages_from_head_ref(base_ref)
-            if messages:
-                return messages
-
-        return get_messages_from_api()
+        messages = (
+            get_messages_from_event_range()
+            or get_messages_from_merge_ref()
+            or (get_messages_from_head_ref(base_ref) if base_ref else [])
+        )
+        total = get_pr_event().get("commits")
+        if messages and (not total or len(messages) == total):
+            return messages
+        return get_messages_from_api() or messages
     except Exception as e:
         print(
             f"::warning::Failed to retrieve PR commit messages: {e}",
