@@ -514,10 +514,12 @@ class TestGetPrCommitMessages(unittest.TestCase):
             patch("main.get_messages_from_event_range", return_value=[("b2", "fix")]),
             patch("main.get_pr_event", return_value={"commits": 2}),
             patch("main.get_messages_from_api", return_value=[]) as api,
+            patch("main.warn_shallow_checkout") as warn,
         ):
-            # The API cannot help either: keep what the clone had.
+            # The API cannot help either: check what the clone had, and say so.
             self.assertEqual(main.get_pr_commit_messages(), [("b2", "fix")])
         api.assert_called_once()
+        self.assertIn("Only 1 of the pull request's 2 commits", warn.call_args[0][0])
 
     def test_asks_the_api_when_the_clone_holds_none_of_them(self):
         with (

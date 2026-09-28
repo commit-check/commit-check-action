@@ -531,7 +531,16 @@ def get_pr_commit_messages() -> list[Commit]:
         total = get_pr_event().get("commits")
         if messages and (not total or len(messages) == total):
             return messages
-        return get_messages_from_api() or messages
+        from_api = get_messages_from_api()
+        if from_api:
+            return from_api
+        if messages:
+            warn_shallow_checkout(
+                f"Only {len(messages)} of the pull request's {total} commits "
+                "could be listed",
+                "the others were not checked",
+            )
+        return messages
     except Exception as e:
         print(
             f"::warning::Failed to retrieve PR commit messages: {e}",
