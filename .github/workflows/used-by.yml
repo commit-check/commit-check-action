@@ -15,6 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # create-pull-request authenticates its own push, so the token
+          # is not left in .git/config for the steps in between.
+          persist-credentials: false
       - uses: shenxianpeng/used-by@4c0501cd4b6370c275b50d46400538ae90b8e7a9 # v0.1.5
         with:
           repo: '${{ github.repository }}'
