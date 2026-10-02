@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import runpy
 import shutil
 import sys
 import tempfile
@@ -124,6 +125,34 @@ class TestEnvFlag(unittest.TestCase):
     def test_missing_uses_default(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertTrue(main.env_flag("FEATURE_FLAG", default="true"))
+
+
+class TestLogEnvVars(unittest.TestCase):
+    def test_every_input_is_logged_as_a_debug_command(self):
+        """``::debug::`` only shows with ACTIONS_STEP_DEBUG, so every input can
+        be logged without cluttering the ordinary log; an unset one reads as
+        its default, ``false``."""
+        buffer = io.StringIO()
+        with (
+            patch.dict(
+                os.environ, {"MESSAGE": "true", "PR_TITLE": "false"}, clear=True
+            ),
+            patch("sys.stdout", buffer),
+        ):
+            main.log_env_vars()
+        self.assertEqual(
+            buffer.getvalue().splitlines(),
+            [
+                "::debug::MESSAGE=true",
+                "::debug::BRANCH=false",
+                "::debug::AUTHOR_NAME=false",
+                "::debug::AUTHOR_EMAIL=false",
+                "::debug::DRY_RUN=false",
+                "::debug::JOB_SUMMARY=false",
+                "::debug::PR_COMMENTS=false",
+                "::debug::PR_TITLE=false",
+            ],
+        )
 
 
 class TestReconfigureIo(unittest.TestCase):
@@ -534,6 +563,26 @@ class TestGetPrCommitMessages(unittest.TestCase):
         ):
             self.assertEqual(main.get_pr_commit_messages(), [("a1", "feat: one")])
 
+    def test_nothing_listed_anywhere_is_empty_and_not_warned_here(self):
+        """With no partial list there is no "only N of M" to report; the
+        caller warns that it fell back to HEAD."""
+        with (
+            patch.dict(
+                os.environ,
+                {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": ""},
+            ),
+            patch("main.get_messages_from_event_range", return_value=[]),
+            patch("main.get_messages_from_merge_ref", return_value=[]),
+            patch("main.get_messages_from_head_ref") as mock_head,
+            patch("main.get_messages_from_api", return_value=[]) as api,
+            patch("main.warn_shallow_checkout") as warn,
+        ):
+            self.assertEqual(main.get_pr_commit_messages(), [])
+        # No base ref to diff against, so the head-ref reader is never asked.
+        mock_head.assert_not_called()
+        api.assert_called_once()
+        warn.assert_not_called()
+
     def test_falls_back_to_base_ref_when_merge_ref_is_unavailable(self):
         with (
             patch.dict(
@@ -743,6 +792,24 @@ class TestRunCommitCheck(unittest.TestCase):
             rc, results = main.run_commit_check()
         self.assertEqual(rc, 0)
         mock_title.assert_not_called()
+
+    def test_pr_title_check_needs_a_title_to_check(self):
+        """An event that carries no title adds no scope, rather than checking
+        an empty message."""
+        with (
+            patch("main.PR_TITLE_ENABLED", True),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_title", return_value=None),
+            patch("main.check_scope") as mock_scope,
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            rc, results = main.run_commit_check()
+        self.assertEqual((rc, results), (0, []))
+        mock_scope.assert_not_called()
 
     def test_non_pr_message_check_uses_commit_message_scope(self):
         with (
@@ -1803,6 +1870,47 @@ class TestRenderPrComment(unittest.TestCase):
         self.assertIn("| Scope | Checked value | Failed checks |", comment)
 
 
+class TestUnparsableScopeInTheReport(unittest.TestCase):
+    """A CLI response that is not JSON is a failure with no rule to link."""
+
+    def test_the_table_row_points_at_the_details(self):
+        scope = main.ScopeResult(label="Branch", raw_text="Error: cchk.toml: oops")
+        body = main.render_report([scope])
+        self.assertIn("❌ **1 of 1 check failed**", body)
+        self.assertIn(
+            "| Branch | — | _output could not be parsed — see details_ |", body
+        )
+        # The details block is where the raw output went.
+        self.assertIn("  ✖ Branch\n      Error: cchk.toml: oops\n", body)
+
+    def test_it_never_reaches_the_warnings_table(self):
+        scope = main.ScopeResult(label="Branch", raw_text="garbage")
+        table = main._markdown_table([scope], "warn", "Warnings")
+        self.assertEqual(table.splitlines()[2:], [])
+
+
+class TestReportFooter(unittest.TestCase):
+    def test_names_the_installed_commit_check(self):
+        with patch("importlib.metadata.version", return_value="9.8.7") as version:
+            self.assertEqual(main._commit_check_version(), "9.8.7")
+            self.assertEqual(
+                main._report_footer(),
+                "_commit-check 9.8.7 · "
+                "[Rules reference](https://commit-check.com/rules/)_",
+            )
+        version.assert_called_with("commit-check")
+
+    def test_without_a_version_it_still_links_the_rules(self):
+        """The footer is decoration: an unknown version drops out of it."""
+        missing = importlib.metadata.PackageNotFoundError("commit-check")
+        with patch("importlib.metadata.version", side_effect=missing):
+            self.assertEqual(main._commit_check_version(), "")
+            self.assertEqual(
+                main._report_footer(),
+                "_[Rules reference](https://commit-check.com/rules/)_",
+            )
+
+
 class TestAddJobSummary(unittest.TestCase):
     def test_false_skips(self):
         with patch("main.JOB_SUMMARY_ENABLED", False):
@@ -2150,6 +2258,45 @@ class TestAddPrComments(unittest.TestCase):
         existing.edit.assert_not_called()
         mock_pull_request.create_comment.assert_not_called()
 
+    def test_the_newest_report_is_updated_and_older_ones_deleted(self):
+        """Duplicates (two runs racing to create the first comment, say)
+        collapse into the newest one."""
+        older = MagicMock(body=f"{main.COMMENT_MARKER}\nolder report")
+        older.user.type = "Bot"
+        newer = MagicMock(body=f"{main.COMMENT_MARKER}\nnewer report")
+        newer.user.type = "Bot"
+        mock_pull_request = MagicMock()
+        mock_pull_request.get_comments.return_value = [older, newer]
+        mock_repo = MagicMock()
+        mock_repo.get_issue.return_value = mock_pull_request
+        github_module = MagicMock()
+        github_module.Github.return_value.get_repo.return_value = mock_repo
+
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "GITHUB_REF": "refs/pull/12/merge",
+                },
+            ),
+            patch.dict(sys.modules, {"github": github_module}),
+            patch("builtins.print"),
+        ):
+            rc = main.add_pr_comments([fail_scope()])
+        self.assertEqual(rc, 1)
+        github_module.Github.return_value.get_repo.assert_called_once_with("owner/repo")
+        mock_repo.get_issue.assert_called_once_with(12)
+        newer.edit.assert_called_once_with(main.render_pr_comment([fail_scope()]))
+        newer.delete.assert_not_called()
+        older.delete.assert_called_once_with()
+        older.edit.assert_not_called()
+        mock_pull_request.create_comment.assert_not_called()
+
 
 class _StubGithubException(Exception):
     """Stands in for github.GithubException, which is mocked away in these tests.
@@ -2250,6 +2397,48 @@ class TestAddPrCommentsFailures(unittest.TestCase):
             f"a failed post must be annotated, got: {printed}",
         )
 
+    def test_a_missing_pygithub_is_a_warning_not_a_crash(self):
+        """``None`` in sys.modules makes the import raise ImportError."""
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch.dict(sys.modules, {"github": None}),
+            patch("builtins.print") as mock_print,
+        ):
+            rc = main.add_pr_comments([fail_scope()])
+        self.assertEqual(rc, 0)
+        warning = mock_print.call_args[0][0]
+        self.assertTrue(warning.startswith("::warning::Unable to post PR comment: "))
+        self.assertIs(mock_print.call_args[1]["file"], sys.stderr)
+
+    def test_a_missing_token_or_repository_is_named(self):
+        for missing in ("GITHUB_TOKEN", "GITHUB_REPOSITORY"):
+            with self.subTest(missing=missing):
+                github_module = MagicMock()
+                github_module.GithubException = _StubGithubException
+                env = {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "GITHUB_REF": "refs/pull/12/merge",
+                    missing: "",
+                }
+                with (
+                    patch("main.PR_COMMENTS_ENABLED", True),
+                    patch("main.is_fork_pr_with_readonly_token", return_value=False),
+                    patch.dict(os.environ, env),
+                    patch.dict(sys.modules, {"github": github_module}),
+                    patch("builtins.print") as mock_print,
+                ):
+                    rc = main.add_pr_comments([fail_scope()])
+                self.assertEqual(rc, 0)
+                self.assertEqual(
+                    mock_print.call_args[0][0],
+                    f"::warning::Unable to post PR comment: {missing} is not set",
+                )
+                github_module.Github.assert_not_called()
+
 
 class TestIsForkPrWithReadonlyToken(unittest.TestCase):
     def test_fork_pr_with_pull_request_event(self):
@@ -2316,6 +2505,60 @@ class TestIsForkPr(unittest.TestCase):
         self.assertTrue(result)
         os.unlink(event_path)
 
+    def test_unreadable_event_is_not_a_fork(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        event_path = os.path.join(tmp.name, "event.json")
+        with open(event_path, "w", encoding="utf-8") as f:
+            f.write("not json")
+        with patch.dict(os.environ, {"GITHUB_EVENT_PATH": event_path}):
+            self.assertFalse(main.is_fork_pr())
+
+
+class TestGetPrNumber(unittest.TestCase):
+    def _event(self, payload) -> str:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "event.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(payload if isinstance(payload, str) else json.dumps(payload))
+        return path
+
+    def test_reads_the_number_from_a_pull_request_ref(self):
+        with patch.dict(
+            os.environ, {"GITHUB_REF": "refs/pull/42/merge", "GITHUB_EVENT_PATH": ""}
+        ):
+            self.assertEqual(main.get_pr_number(), 42)
+
+    def test_pull_request_target_reads_the_event_instead(self):
+        """There GITHUB_REF is the base branch, which names no pull request."""
+        for payload in ({"number": 7}, {"pull_request": {"number": 7}}):
+            with self.subTest(payload=payload):
+                env = {
+                    "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_EVENT_PATH": self._event(payload),
+                }
+                with patch.dict(os.environ, env):
+                    self.assertEqual(main.get_pr_number(), 7)
+
+    def test_no_number_anywhere_raises(self):
+        for payload in ({"pull_request": None}, {}, "not json"):
+            with self.subTest(payload=payload):
+                env = {
+                    "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_EVENT_PATH": self._event(payload),
+                }
+                with patch.dict(os.environ, env), self.assertRaises(ValueError):
+                    main.get_pr_number()
+
+    def test_no_event_payload_raises(self):
+        with (
+            patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}),
+            self.assertRaises(ValueError),
+        ):
+            os.environ.pop("GITHUB_EVENT_PATH", None)
+            main.get_pr_number()
+
 
 class TestLogErrorAndExit(unittest.TestCase):
     def test_exits_with_specified_code(self):
@@ -2378,9 +2621,25 @@ class TestMain(unittest.TestCase):
             main.main()
         self.assertEqual(ctx.exception.code, 0)
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_running_the_script_runs_main(self):
+        """action.yml runs ``python main.py``; with every input unset no
+        check is enabled, so it reports and exits without calling anything."""
+        out = io.StringIO()
+        with (
+            patch.dict(os.environ, {"PATH": os.environ.get("PATH", "")}, clear=True),
+            patch("sys.stdout", out),
+            patch("sys.stderr", io.StringIO()),
+            patch("subprocess.run") as mock_run,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            runpy.run_path(main.__file__, run_name="__main__")
+        self.assertEqual(ctx.exception.code, 0)
+        mock_run.assert_not_called()
+        self.assertIn("::debug::MESSAGE=false\n", out.getvalue())
+        self.assertTrue(
+            out.getvalue().endswith("✔ commit-check: all checks passed\n"),
+            out.getvalue(),
+        )
 
 
 class TestFindOwnComments(unittest.TestCase):
@@ -2424,6 +2683,14 @@ class TestFindOwnComments(unittest.TestCase):
         target, stale = main._find_own_comments([])
         self.assertIsNone(target)
         self.assertEqual(stale, [])
+
+    def test_a_comment_without_an_author_is_not_a_bot(self):
+        """A deleted account can leave ``user`` empty; that is not a crash,
+        and not a licence to adopt the comment either."""
+        orphan = self._comment("# Commit Check\nold report")
+        orphan.user = None
+        self.assertFalse(main._is_bot(orphan))
+        self.assertEqual(main._find_own_comments([orphan]), (None, []))
 
 
 def skip_scope(label: str = "PR title") -> main.ScopeResult:
@@ -2875,6 +3142,19 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
         self.assertIn("1 of 2 checks passed, 1 skipped", out)
         self.assertNotIn("all checks passed", out)
 
+    def test_step_log_all_skipped_claims_no_pass(self):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            main.render_step_log([skip_scope(), skip_scope("Branch")])
+        out = buf.getvalue()
+        self.assertIn("  ⊘ PR title (skipped)\n", out)
+        self.assertTrue(
+            out.endswith("⊘ commit-check: all checks skipped, nothing was validated\n"),
+            out,
+        )
+        self.assertNotIn("passed", out)
+        self.assertNotIn("::error", out)
+
 
 # ---------------------------------------------------------------------------
 # Integration: the real commit-check binary
@@ -3060,3 +3340,7 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
                 scope = main.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.status, "fail")
         self.assertIn("Expected ']'", scope.raw_text)
+
+
+if __name__ == "__main__":
+    unittest.main()
