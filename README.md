@@ -21,10 +21,11 @@
 
 </div>
 
-The GitHub Action for [Commit Check](https://github.com/commit-check/commit-check).
-It checks every commit of a pull request — message, branch, author, and
-optionally the PR title — against your `cchk.toml`, and reports the result in
-the job summary, as annotations on the diff and, if you want, as a PR comment.
+The GitHub Action for [Commit Check](https://github.com/commit-check/commit-check),
+commit policy as code for teams and AI agents. It checks every commit of a pull
+request — message, branch, author, and optionally the PR title — against your
+`cchk.toml`, and reports the result in the job summary, as annotations on the
+diff and, if you want, as a PR comment.
 
 ## Usage
 
