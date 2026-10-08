@@ -1,5 +1,5 @@
 name: Commit Check Action
-description: Check commit message formatting, branch naming, committer name, email, and more
+description: "Commit policy as code for teams and AI agents: check every commit of a pull request against your cchk.toml"
 author: shenxianpeng
 branding:
   icon: "git-commit"
