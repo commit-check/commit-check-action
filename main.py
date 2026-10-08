@@ -147,6 +147,19 @@ class ScopeResult:
         return "pass"
 
     @property
+    def skip_reason(self) -> str:
+        """Why a skipped scope did not run, or ``""`` when nobody said.
+
+        Newer commit-check releases name the reason on each skipped check (e.g.
+        "author dependabot[bot] is in [commit].ignore_authors"). A bare
+        "skipped" left the reader unable to tell a deliberate bypass from a
+        broken setup.
+        """
+        if self.status != "skip":
+            return ""
+        return next((c["reason"] for c in self.checks if c.get("reason")), "")
+
+    @property
     def failures(self) -> list[dict[str, str]]:
         """The checks that failed in this scope."""
         return [c for c in self.checks if c["status"] == "fail"]
@@ -362,6 +375,7 @@ def skipped_author_scope(flag: str) -> ScopeResult:
                 "error": "",
                 "suggest": "",
                 "docs_url": "",
+                "reason": "the pull request's head commit could not be resolved",
             }
         ],
     )
@@ -843,7 +857,8 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
         if scope.status == "skip":
             # Deliberately not a ✔. Nothing was validated here, and a tick
             # claiming otherwise is what made a bypassed policy look enforced.
-            lines.append(f"  ⊘ {label} (skipped)")
+            reason = scope.skip_reason
+            lines.append(f"  ⊘ {label} (skipped{f': {reason}' if reason else ''})")
             continue
         if scope.status == "pass":
             value = _scope_value(scope)
@@ -988,6 +1003,8 @@ def render_step_log(results: list[ScopeResult]) -> None:
         )
         if total and skipped == total:
             print("\u2298 commit-check: all checks skipped, nothing was validated")
+            if _skip_reasons(results):
+                print(_skip_reasons(results))
         elif warned or skipped:
             passed = total - skipped - warned
             tail = []
@@ -998,6 +1015,8 @@ def render_step_log(results: list[ScopeResult]) -> None:
             print(
                 f"\u2714 commit-check: {passed} of {total} checks passed, {', '.join(tail)}"
             )
+            if _skip_reasons(results):
+                print(_skip_reasons(results))
         else:
             print("\u2714 commit-check: all checks passed")
 
@@ -1029,6 +1048,22 @@ def _skip_count(results: list[ScopeResult]) -> int:
     that checks passed when they were skipped.
     """
     return sum(1 for scope in results if scope.status == "skip")
+
+
+def _skip_reasons(results: list[ScopeResult]) -> str:
+    """One sentence naming why checks were skipped, or ``""`` if unknown.
+
+    The verdict line is all most readers see, so it stays short: the config
+    section is dropped ("[commit].ignore_authors" and "[branch].ignore_authors"
+    both read "ignore_authors"), which folds the usual bot case into one
+    reason. The per-scope lines in the collapsed block keep the section.
+    """
+    reasons = list(
+        dict.fromkeys(
+            re.sub(r"\[\w+\]\.", "", s.skip_reason) for s in results if s.skip_reason
+        )
+    )
+    return f"Skipped because {'; '.join(reasons)}." if reasons else ""
 
 
 def _warn_count(results: list[ScopeResult]) -> int:
@@ -1211,16 +1246,21 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #
 #   ⊘ **All 5 checks skipped** — nothing was validated
 #
+#   Skipped because author dependabot[bot] is in ignore_authors.
+#
 #   ```text
 #   Commit message
-#     ⊘ PR title (skipped)
-#     ⊘ Commit 1/1 (skipped)
+#     ⊘ PR title (skipped: author dependabot[bot] is in [commit].ignore_authors)
+#     ⊘ Commit 1/1 (skipped: author dependabot[bot] is in [commit].ignore_authors)
 #   Branch
-#     ⊘ Branch (skipped)
+#     ⊘ Branch (skipped: author dependabot[bot] is in [branch].ignore_authors)
 #   Author
-#     ⊘ Author name (skipped)
-#     ⊘ Author email (skipped)
+#     ⊘ Author name (skipped: author dependabot[bot] is in [commit].ignore_authors)
+#     ⊘ Author email (skipped: author dependabot[bot] is in [commit].ignore_authors)
 #   ```
+#
+# The reason comes from commit-check; an older CLI sends none, and the line
+# reads "(skipped)" with no "Skipped because" sentence.
 #
 # A skipped scope deliberately carries no ✔ and no checked value: nothing was
 # examined, so there is no value to report and no pass to claim. When only some
@@ -1387,6 +1427,8 @@ def render_report(results: list[ScopeResult]) -> str:
         # checks passed" here is the defect this branch exists to prevent.
         lines.append(f"⊘ **All {total} {unit} skipped** — nothing was validated")
         lines.append("")
+        if _skip_reasons(results):
+            lines.extend([_skip_reasons(results), ""])
     elif warned or skipped:
         passed = total - skipped - warned
         tail = []
@@ -1396,6 +1438,8 @@ def render_report(results: list[ScopeResult]) -> str:
             tail.append(f"{skipped} skipped")
         lines.append(f"✅ **{passed} of {total} {unit} passed**, {', '.join(tail)}")
         lines.append("")
+        if _skip_reasons(results):
+            lines.extend([_skip_reasons(results), ""])
         if warned:
             lines.extend([_markdown_table(results, "warn", "Warnings"), ""])
     else:
