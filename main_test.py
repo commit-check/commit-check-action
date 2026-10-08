@@ -1011,6 +1011,7 @@ class TestRunCommitCheck(unittest.TestCase):
                     "error": "",
                     "suggest": "",
                     "docs_url": "",
+                    "reason": "the pull request's head commit could not be resolved",
                 }
             ],
         )
@@ -2693,12 +2694,12 @@ class TestFindOwnComments(unittest.TestCase):
         self.assertEqual(main._find_own_comments([orphan]), (None, []))
 
 
-def skip_scope(label: str = "PR title") -> main.ScopeResult:
+def skip_scope(label: str = "PR title", reason: str = "") -> main.ScopeResult:
     """A scope whose every rule declined to run (e.g. author in ignore_authors)."""
-    return main.ScopeResult(
-        label=label,
-        checks=[make_check("message", status="skip", rule_id="CC001", value="")],
-    )
+    check = make_check("message", status="skip", rule_id="CC001", value="")
+    if reason:
+        check["reason"] = reason
+    return main.ScopeResult(label=label, checks=[check])
 
 
 class TestSkippedScopes(unittest.TestCase):
@@ -2764,6 +2765,50 @@ class TestSkippedScopes(unittest.TestCase):
         """The ⊘ line carries no value, because nothing was examined."""
         body = main.render_report([skip_scope("PR title")])
         self.assertIn("  ⊘ PR title (skipped)", body)
+
+    def test_skip_reason_is_shown_on_the_scope_and_under_the_verdict(self):
+        """A skip says why, so a deliberate bypass reads as one."""
+        commit = "author dependabot[bot] is in [commit].ignore_authors"
+        branch = "author dependabot[bot] is in [branch].ignore_authors"
+        results = [
+            skip_scope("PR title", reason=commit),
+            skip_scope("Commit 1/1", reason=commit),
+            skip_scope("Branch", reason=branch),
+        ]
+        body = main.render_report(results)
+        self.assertIn(
+            "⊘ **All 3 checks skipped** — nothing was validated\n\n"
+            f"Skipped because {commit}; {branch}.\n",
+            body,
+        )
+        self.assertIn(f"  ⊘ PR title (skipped: {commit})", body)
+        self.assertIn(f"  ⊘ Branch (skipped: {branch})", body)
+
+    def test_skip_reason_follows_a_partial_skip_verdict(self):
+        reason = "author dependabot[bot] is in [branch].ignore_authors"
+        results = [pass_scope("PR title"), skip_scope("Branch", reason=reason)]
+        body = main.render_report(results)
+        self.assertIn(
+            f"✅ **1 of 2 checks passed**, 1 skipped\n\nSkipped because {reason}.\n",
+            body,
+        )
+
+    def test_skip_reason_reaches_the_step_log(self):
+        reason = "author dependabot[bot] is in [commit].ignore_authors"
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            main.render_step_log([skip_scope("PR title", reason=reason)])
+        self.assertIn(f"  ⊘ PR title (skipped: {reason})", out.getvalue())
+        self.assertIn(f"Skipped because {reason}.", out.getvalue())
+
+    def test_skip_reason_follows_a_partial_skip_in_the_step_log(self):
+        reason = "author dependabot[bot] is in [branch].ignore_authors"
+        results = [pass_scope("PR title"), skip_scope("Branch", reason=reason)]
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            main.render_step_log(results)
+        self.assertIn(f"Skipped because {reason}.", out.getvalue())
+
+    def test_a_passing_scope_has_no_skip_reason(self):
+        self.assertEqual(pass_scope("Branch", value="main").skip_reason, "")
 
     def test_older_engine_without_skip_is_unaffected(self):
         """Back-compat: engines that only emit pass/fail render as before."""
