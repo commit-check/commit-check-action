@@ -2778,7 +2778,7 @@ class TestSkippedScopes(unittest.TestCase):
         body = main.render_report(results)
         self.assertIn(
             "⊘ **All 3 checks skipped** — nothing was validated\n\n"
-            f"Skipped because {commit}; {branch}.\n",
+            "Skipped because author dependabot[bot] is in ignore_authors.\n",
             body,
         )
         self.assertIn(f"  ⊘ PR title (skipped: {commit})", body)
@@ -2789,7 +2789,8 @@ class TestSkippedScopes(unittest.TestCase):
         results = [pass_scope("PR title"), skip_scope("Branch", reason=reason)]
         body = main.render_report(results)
         self.assertIn(
-            f"✅ **1 of 2 checks passed**, 1 skipped\n\nSkipped because {reason}.\n",
+            "✅ **1 of 2 checks passed**, 1 skipped\n\n"
+            "Skipped because author dependabot[bot] is in ignore_authors.\n",
             body,
         )
 
@@ -2798,14 +2799,20 @@ class TestSkippedScopes(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as out:
             main.render_step_log([skip_scope("PR title", reason=reason)])
         self.assertIn(f"  ⊘ PR title (skipped: {reason})", out.getvalue())
-        self.assertIn(f"Skipped because {reason}.", out.getvalue())
+        self.assertIn(
+            "Skipped because author dependabot[bot] is in ignore_authors.",
+            out.getvalue(),
+        )
 
     def test_skip_reason_follows_a_partial_skip_in_the_step_log(self):
         reason = "author dependabot[bot] is in [branch].ignore_authors"
         results = [pass_scope("PR title"), skip_scope("Branch", reason=reason)]
         with patch("sys.stdout", new_callable=io.StringIO) as out:
             main.render_step_log(results)
-        self.assertIn(f"Skipped because {reason}.", out.getvalue())
+        self.assertIn(
+            "Skipped because author dependabot[bot] is in ignore_authors.",
+            out.getvalue(),
+        )
 
     def test_a_passing_scope_has_no_skip_reason(self):
         self.assertEqual(pass_scope("Branch", value="main").skip_reason, "")
@@ -3216,6 +3223,8 @@ CHECK_KEYS = {
     "fix",
     "docs_url",
 }
+#: Keys newer CLIs add on top: ``reason`` says why a check was skipped.
+OPTIONAL_CHECK_KEYS = {"reason"}
 STATUSES = {"pass", "fail", "warn", "skip"}
 
 
@@ -3278,7 +3287,8 @@ class TestRealCommitCheckBinary(unittest.TestCase):
         self.assertIn("checks", data)
         self.assertTrue(data["checks"], "CLI reported no checks")
         for check in data["checks"]:
-            self.assertEqual(set(check), CHECK_KEYS, check)
+            self.assertLessEqual(CHECK_KEYS, set(check), check)
+            self.assertLessEqual(set(check), CHECK_KEYS | OPTIONAL_CHECK_KEYS, check)
             self.assertIn(check["status"], STATUSES, check)
             self.assertRegex(check["rule_id"], r"^CC\d{3}$")
             self.assertTrue(

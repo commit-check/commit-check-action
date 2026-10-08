@@ -1053,10 +1053,16 @@ def _skip_count(results: list[ScopeResult]) -> int:
 def _skip_reasons(results: list[ScopeResult]) -> str:
     """One sentence naming why checks were skipped, or ``""`` if unknown.
 
-    The verdict line is all most readers see; the per-scope reasons sit in
-    a collapsed block. Each distinct reason is named once, in order.
+    The verdict line is all most readers see, so it stays short: the config
+    section is dropped ("[commit].ignore_authors" and "[branch].ignore_authors"
+    both read "ignore_authors"), which folds the usual bot case into one
+    reason. The per-scope lines in the collapsed block keep the section.
     """
-    reasons = list(dict.fromkeys(s.skip_reason for s in results if s.skip_reason))
+    reasons = list(
+        dict.fromkeys(
+            re.sub(r"\[\w+\]\.", "", s.skip_reason) for s in results if s.skip_reason
+        )
+    )
     return f"Skipped because {'; '.join(reasons)}." if reasons else ""
 
 
@@ -1240,8 +1246,7 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 #
 #   ⊘ **All 5 checks skipped** — nothing was validated
 #
-#   Skipped because author dependabot[bot] is in [commit].ignore_authors;
-#   author dependabot[bot] is in [branch].ignore_authors.
+#   Skipped because author dependabot[bot] is in ignore_authors.
 #
 #   ```text
 #   Commit message
