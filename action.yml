@@ -51,6 +51,10 @@ runs:
     - name: Install dependencies and run commit-check
       shell: bash
       run: |
+        # v1 gets no new features or fixes; say so on every run, before
+        # anything below can fail.
+        echo "::warning title=commit-check-action@v1 is no longer updated::This job runs commit-check 0.10.2 from August 2025. Switch to commit-check/commit-check-action@v2 for organization-wide policy, AI attribution rules and fix suggestions. v2 reads cchk.toml instead of .commit-check.yml: https://commit-check.com/migration/"
+
         if [[ "$RUNNER_OS" == "Linux" ]]; then
           # https://github.com/pypa/setuptools/issues/3269
           export DEB_PYTHON_INSTALL_LAYOUT=deb
