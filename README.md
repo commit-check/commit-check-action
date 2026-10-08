@@ -8,7 +8,7 @@
 **Catch bad commits before they merge — on every pull request.**
 
 [![Release](https://img.shields.io/github/v/release/commit-check/commit-check-action?labelColor=0b1620&color=2c9ccd&label=release)](https://github.com/commit-check/commit-check-action/releases)
-[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=167&color=2c9ccd&logo=github&logoColor=white&labelColor=0b1620)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
+[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=169&color=2c9ccd&logo=github&logoColor=white&labelColor=0b1620)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![Marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-2c9ccd?labelColor=0b1620&logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/commit-check-action)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://github.com/commit-check/commit-check-action/blob/main/action.yml#L84-L94)
 [![Coverage](https://img.shields.io/codecov/c/github/commit-check/commit-check-action?labelColor=0b1620&color=2c9ccd&label=coverage)](https://codecov.io/gh/commit-check/commit-check-action)
