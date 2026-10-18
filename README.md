@@ -203,7 +203,7 @@ Each entry in `scopes` has a `label` (`PR title`, `Commit 2/3`, `Branch`, ...),
 a `status` like the ones above, a `sha` (the full hash of the commit a
 `Commit N/M` or `Commit message` scope checked; empty for the others) and the
 check outcomes (`rule_id`, `check`, `status`, `value`, `error`, `suggest`,
-`fix`, `docs_url`) exactly as produced by `commit-check --format json`, so
+`fix`, `docs_url`, `reason`) exactly as produced by `commit-check --format json`, so
 downstream jobs can build their own reports or gate on individual rules.
 
 ## Action, pre-commit hook, or GitHub App?
