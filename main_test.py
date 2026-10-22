@@ -1334,6 +1334,50 @@ class TestRenderStepLog(unittest.TestCase):
             output,
         )
 
+    def test_commit_text_cannot_issue_workflow_commands(self):
+        # A failing rule prints the whole message, one line of the log per
+        # line of the message. The runner skips leading whitespace before
+        # looking for "::", and reads "##[" anywhere in a line.
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            checks=[
+                make_check(
+                    "message",
+                    status="fail",
+                    rule_id="CC001",
+                    value=(
+                        "bad subject\n\n"
+                        "::warning title=Forged::text\n"
+                        "  ::add-mask::secret\n"
+                        "old ##[error]form\n"
+                        "esc\x1b]52;c;eA==\x07"
+                    ),
+                    error="The commit message should follow Conventional Commits.",
+                )
+            ],
+        )
+        output = self._run([scope])
+        tree = output.split("::endgroup::")[0]
+        for line in tree.splitlines()[1:]:  # past ::group::, our own command
+            self.assertFalse(line.lstrip().startswith("::"), line)
+            self.assertNotIn("##[", line)
+            self.assertNotIn("\x1b", line)
+        self.assertIn("        \\::warning title=Forged::text\n", tree)
+        self.assertIn("          \\::add-mask::secret\n", tree)
+        self.assertIn("        old #\\#[error]form\n", tree)
+        self.assertIn("        esc\\x1b]52;c;eA==\\x07\n", tree)
+        # The annotations are commands already; their payload is left as is.
+        self.assertIn("%0A::warning title=Forged::text%0A", output)
+
+    def test_log_safe_leaves_ordinary_text_alone(self):
+        for text in [
+            "feat: add login",
+            "value: a::b",
+            "  ✔ Branch (feature/x)",
+            "tab\there",
+        ]:
+            self.assertEqual(main._log_safe(text), text)
+
     def test_annotation_names_the_commit_and_carries_the_fix(self):
         output = self._run([fix_scope("Commit 2/3", sha=SHA_B)])
         self.assertIn(
