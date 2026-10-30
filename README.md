@@ -54,8 +54,7 @@ jobs:
         with:
           message: true
           branch: true
-          author-name: false
-          author-email: false
+          pr-title: true
           job-summary: true
           pr-comments: true
 ```
