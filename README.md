@@ -33,7 +33,10 @@ Each of these is a complete workflow. Pick one, then turn on more checks when
 you need them.
 
 **Pull request title only.** On a repository that squash-merges, the title
-becomes the commit on `main`, so it is the one message worth checking:
+becomes the commit on `main`, so it is the one message worth checking. With
+GitHub's default squash message, a pull request of a single commit lands that
+commit's message instead; set the squash commit message to "Pull request
+title" in the repository settings to make the title the one that lands:
 
 ```yaml
 name: PR Title
