@@ -27,16 +27,49 @@ request — message, branch, author, and optionally the PR title — against you
 `cchk.toml`, and reports the result in the job summary, as annotations on the
 diff and, if you want, as a PR comment.
 
-## Start with one check
+## Usage
 
-Each of these is a complete workflow. Pick one, then turn on more checks when
-you need them.
+Three examples. Each is a complete workflow, e.g.
+`.github/workflows/commit-check.yml`; start with the one you need.
 
-**Pull request title only.** On a repository that squash-merges, the title
-becomes the commit on `main`, so it is the one message worth checking. With
-GitHub's default squash message, a pull request of a single commit lands that
-commit's message instead; set the squash commit message to "Pull request
-title" in the repository settings to make the title the one that lands:
+### 1. Commit messages and branch name
+
+Both are checked by default, against
+[Conventional Commits](https://www.conventionalcommits.org/) and
+[Conventional Branch](https://conventionalbranch.org/), so the action needs no
+inputs:
+
+```yaml
+name: Commit Check
+
+on:
+  pull_request:
+
+jobs:
+  commit-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # recommended: read the PR's commits from the clone
+      - uses: commit-check/commit-check-action@v2
+```
+
+> [!NOTE]
+> `fetch-depth: 0` is recommended, not required. A shallow clone holds only
+> GitHub's merge commit, so the action lists the pull request's commits
+> through the API — up to 250, with `pull-requests: read` — and fetches the
+> head commit for the author checks. If the commits cannot be listed, it warns
+> and checks HEAD alone; if the head commit cannot be fetched, it warns and
+> skips the author checks.
+
+### 2. Pull request title
+
+On a repository that squash-merges, the title becomes the commit on `main`, so
+it is the one message worth checking. With GitHub's default squash message, a
+pull request of a single commit lands that commit's message instead; set the
+squash commit message to "Pull request title" in the repository settings to
+make the title the one that lands:
 
 ```yaml
 name: PR Title
@@ -57,110 +90,12 @@ jobs:
           pr-title: true
 ```
 
-**Branch name only**, against [Conventional Branch](https://conventionalbranch.org/):
+### 3. Job summary
 
-```yaml
-name: Branch Name
-
-on:
-  pull_request:
-
-jobs:
-  branch-name:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: commit-check/commit-check-action@v2
-        with:
-          message: false
-```
-
-Both read the repository's `cchk.toml` if there is one, so a custom type list
-or an extra allowed branch name works without changing the workflow.
-
-## Usage
-
-Add a workflow, e.g. `.github/workflows/commit-check.yml`:
-
-```yaml
-name: Commit Check
-
-on:
-  pull_request:
-    branches: 'main'
-
-jobs:
-  commit-check:
-    runs-on: ubuntu-latest
-    permissions:  # use permissions because use of pr-comments
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Recommended: the action then reads the PR's commits from the clone.
-          # With the default fetch-depth: 1 it asks the GitHub API instead.
-          fetch-depth: 0
-      - uses: commit-check/commit-check-action@v2
-        with:
-          # Commit messages and the branch name are checked by default;
-          # see Inputs for the rest.
-          pr-comments: true
-```
-
-> [!NOTE]
-> `fetch-depth: 0` is recommended, not required. A shallow clone holds only
-> GitHub's merge commit, so the action lists the pull request's commits
-> through the API — up to 250, with `pull-requests: read` — and fetches the
-> head commit for the author checks. If the commits cannot be listed, it warns
-> and checks HEAD alone; if the head commit cannot be fetched, it warns and
-> skips the author checks.
-
-Runs on `ubuntu-latest`, `macos-latest` and `windows-latest`. Self-hosted
-runners need a few tools — see [Good to know](#good-to-know).
-
-## Inputs
-
-| Input | Default | What it does |
-|---|---|---|
-| `message` | `true` | Check every commit message against [Conventional Commits](https://www.conventionalcommits.org/) |
-| `branch` | `true` | Check the branch name against [Conventional Branch](https://conventionalbranch.org/) |
-| `author-name` | `false` | Check each commit's author name |
-| `author-email` | `false` | Check each commit's author email |
-| `pr-title` | `false` | Check the pull request title against Conventional Commits — the one that matters for squash merges. Pull request events only |
-| `pr-comments` | `false` | Post the report as a pull request comment, edited in place on later runs. Needs `pull-requests: write`; skipped on fork pull requests |
-| `job-summary` | `true` | Write the report to the job summary |
-| `dry-run` | `false` | Report failures as warnings and always exit 0 |
-
-> [!TIP]
-> `pull_request` does not fire when a title is edited. With `pr-title: true`,
-> add `types: [opened, synchronize, reopened, edited]` to re-check a renamed
-> pull request.
-
-## Configuration
-
-The action reads the repository's `cchk.toml` or `commit-check.toml` — the same
-file the CLI and the pre-commit hook use. Any setting can also come from a
-`CCHK_*` environment variable, no config file needed:
-
-```yaml
-- uses: commit-check/commit-check-action@v2
-  env:
-    CCHK_SUBJECT_CAPITALIZED: "true"
-    CCHK_REQUIRE_SIGNED_OFF_BY: "true"
-    CCHK_AI_ATTRIBUTION: "forbid"
-    CCHK_ALLOW_COMMIT_TYPES: "feat,fix,docs,chore"
-```
-
-Priority: inputs > environment variables > config file > defaults. A rule
-listed under the config's top-level `warn` is reported in full but never fails
-the run. Every key: [configuration reference](https://commit-check.com/configuration/).
-
-## What it looks like
-
-A failing run opens with a count and a table of only what failed — each rule ID
-links to its documentation, each commit to itself — with the full tree one
-click away:
+Every run writes its report to the job summary; `job-summary` is on by
+default. A failing run opens with a count and a table of only what failed —
+each rule ID links to its documentation, each commit to itself — with the full
+tree one click away:
 
 > **Commit Check**
 >
@@ -204,8 +139,62 @@ The rest follow the same layout:
   `ignore_authors` — reads `⊘`, never `✔`.
 
 The step log prints the same tree, plus one annotation per finding on the
-Files changed tab. With `pr-comments: true` the same report is posted to the
-pull request, and later runs edit that one comment instead of adding more.
+Files changed tab. To post the same report on the pull request, edited in
+place on later runs, add `pr-comments: true` and grant the job
+`pull-requests: write`:
+
+```yaml
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: commit-check/commit-check-action@v2
+        with:
+          pr-comments: true
+```
+
+All three read the repository's `cchk.toml` if there is one, so a custom type
+list or an extra allowed branch name works without changing the workflow. The
+action runs on `ubuntu-latest`, `macos-latest` and `windows-latest`;
+self-hosted runners need a few tools — see [Good to know](#good-to-know).
+
+## Inputs
+
+| Input | Default | What it does |
+|---|---|---|
+| `message` | `true` | Check every commit message against [Conventional Commits](https://www.conventionalcommits.org/) |
+| `branch` | `true` | Check the branch name against [Conventional Branch](https://conventionalbranch.org/) |
+| `author-name` | `false` | Check each commit's author name |
+| `author-email` | `false` | Check each commit's author email |
+| `pr-title` | `false` | Check the pull request title against Conventional Commits — the one that matters for squash merges. Pull request events only |
+| `pr-comments` | `false` | Post the report as a pull request comment, edited in place on later runs. Needs `pull-requests: write`; skipped on fork pull requests |
+| `job-summary` | `true` | Write the report to the job summary |
+| `dry-run` | `false` | Report failures as warnings and always exit 0 |
+
+> [!TIP]
+> `pull_request` does not fire when a title is edited. With `pr-title: true`,
+> add `types: [opened, synchronize, reopened, edited]` to re-check a renamed
+> pull request.
+
+## Configuration
+
+The action reads the repository's `cchk.toml` or `commit-check.toml` — the same
+file the CLI and the pre-commit hook use. Any setting can also come from a
+`CCHK_*` environment variable, no config file needed:
+
+```yaml
+- uses: commit-check/commit-check-action@v2
+  env:
+    CCHK_SUBJECT_CAPITALIZED: "true"
+    CCHK_REQUIRE_SIGNED_OFF_BY: "true"
+    CCHK_AI_ATTRIBUTION: "forbid"
+    CCHK_ALLOW_COMMIT_TYPES: "feat,fix,docs,chore"
+```
+
+Priority: inputs > environment variables > config file > defaults. A rule
+listed under the config's top-level `warn` is reported in full but never fails
+the run. Every key: [configuration reference](https://commit-check.com/configuration/).
 
 ## Outputs
 
@@ -332,8 +321,8 @@ repositories) or run the action on `pull_request_target` — both are covered in
 
 Dependabot pull requests are not forks, but their `pull_request` runs also get
 a read-only token by default. The `pull-requests: write` grant in the
-[usage example](#usage) is honoured for them; without it the action logs a
-`::warning::` on the 403 and leaves the report in the job summary. Adding
+[job summary example](#3-job-summary) is honoured for them; without it the
+action logs a `::warning::` on the 403 and leaves the report in the job summary. Adding
 `dependabot[bot]` to `ignore_authors` skips those pull requests altogether.
 
 </details>
