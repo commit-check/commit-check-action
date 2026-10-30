@@ -103,11 +103,8 @@ jobs:
           fetch-depth: 0
       - uses: commit-check/commit-check-action@v2
         with:
-          message: true
-          branch: true
-          author-name: false
-          author-email: false
-          job-summary: true
+          # Commit messages and the branch name are checked by default;
+          # see Inputs for the rest.
           pr-comments: true
 ```
 
