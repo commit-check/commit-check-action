@@ -27,6 +27,54 @@ request — message, branch, author, and optionally the PR title — against you
 `cchk.toml`, and reports the result in the job summary, as annotations on the
 diff and, if you want, as a PR comment.
 
+## Start with one check
+
+Each of these is a complete workflow. Pick one, then turn on more checks when
+you need them.
+
+**Pull request title only.** On a repository that squash-merges, the title
+becomes the commit on `main`, so it is the one message worth checking:
+
+```yaml
+name: PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: commit-check/commit-check-action@v2
+        with:
+          message: false
+          branch: false
+          pr-title: true
+```
+
+**Branch name only**, against [Conventional Branch](https://conventionalbranch.org/):
+
+```yaml
+name: Branch Name
+
+on:
+  pull_request:
+
+jobs:
+  branch-name:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: commit-check/commit-check-action@v2
+        with:
+          message: false
+```
+
+Both read the repository's `cchk.toml` if there is one, so a custom type list
+or an extra allowed branch name works without changing the workflow.
+
 ## Usage
 
 Add a workflow, e.g. `.github/workflows/commit-check.yml`:
