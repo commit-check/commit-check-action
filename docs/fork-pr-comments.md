@@ -60,6 +60,16 @@ that forbids it — `pull_request_target` runs in the context of the base reposi
 `GITHUB_TOKEN` has the permissions your workflow asks for and `pr-comments: true` works
 on fork pull requests.
 
+> [!IMPORTANT]
+> From December 2, 2026, GitHub blocks `pull_request_target` by default in public
+> repositories on github.com that have no Actions event policy of their own
+> ([changelog](https://github.blog/changelog/2026-09-17-workflow-execution-protections-in-github-actions-generally-available)).
+> After that date the workflow below stops running unless a policy allows the event. To
+> keep it, add one under **Settings → Actions → Policies** that permits
+> `pull_request_target` for this workflow file only
+> ([Control workflow execution](https://docs.github.com/actions/how-tos/administer/control-workflow-execution)).
+> The App needs no such policy.
+
 ```yaml
 on:
   pull_request_target:
