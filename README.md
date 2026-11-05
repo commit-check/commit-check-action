@@ -244,6 +244,8 @@ fails when a contributor did not install the hook.
   <strong>Collective</strong>&nbsp;&nbsp;
   <a href="https://github.com/cpp-linter"><img src="https://avatars.githubusercontent.com/cpp-linter?s=200&v=4" alt="cpp-linter" width="28"/></a>
   <strong>cpp-linter</strong>&nbsp;&nbsp;
+  <a href="https://github.com/freebsd"><img src="https://avatars.githubusercontent.com/freebsd?s=200&v=4" alt="FreeBSD" width="28"/></a>
+  <strong>FreeBSD</strong>&nbsp;&nbsp;
   <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
 </p>
 
