@@ -282,7 +282,7 @@ def get_pr_event() -> dict[str, Any]:
         with open(event_path, "r", encoding="utf-8") as f:
             event = json.load(f)
         return event.get("pull_request") or {}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a bad payload warns, never fails the step
         print(f"::warning::Failed to read the PR from the event: {e}", file=sys.stderr)
         return {}
 
@@ -302,8 +302,7 @@ def _rev_resolves(rev: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             encoding="utf-8",
             check=False,
         )
@@ -317,8 +316,7 @@ def _fetch_commit(sha: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "fetch", "--no-tags", "--quiet", "--depth=1", "origin", sha],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             encoding="utf-8",
             check=False,
         )
@@ -392,7 +390,7 @@ def get_pr_title() -> str | None:
         with open(event_path, "r", encoding="utf-8") as f:
             event = json.load(f)
         return event.get("pull_request", {}).get("title")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a bad payload warns, never fails the step
         print(f"::warning::Failed to read PR title from event: {e}", file=sys.stderr)
         return None
 
@@ -427,8 +425,7 @@ def _messages_in_range(revision_range: str) -> list[Commit]:
     """Commits in ``revision_range`` as ``(sha, message)``, oldest first, or ``[]``."""
     result = subprocess.run(
         ["git", "log", COMMIT_LOG_FORMAT, "--reverse", revision_range],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         encoding="utf-8",
         check=False,
     )
@@ -446,8 +443,7 @@ def head_sha() -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             encoding="utf-8",
             check=False,
         )
@@ -555,7 +551,7 @@ def get_pr_commit_messages() -> list[Commit]:
                 "the others were not checked",
             )
         return messages
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - warn, then check what we have
         print(
             f"::warning::Failed to retrieve PR commit messages: {e}",
             file=sys.stderr,
@@ -602,8 +598,7 @@ def run_check_json(
     result = subprocess.run(
         command,
         input=input_text,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         encoding="utf-8",
         check=False,
@@ -1410,11 +1405,11 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 
 def _commit_check_version() -> str:
     """Version of the commit-check CLI that produced these results."""
-    try:
-        from importlib.metadata import version
+    from importlib.metadata import PackageNotFoundError, version
 
+    try:
         return version("commit-check")
-    except Exception:
+    except PackageNotFoundError:
         return ""
 
 
@@ -1564,7 +1559,7 @@ def is_fork_pr() -> bool:
         return bool(
             head_full_name and base_full_name and head_full_name != base_full_name
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable payload is not a fork PR
         return False
 
 
@@ -1600,7 +1595,7 @@ def get_pr_number() -> int:
             )
             if number:
                 return int(number)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - fall through to the error below
             pass
     raise ValueError(
         "Unable to determine PR number from GITHUB_REF or GITHUB_EVENT_PATH"
@@ -1611,7 +1606,7 @@ def _is_bot(comment: Any) -> bool:
     """Whether a comment was posted by a bot account rather than a person."""
     try:
         return comment.user.type == "Bot"
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unknown author is not a bot
         return False
 
 
@@ -1737,7 +1732,7 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         # comment is absent, and nothing says why.
         print(f"::warning::Unable to post PR comment: {e}", file=sys.stderr)
         return 0
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the comment is best-effort
         print(f"::warning::Unable to post PR comment: {e}", file=sys.stderr)
         return 0
 
