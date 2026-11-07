@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("GITHUB_STEP_SUMMARY", "/tmp/step_summary.txt")
 
-import main  # noqa: E402
+import main
 
 #: The report footer names the installed commit-check version, which differs
 #: between a contributor's machine and CI. Golden tests pin it so they assert on
@@ -313,7 +313,7 @@ class TestGetPrTitle(unittest.TestCase):
 class TestRunCheckJson(unittest.TestCase):
     def test_parses_json_output(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("branch")))
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+        with patch("main.subprocess.run", return_value=mock_result):
             rc, data, raw = main.run_check_json(["--branch"])
         self.assertEqual(rc, 0)
         self.assertEqual(data["status"], "pass")
@@ -757,7 +757,7 @@ class TestRunCommitCheck(unittest.TestCase):
             ) as mock_scope,
             patch("main.run_other_checks", return_value=[]),
         ):
-            rc, results = main.run_commit_check()
+            rc, _results = main.run_commit_check()
         self.assertEqual(rc, 0)
         mock_scope.assert_called_once_with(
             "PR title", ["--message"], input_text="feat: a feature"
@@ -775,7 +775,7 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.check_scope", return_value=fail_scope("PR title")),
             patch("main.run_other_checks", return_value=[]),
         ):
-            rc, results = main.run_commit_check()
+            rc, _results = main.run_commit_check()
         self.assertEqual(rc, 1)
 
     def test_pr_title_skipped_outside_pr_context(self):
@@ -789,7 +789,7 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.get_pr_title") as mock_title,
             patch("main.run_other_checks", return_value=[]),
         ):
-            rc, results = main.run_commit_check()
+            rc, _results = main.run_commit_check()
         self.assertEqual(rc, 0)
         mock_title.assert_not_called()
 
@@ -825,7 +825,7 @@ class TestRunCommitCheck(unittest.TestCase):
             ) as mock_scope,
             patch("main.run_other_checks", return_value=[]),
         ):
-            rc, results = main.run_commit_check()
+            rc, _results = main.run_commit_check()
         self.assertEqual(rc, 0)
         mock_pr.assert_not_called()
         # HEAD is the commit that was checked, so the scope names it too.
@@ -882,7 +882,7 @@ class TestRunCommitCheck(unittest.TestCase):
             ) as mock_scope,
             patch("main.run_other_checks", return_value=[]),
         ):
-            rc, results, output = self._run_capturing_stdout()
+            rc, _results, output = self._run_capturing_stdout()
         self.assertEqual(rc, 0)
         self.assertIn(self.SHALLOW_PR_WARNING, output)
         mock_scope.assert_called_once_with("Commit message", ["--message"], sha="")
@@ -1162,9 +1162,7 @@ class TestGetMessagesFromApi(unittest.TestCase):
             for sha, msg in api_commits
         ]
         github_module = MagicMock()
-        github_module.Github.return_value.get_repo.return_value.get_pull.return_value = (
-            pull
-        )
+        github_module.Github.return_value.get_repo.return_value.get_pull.return_value = pull
         env = {
             "GITHUB_TOKEN": "token",
             "GITHUB_REPOSITORY": "owner/repo",
@@ -1554,7 +1552,7 @@ class TestRenderStepLog(unittest.TestCase):
             ],
         )
         output = self._run([scope])
-        annotation = [ln for ln in output.splitlines() if ln.startswith("::error")][0]
+        annotation = next(ln for ln in output.splitlines() if ln.startswith("::error"))
         self.assertNotIn("\n", annotation.removeprefix("::error "))
         self.assertIn("first line", annotation)
 
@@ -3391,7 +3389,7 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
         mock_result = MagicMock(returncode=0, stdout="{}", stderr="")
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
             main.run_check_json(["--branch"])
-        self.assertIs(mock_run.call_args[1]["stderr"], main.subprocess.PIPE)
+        self.assertIs(mock_run.call_args[1]["capture_output"], True)
 
     def test_a_notice_does_not_break_the_json(self):
         mock_result = MagicMock(
@@ -3399,9 +3397,11 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
             stdout=json_output(make_check("branch")),
             stderr=self.NOTICE,
         )
-        with patch("main.subprocess.run", return_value=mock_result):
-            with patch.object(sys, "stderr", io.StringIO()):
-                rc, data, raw = main.run_check_json(["--branch"])
+        with (
+            patch("main.subprocess.run", return_value=mock_result),
+            patch.object(sys, "stderr", io.StringIO()),
+        ):
+            rc, data, _raw = main.run_check_json(["--branch"])
         self.assertEqual(rc, 0)
         self.assertIsNotNone(data)
         self.assertEqual(data["status"], "pass")
@@ -3410,9 +3410,11 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
 
     def test_a_notice_alone_does_not_fail_the_scope(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(), stderr=self.NOTICE)
-        with patch("main.subprocess.run", return_value=mock_result):
-            with patch.object(sys, "stderr", io.StringIO()):
-                scope = main.check_scope("Branch", ["--branch"])
+        with (
+            patch("main.subprocess.run", return_value=mock_result),
+            patch.object(sys, "stderr", io.StringIO()),
+        ):
+            scope = main.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.status, "pass")
         self.assertEqual(scope.raw_text, "")
 
@@ -3421,10 +3423,12 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
             returncode=0, stdout=json_output(make_check("branch")), stderr=self.NOTICE
         )
         fake_err = io.StringIO()
-        with patch("main.subprocess.run", return_value=mock_result):
-            with patch.object(sys, "stderr", fake_err):
-                for _ in range(3):
-                    main.run_check_json(["--branch"])
+        with (
+            patch("main.subprocess.run", return_value=mock_result),
+            patch.object(sys, "stderr", fake_err),
+        ):
+            for _ in range(3):
+                main.run_check_json(["--branch"])
         printed = fake_err.getvalue()
         self.assertIn("--branch requested but no branch rules are configured", printed)
         # Once, not once per scope and per commit in the pull request.
@@ -3434,9 +3438,11 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
         mock_result = MagicMock(
             returncode=2, stdout="", stderr="Error: cchk.toml: Expected ']'\n"
         )
-        with patch("main.subprocess.run", return_value=mock_result):
-            with patch.object(sys, "stderr", io.StringIO()):
-                scope = main.check_scope("Branch", ["--branch"])
+        with (
+            patch("main.subprocess.run", return_value=mock_result),
+            patch.object(sys, "stderr", io.StringIO()),
+        ):
+            scope = main.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.status, "fail")
         self.assertIn("Expected ']'", scope.raw_text)
 
