@@ -1405,11 +1405,11 @@ def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
 
 def _commit_check_version() -> str:
     """Version of the commit-check CLI that produced these results."""
-    from importlib.metadata import PackageNotFoundError, version
-
     try:
+        from importlib.metadata import version
+
         return version("commit-check")
-    except PackageNotFoundError:
+    except Exception:  # noqa: BLE001 - the version is decoration, never fail on it
         return ""
 
 
