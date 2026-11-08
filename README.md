@@ -256,8 +256,10 @@ fails when a contributor did not install the hook.
 
 The action is a composite step and uses what the runner already has:
 
-- **Python 3.10 or newer** on `PATH` (`python3`, or `python` on Windows). No
-  `setup-python` step is needed on GitHub-hosted runners. Everything the action
+- **Python 3.11 or newer** on `PATH` (`python3`, or `python` on Windows). The
+  `*-latest` GitHub-hosted runners already have it. `ubuntu-22.04` ships 3.10,
+  so add `actions/setup-python` with `python-version: "3.11"` (or newer) before
+  this step there. Everything the action
   installs goes under `$RUNNER_TEMP`, never into your checkout.
 - **`gh` CLI** — used to verify the build-provenance attestation of the
   `commit-check` wheel before installing it. Present on GitHub-hosted images;

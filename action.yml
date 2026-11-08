@@ -63,6 +63,13 @@ runs:
           PYTHON_CMD="python3"
         fi
 
+        # The pinned commit-check needs Python 3.11+. Say so here: on an older
+        # python3, pip would only report that no matching version exists.
+        if ! $PYTHON_CMD -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+          echo "::error::commit-check-action needs Python 3.11 or newer on PATH, found $($PYTHON_CMD --version 2>&1). Add actions/setup-python with python-version 3.11 or newer before this step."
+          exit 1
+        fi
+
         # Everything the action installs lives under $RUNNER_TEMP, never in the
         # caller's checkout: a later `git status`, linter or upload-artifact step
         # must not see our venv or wheels.
