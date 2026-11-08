@@ -14,15 +14,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The floor and the newest. 3.10 is the real floor: main.py annotates
-        # with `str | None` and has no `from __future__ import annotations`, so
-        # the annotation is evaluated at def time, and main_test.py uses
-        # parenthesized context managers. Both are 3.10+.
+        # The floor and the newest. 3.11 is the real floor: the pinned
+        # commit-check (2.20.0 and later) requires it, and the action refuses
+        # an older python3 before installing anything.
         #
         # The action itself runs on whatever python3 the runner ships, so the
         # in-between versions add little here — unlike commit-check, which is a
         # published package and tests every one.
-        py: ['3.10', '3.14']
+        py: ['3.11', '3.14']
         os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
     runs-on: ${{ matrix.os }}
     steps:
@@ -54,8 +53,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          # 3.10 is the real floor, see the test job
-          python-version: "3.10"
+          # 3.11 is the real floor, see the test job
+          python-version: "3.11"
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
