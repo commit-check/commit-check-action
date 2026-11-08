@@ -311,6 +311,23 @@ def _rev_resolves(rev: str) -> bool:
     return result.returncode == 0
 
 
+def _local_author(sha: str) -> tuple[str, str] | None:
+    """Author (name, email) of a commit the clone holds, or ``None``."""
+    try:
+        result = subprocess.run(
+            ["git", "show", "-s", "--format=%an%x1f%ae", sha],
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError:
+        return None
+    name, sep, email = result.stdout.strip("\n").partition("\x1f")
+    if result.returncode != 0 or not sep:
+        return None
+    return name, email
+
+
 def _fetch_commit(sha: str) -> bool:
     """Fetch one commit, without its history, into a clone that lacks it."""
     try:
@@ -653,23 +670,22 @@ def check_scope(
 def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
     """Check each PR commit individually via commit-check --message.
 
-    A commit the clone holds is checked by its hash (``--rev``), so the CLI
-    reads its message and its own author: the AI author rule (CC017) and
+    The raw message is piped in, so every commit is read the same way
+    whether the clone holds it or only the API listed it. Its own author
+    goes with it as git's author variables, which is where the CLI reads the
+    author of a piped message: the AI author rule (CC017) and
     ``ignore_authors`` then judge that commit's author, not whoever HEAD or
-    the runner's git config names. A commit listed only by the API is piped
-    in, with the author the API recorded passed as git's author variables.
+    the runner's git config names.
     """
     results: list[ScopeResult] = []
     total = len(pr_commits)
     for index, (sha, msg) in enumerate(pr_commits, start=1):
         label = f"Commit {index}/{total}"
-        if sha and _rev_resolves(sha):
-            results.append(check_scope(label, ["--message", "--rev", sha], sha=sha))
-            continue
+        author = API_AUTHORS.get(sha) or (_local_author(sha) if sha else None)
         env = None
-        if sha in API_AUTHORS:
-            name, email = API_AUTHORS[sha]
-            env = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email}
+        if author:
+            names = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL")
+            env = {key: value for key, value in zip(names, author) if value} or None
         results.append(
             check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
         )
