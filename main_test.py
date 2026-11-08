@@ -1,5 +1,6 @@
 """Unit tests for main.py."""
 
+import functools
 import importlib.metadata
 import io
 import json
@@ -7,6 +8,7 @@ import os
 import re
 import runpy
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -390,6 +392,68 @@ class TestCheckScope(unittest.TestCase):
 
 
 class TestRunPrMessageChecks(unittest.TestCase):
+    """Each commit's raw message is piped in, with that commit's own author."""
+
+    def setUp(self):
+        local = patch("main._local_author", return_value=None)
+        self.local_author = local.start()
+        self.addCleanup(local.stop)
+        main.API_AUTHORS.clear()
+        self.addCleanup(main.API_AUTHORS.clear)
+
+    def test_a_commit_in_the_clone_carries_its_own_author(self):
+        """The raw message is still piped, so it reads as before (no --rev)."""
+        self.local_author.return_value = ("Renovate Bot", "bot@renovateapp.com")
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            scopes = main.run_pr_message_checks([(SHA_A, "fix: something")])
+        self.assertEqual(scopes[0].status, "pass")
+        self.assertEqual(scopes[0].sha, SHA_A)
+        self.local_author.assert_called_once_with(SHA_A)
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["commit-check", "--format", "json", "--message"],
+        )
+        self.assertEqual(mock_run.call_args[1]["input"], "fix: something")
+        env = mock_run.call_args[1]["env"]
+        self.assertEqual(env["GIT_AUTHOR_NAME"], "Renovate Bot")
+        self.assertEqual(env["GIT_AUTHOR_EMAIL"], "bot@renovateapp.com")
+
+    def test_a_blank_author_field_is_left_to_git(self):
+        self.local_author.return_value = ("Renovate Bot", "")
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            main.run_pr_message_checks([(SHA_A, "fix: something")])
+        env = mock_run.call_args[1]["env"]
+        self.assertEqual(env["GIT_AUTHOR_NAME"], "Renovate Bot")
+        self.assertNotEqual(env.get("GIT_AUTHOR_EMAIL"), "")
+
+    def test_no_author_at_all_passes_no_environment(self):
+        self.local_author.return_value = ("", "")
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            main.run_pr_message_checks([(SHA_A, "fix: something")])
+        self.assertIsNone(mock_run.call_args[1]["env"])
+
+    def test_a_commit_without_a_hash_is_not_looked_up(self):
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with patch("main.subprocess.run", return_value=mock_result):
+            main.run_pr_message_checks([("", "fix: something")])
+        self.local_author.assert_not_called()
+
+    def test_an_api_listed_commit_carries_its_author(self):
+        """No commit to read, so the API's author goes in git's variables."""
+        main.API_AUTHORS[SHA_A] = ("google-labs-jules[bot]", "jules@example.com")
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            main.run_pr_message_checks([(SHA_A, "fix: something")])
+        self.assertEqual(mock_run.call_args[1]["input"], "fix: something")
+        env = mock_run.call_args[1]["env"]
+        self.assertEqual(env["GIT_AUTHOR_NAME"], "google-labs-jules[bot]")
+        self.assertEqual(env["GIT_AUTHOR_EMAIL"], "jules@example.com")
+        # The rest of the environment is kept: PATH finds the CLI.
+        self.assertEqual(env.get("PATH"), os.environ.get("PATH"))
+
     def test_single_message_pass(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
@@ -449,6 +513,69 @@ class TestRunPrMessageChecks(unittest.TestCase):
             scopes = main.run_pr_message_checks([])
         self.assertEqual(scopes, [])
         mock_run.assert_not_called()
+
+
+class TestLocalAuthor(unittest.TestCase):
+    """The author of a commit the clone holds, read from git."""
+
+    def test_reads_name_and_email(self):
+        result = MagicMock(returncode=0, stdout="Jane Dev\x1fjane@example.com\n")
+        with patch("main.subprocess.run", return_value=result) as mock_run:
+            self.assertEqual(
+                main._local_author(SHA_A), ("Jane Dev", "jane@example.com")
+            )
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["git", "show", "-s", "--format=%an%x1f%ae", SHA_A],
+        )
+
+    def test_a_commit_git_cannot_show_has_no_author(self):
+        result = MagicMock(returncode=128, stdout="")
+        with patch("main.subprocess.run", return_value=result):
+            self.assertIsNone(main._local_author(SHA_A))
+
+    def test_output_without_the_separator_has_no_author(self):
+        result = MagicMock(returncode=0, stdout="unexpected\n")
+        with patch("main.subprocess.run", return_value=result):
+            self.assertIsNone(main._local_author(SHA_A))
+
+    def test_missing_git_has_no_author(self):
+        with patch("main.subprocess.run", side_effect=OSError("no git")):
+            self.assertIsNone(main._local_author(SHA_A))
+
+    def test_reads_a_real_commit(self):
+        with tempfile.TemporaryDirectory() as repo:
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Renovate Bot",
+                "GIT_AUTHOR_EMAIL": "bot@renovateapp.com",
+                "GIT_COMMITTER_NAME": "Renovate Bot",
+                "GIT_COMMITTER_EMAIL": "bot@renovateapp.com",
+            }
+            run = functools.partial(
+                subprocess.run, cwd=repo, env=env, check=True, capture_output=True
+            )
+            run(["git", "init", "-q"])
+            run(
+                [
+                    "git",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "chore: bump",
+                ]
+            )
+            sha = run(["git", "rev-parse", "HEAD"], text=True).stdout.strip()
+            cwd = os.getcwd()
+            os.chdir(repo)
+            try:
+                author = main._local_author(sha)
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(author, ("Renovate Bot", "bot@renovateapp.com"))
 
 
 class TestRunOtherChecks(unittest.TestCase):
@@ -1158,9 +1285,17 @@ class TestGetMessagesFromApi(unittest.TestCase):
     def _run(self, total, api_commits, head="b2"):
         pull = MagicMock()
         pull.get_commits.return_value = [
-            MagicMock(sha=sha, commit=MagicMock(message=msg))
+            MagicMock(
+                sha=sha,
+                commit=MagicMock(
+                    message=msg,
+                    author=MagicMock(email=f"{sha}@example.com"),
+                ),
+            )
             for sha, msg in api_commits
         ]
+        for listed in pull.get_commits.return_value:
+            listed.commit.author.name = f"author {listed.sha}"
         github_module = MagicMock()
         github_module.Github.return_value.get_repo.return_value.get_pull.return_value = pull
         env = {
@@ -1184,6 +1319,37 @@ class TestGetMessagesFromApi(unittest.TestCase):
             github_module.Github.call_args[1]["base_url"],
             "https://ghe.example.com/api/v3",
         )
+
+    def test_records_each_commit_author(self):
+        main.API_AUTHORS.clear()
+        self.addCleanup(main.API_AUTHORS.clear)
+        self._run(2, [("a1", "feat: one"), ("b2", "fix: two")])
+        self.assertEqual(
+            main.API_AUTHORS,
+            {
+                "a1": ("author a1", "a1@example.com"),
+                "b2": ("author b2", "b2@example.com"),
+            },
+        )
+
+    def test_a_commit_without_an_author_records_nothing(self):
+        main.API_AUTHORS.clear()
+        self.addCleanup(main.API_AUTHORS.clear)
+        pull = MagicMock()
+        pull.get_commits.return_value = [
+            MagicMock(sha="b2", commit=MagicMock(message="fix: two", author=None))
+        ]
+        github_module = MagicMock()
+        github_module.Github.return_value.get_repo.return_value.get_pull.return_value = pull
+        env = {"GITHUB_TOKEN": "token", "GITHUB_REPOSITORY": "owner/repo"}
+        with (
+            patch.dict(os.environ, env),
+            patch("main.get_pr_event", return_value={"number": 7, "commits": 1}),
+            patch("main.get_pr_head_sha", return_value="b2"),
+            patch.dict(sys.modules, {"github": github_module}),
+        ):
+            self.assertEqual(main.get_messages_from_api(), [("b2", "fix: two")])
+        self.assertEqual(main.API_AUTHORS, {})
 
     def test_a_list_that_ends_elsewhere_is_not_used(self):
         # A force push after the event: same count, other commits.
