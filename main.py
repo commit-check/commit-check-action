@@ -87,6 +87,38 @@ DRY_RUN_ENABLED = env_flag("DRY_RUN")
 JOB_SUMMARY_ENABLED = env_flag("JOB_SUMMARY")
 PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
 PR_TITLE_ENABLED = env_flag("PR_TITLE")
+PR_BODY_ENABLED = env_flag("PR_BODY")
+
+#: The label ``ai-label: true`` puts on a pull request that an AI tool wrote.
+DEFAULT_AI_LABEL = "ai-assisted"
+#: The colour a label gets when the Action has to create it.
+AI_LABEL_COLOR = "8250df"
+
+
+def ai_label_name() -> str | None:
+    """The label to put on an AI-written pull request, or ``None`` for none.
+
+    ``ai-label: true`` means the default label; any other value but
+    ``false`` is the label's own name.
+    """
+    value = os.getenv("AI_LABEL", "false").strip()
+    if not value or value.lower() == "false":
+        return None
+    return DEFAULT_AI_LABEL if value.lower() == "true" else value
+
+
+#: AI coding agents that open pull requests from their own GitHub App, by
+#: login, with the tool each one is. The same list as the GitHub App's.
+AI_AGENT_BOTS = {
+    "amazon-q-developer[bot]": "Amazon Q Developer",
+    "chatgpt-codex-connector[bot]": "OpenAI Codex",
+    "claude[bot]": "Claude Code",
+    "copilot-swe-agent[bot]": "GitHub Copilot",
+    "cursor[bot]": "Cursor",
+    "devin-ai-integration[bot]": "Devin",
+    "factory-droid[bot]": "Factory Droid",
+    "google-labs-jules[bot]": "Jules",
+}
 
 
 @dataclass
@@ -109,6 +141,8 @@ class ScopeResult:
     checks: list[dict[str, str]] = field(default_factory=list)
     raw_text: str = ""
     sha: str = ""
+    #: The AI tools the CLI found in what this scope checked (``ai_tools``).
+    ai_tools: list[str] = field(default_factory=list)
 
     @property
     def display_label(self) -> str:
@@ -220,6 +254,8 @@ def log_env_vars():
         "JOB_SUMMARY",
         "PR_COMMENTS",
         "PR_TITLE",
+        "PR_BODY",
+        "AI_LABEL",
     ):
         value = os.getenv(name, "false")
         print(f"::debug::{name}={value}")
@@ -410,6 +446,26 @@ def get_pr_title() -> str | None:
     except Exception as e:  # noqa: BLE001 - a bad payload warns, never fails the step
         print(f"::warning::Failed to read PR title from event: {e}", file=sys.stderr)
         return None
+
+
+def get_pr_body() -> str | None:
+    """Read the pull request description from the event payload.
+
+    GitHub sends ``null`` for a pull request opened with no description.
+    """
+    body = get_pr_event().get("body")
+    return body if isinstance(body, str) and body.strip() else None
+
+
+def get_pr_opener_tool() -> str | None:
+    """The AI tool that opened the pull request from its own app, if any."""
+    login = (get_pr_event().get("user") or {}).get("login") or ""
+    return AI_AGENT_BOTS.get(str(login).lower())
+
+
+#: The AI tools found in the pull request description when it was read for
+#: the label only (``ai-label`` without ``pr-body``), so it is no scope.
+PR_BODY_AI_TOOLS: list[str] = []
 
 
 #: One commit to check: ``(full sha, message)``.
@@ -663,7 +719,13 @@ def check_scope(
     """
     _rc, data, raw = run_check_json(args, input_text=input_text, env=env)
     if isinstance(data, dict):
-        return ScopeResult(label=label, checks=data.get("checks", []), sha=sha)
+        tools = data.get("ai_tools")
+        return ScopeResult(
+            label=label,
+            checks=data.get("checks", []),
+            sha=sha,
+            ai_tools=[str(t) for t in tools] if isinstance(tools, list) else [],
+        )
     return ScopeResult(label=label, raw_text=raw, sha=sha)
 
 
@@ -727,8 +789,11 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
 
     Checks are evaluated in order:
       1. PR title (when ``pr-title: true`` and in a PR event)
-      2. Individual PR commit messages (when ``message: true`` and in a PR event)
-      3. All remaining checks (branch, author name/email, etc.)
+      2. PR description, AI rules only (when ``pr-body: true`` and in a PR
+         event; with only ``ai-label`` set it is read for the label, and no
+         scope is reported)
+      3. Individual PR commit messages (when ``message: true`` and in a PR event)
+      4. All remaining checks (branch, author name/email, etc.)
 
     Outside of a PR event all enabled checks are handed to the CLI at once.
     """
@@ -741,7 +806,17 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
         if pr_title:
             results.append(check_scope("PR title", ["--message"], input_text=pr_title))
 
-    # ---- 2. Commit message checks -----------------------------------------
+    # ---- 2. PR description ------------------------------------------------
+    if (PR_BODY_ENABLED or ai_label_name()) and is_pr_event():
+        pr_body = get_pr_body()
+        if pr_body:
+            scope = check_scope("PR description", ["--ai-only"], input_text=pr_body)
+            if PR_BODY_ENABLED:
+                results.append(scope)
+            else:
+                PR_BODY_AI_TOOLS[:] = scope.ai_tools
+
+    # ---- 3. Commit message checks -----------------------------------------
     if MESSAGE_ENABLED:
         pr_commits = get_pr_commit_messages()
         if pr_commits:
@@ -757,7 +832,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
                 "Could not list the pull request's commits", "only HEAD was checked"
             )
 
-    # ---- 3. Remaining checks (branch, author, etc.) -----------------------
+    # ---- 4. Remaining checks (branch, author, etc.) -----------------------
     # Outside a PR, check the HEAD commit message directly.
     if "--message" in args:
         results.append(check_scope("Commit message", ["--message"], sha=head_sha()))
@@ -1560,6 +1635,7 @@ def set_result_output(results: list[ScopeResult]) -> None:
         return
     payload = {
         "status": overall_status(results),
+        "ai_tools": ai_tools_found(results),
         "scopes": [
             {
                 "label": scope.label,
@@ -1782,6 +1858,93 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         return 0
 
 
+def ai_tools_found(results: list[ScopeResult]) -> list[str]:
+    """Every AI tool found in the pull request, sorted.
+
+    In the checked commits (messages and authors), the title, the
+    description, and the app that opened the pull request.
+    """
+    tools = {tool for scope in results for tool in scope.ai_tools}
+    tools.update(PR_BODY_AI_TOOLS)
+    if is_pr_event():
+        opener = get_pr_opener_tool()
+        if opener:
+            tools.add(opener)
+    return sorted(tools)
+
+
+def add_ai_label(results: list[ScopeResult]) -> None:
+    """Label the pull request when an AI tool wrote any of it (``ai-label``).
+
+    The label is only ever added, never removed: a maintainer may have put
+    it there by hand. Best-effort, like the comment: a failure warns and
+    never fails the step.
+    """
+    name = ai_label_name()
+    if not name or not is_pr_event():
+        return
+    tools = ai_tools_found(results)
+    if not tools:
+        print("No AI tool found in the pull request; no label added.")
+        return
+    found = ", ".join(tools)
+    if is_fork_pr_with_readonly_token():
+        print(
+            f"::warning::AI tools found ({found}), but the label '{name}' was "
+            "not added: pull requests from forked repositories get a read-only "
+            "GITHUB_TOKEN under the pull_request event. "
+            "See https://github.com/commit-check/commit-check-action/blob/main/docs/fork-pr-comments.md"
+        )
+        return
+
+    try:
+        from github import Auth, Github, GithubException  # type: ignore
+    except ImportError as e:
+        print(f"::warning::Unable to add the AI label: {e}", file=sys.stderr)
+        return
+
+    try:
+        token = os.getenv("GITHUB_TOKEN")
+        repo_name = os.getenv("GITHUB_REPOSITORY")
+        if not token:
+            raise ValueError("GITHUB_TOKEN is not set")
+        if not repo_name:
+            raise ValueError("GITHUB_REPOSITORY is not set")
+        pr_number = get_pr_number()
+        api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+        repo = Github(auth=Auth.Token(token), base_url=api_url).get_repo(repo_name)
+        issue = repo.get_issue(pr_number)
+        if any(label.name == name for label in issue.labels):
+            print(f"PR #{pr_number} already has the label '{name}' ({found}).")
+            return
+        try:
+            repo.get_label(name)
+        except GithubException as e:
+            if e.status != 404:
+                raise
+            try:
+                repo.create_label(
+                    name, AI_LABEL_COLOR, "Written with the help of an AI tool"
+                )
+            except GithubException as created:
+                # 422: another run created it in the meantime; use that one.
+                if created.status != 422:
+                    raise
+        issue.add_to_labels(name)
+        print(f"Added the label '{name}' to PR #{pr_number}: {found}.")
+    except GithubException as e:
+        hint = (
+            " Ensure your workflow grants 'pull-requests: write' permission."
+            if e.status == 403
+            else ""
+        )
+        print(
+            f"::warning::Unable to add the AI label.{hint} Error: {e}", file=sys.stderr
+        )
+    except Exception as e:  # noqa: BLE001 - the label is best-effort
+        print(f"::warning::Unable to add the AI label: {e}", file=sys.stderr)
+
+
 def log_error_and_exit(ret_code: int) -> None:
     """Exit with the given code.
 
@@ -1806,6 +1969,7 @@ def main():
     set_result_output(results)
 
     ret_code = max(ret_code, add_job_summary(results), add_pr_comments(results))
+    add_ai_label(results)
 
     if DRY_RUN_ENABLED:
         ret_code = 0

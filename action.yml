@@ -37,6 +37,14 @@ inputs:
     description: check pull request title following conventional commits
     required: false
     default: false
+  pr-body:
+    description: check the pull request description against the AI attribution rules (ai_attribution in cchk.toml)
+    required: false
+    default: false
+  ai-label:
+    description: label the pull request when an AI tool wrote any of it; true for the label ai-assisted, or the label's name
+    required: false
+    default: false
 outputs:
   result:
     description: Structured check results as JSON (status pass/warn/skip/fail + per-scope label, sha and checks). Consume with fromJSON(steps.<id>.outputs.result).
@@ -110,4 +118,6 @@ runs:
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
         PR_TITLE: ${{ inputs.pr-title }}
+        PR_BODY: ${{ inputs.pr-body }}
+        AI_LABEL: ${{ inputs.ai-label }}
         GITHUB_TOKEN: ${{ github.token }}
