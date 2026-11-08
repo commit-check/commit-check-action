@@ -79,14 +79,16 @@ runners need a few tools — see [Good to know](#good-to-know).
 | `author-name` | `false` | Check each commit's author name |
 | `author-email` | `false` | Check each commit's author email |
 | `pr-title` | `false` | Check the pull request title against Conventional Commits — the one that matters for squash merges. Pull request events only |
+| `pr-body` | `false` | Check the pull request description against the AI rules of `cchk.toml` (`ai_attribution`) only. Pull request events only |
+| `ai-label` | `false` | Label the pull request when an AI tool wrote any of it (a commit, the description, or an agent's app that opened it): `true` for `ai-assisted`, or the label's name. Labels are only added, never removed. Needs `pull-requests: write`; skipped on fork pull requests |
 | `pr-comments` | `false` | Post the report as a pull request comment, edited in place on later runs. Needs `pull-requests: write`; skipped on fork pull requests |
 | `job-summary` | `true` | Write the report to the job summary |
 | `dry-run` | `false` | Report failures as warnings and always exit 0 |
 
 > [!TIP]
-> `pull_request` does not fire when a title is edited. With `pr-title: true`,
-> add `types: [opened, synchronize, reopened, edited]` to re-check a renamed
-> pull request.
+> `pull_request` does not fire when a title or description is edited. With
+> `pr-title` or `pr-body`, add `types: [opened, synchronize, reopened, edited]`
+> to re-check an edited pull request.
 
 ## Configuration
 

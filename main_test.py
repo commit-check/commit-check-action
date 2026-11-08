@@ -153,6 +153,8 @@ class TestLogEnvVars(unittest.TestCase):
                 "::debug::JOB_SUMMARY=false",
                 "::debug::PR_COMMENTS=false",
                 "::debug::PR_TITLE=false",
+                "::debug::PR_BODY=false",
+                "::debug::AI_LABEL=false",
             ],
         )
 
@@ -3611,6 +3613,343 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
             scope = main.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.status, "fail")
         self.assertIn("Expected ']'", scope.raw_text)
+
+
+def _pr_event(pull_request: dict) -> str:
+    """Write a pull_request event payload and return its path."""
+    path = os.path.join(tempfile.mkdtemp(), "event.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"pull_request": pull_request}, f)
+    return path
+
+
+class TestAiLabelName(unittest.TestCase):
+    def test_values(self):
+        cases = {
+            "false": None,
+            "FALSE": None,
+            "": None,
+            "  ": None,
+            "true": "ai-assisted",
+            "True": "ai-assisted",
+            "AI generated": "AI generated",
+            " needs-ai-review ": "needs-ai-review",
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value), patch.dict(os.environ, {"AI_LABEL": value}):
+                self.assertEqual(main.ai_label_name(), expected)
+
+    def test_unset_is_off(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(main.ai_label_name())
+
+
+class TestPrBodyAndOpener(unittest.TestCase):
+    def _env(self, pull_request: dict):
+        return patch.dict(
+            os.environ,
+            {
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_EVENT_PATH": _pr_event(pull_request),
+            },
+        )
+
+    def test_body(self):
+        with self._env({"body": "Adds a parser."}):
+            self.assertEqual(main.get_pr_body(), "Adds a parser.")
+
+    def test_no_description_is_none(self):
+        for body in (None, "", " \n "):
+            with self.subTest(body=body), self._env({"body": body}):
+                self.assertIsNone(main.get_pr_body())
+
+    def test_an_agent_app_opened_it(self):
+        with self._env({"user": {"login": "Copilot-SWE-Agent[bot]"}}):
+            self.assertEqual(main.get_pr_opener_tool(), "GitHub Copilot")
+
+    def test_a_person_or_another_bot_opened_it(self):
+        for user in ({"login": "octocat"}, {"login": "dependabot[bot]"}, None, {}):
+            with self.subTest(user=user), self._env({"user": user}):
+                self.assertIsNone(main.get_pr_opener_tool())
+
+
+class TestCheckScopeAiTools(unittest.TestCase):
+    def _scope(self, payload):
+        result = MagicMock(returncode=0, stdout=json.dumps(payload), stderr="")
+        with patch("main.subprocess.run", return_value=result):
+            return main.check_scope("Commit 1/1", ["--message"])
+
+    def test_reads_the_tools(self):
+        scope = self._scope({"checks": [], "ai_tools": ["Claude Code"]})
+        self.assertEqual(scope.ai_tools, ["Claude Code"])
+
+    def test_an_older_cli_reports_none(self):
+        self.assertEqual(self._scope({"checks": []}).ai_tools, [])
+        self.assertEqual(self._scope({"checks": [], "ai_tools": "x"}).ai_tools, [])
+
+
+class TestRunCommitCheckPrBody(unittest.TestCase):
+    def setUp(self):
+        main.PR_BODY_AI_TOOLS.clear()
+        self.addCleanup(main.PR_BODY_AI_TOOLS.clear)
+
+    def _run(self, pr_body_enabled, ai_label, body="Adds a parser."):
+        body_scope = main.ScopeResult(
+            label="PR description", checks=[], ai_tools=["OpenAI Codex"]
+        )
+        with (
+            patch("main.PR_TITLE_ENABLED", False),
+            patch("main.PR_BODY_ENABLED", pr_body_enabled),
+            patch.dict(os.environ, {"AI_LABEL": ai_label}),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_body", return_value=body),
+            patch("main.check_scope", return_value=body_scope) as mock_scope,
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            _rc, results = main.run_commit_check()
+        return results, mock_scope
+
+    def test_pr_body_is_a_scope_checked_with_the_ai_rules_only(self):
+        results, mock_scope = self._run(True, "false")
+        mock_scope.assert_called_once_with(
+            "PR description", ["--ai-only"], input_text="Adds a parser."
+        )
+        self.assertEqual([r.label for r in results], ["PR description"])
+
+    def test_ai_label_alone_reads_it_but_reports_no_scope(self):
+        results, mock_scope = self._run(False, "true")
+        mock_scope.assert_called_once()
+        self.assertEqual(results, [])
+        self.assertEqual(main.PR_BODY_AI_TOOLS, ["OpenAI Codex"])
+
+    def test_off_by_default(self):
+        results, mock_scope = self._run(False, "false")
+        mock_scope.assert_not_called()
+        self.assertEqual(results, [])
+
+    def test_no_description_nothing_to_check(self):
+        results, mock_scope = self._run(True, "true", body=None)
+        mock_scope.assert_not_called()
+        self.assertEqual(results, [])
+
+
+class TestAiToolsFound(unittest.TestCase):
+    def setUp(self):
+        main.PR_BODY_AI_TOOLS.clear()
+        self.addCleanup(main.PR_BODY_AI_TOOLS.clear)
+
+    def test_union_of_scopes_description_and_opener(self):
+        main.PR_BODY_AI_TOOLS[:] = ["OpenAI Codex"]
+        results = [
+            main.ScopeResult(label="Commit 1/2", ai_tools=["Claude Code"]),
+            main.ScopeResult(label="Commit 2/2", ai_tools=["Claude Code", "Cursor"]),
+        ]
+        with (
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_opener_tool", return_value="Devin"),
+        ):
+            found = main.ai_tools_found(results)
+        self.assertEqual(found, ["Claude Code", "Cursor", "Devin", "OpenAI Codex"])
+
+    def test_outside_a_pull_request_only_the_scopes(self):
+        results = [main.ScopeResult(label="Commit message", ai_tools=["Aider"])]
+        with (
+            patch("main.is_pr_event", return_value=False),
+            patch("main.get_pr_opener_tool") as opener,
+        ):
+            self.assertEqual(main.ai_tools_found(results), ["Aider"])
+        opener.assert_not_called()
+
+    def test_result_output_carries_them(self):
+        output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
+        results = [main.ScopeResult(label="Commit 1/1", ai_tools=["Claude Code"])]
+        with (
+            patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}),
+            patch("main.is_pr_event", return_value=False),
+        ):
+            main.set_result_output(results)
+        payload = json.loads(read_github_output(output_path)["result"])
+        self.assertEqual(payload["ai_tools"], ["Claude Code"])
+
+
+class TestAddAiLabel(unittest.TestCase):
+    """``ai-label``: added when an AI tool wrote any of the PR, never removed."""
+
+    AI_SCOPE = main.ScopeResult(label="Commit 1/1", ai_tools=["Claude Code"])
+
+    def setUp(self):
+        main.PR_BODY_AI_TOOLS.clear()
+
+    def _run(self, results, label="true", labels=(), get_label=None, add=None):
+        issue = MagicMock()
+        issue.labels = [MagicMock() for _ in labels]
+        for mock_label, name in zip(issue.labels, labels):
+            mock_label.name = name
+        if add is not None:
+            issue.add_to_labels.side_effect = add
+        repo = MagicMock()
+        repo.get_issue.return_value = issue
+        if get_label is not None:
+            repo.get_label.side_effect = get_label
+        github_module = MagicMock()
+        github_module.GithubException = _StubGithubException
+        github_module.Github.return_value.get_repo.return_value = repo
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AI_LABEL": label,
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "GITHUB_REF": "refs/pull/12/merge",
+                },
+            ),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("main.get_pr_opener_tool", return_value=None),
+            patch.dict(sys.modules, {"github": github_module}),
+            patch("builtins.print") as mock_print,
+        ):
+            main.add_ai_label(results)
+        printed = [
+            c[0][0]
+            for c in mock_print.call_args_list
+            if c[0] and isinstance(c[0][0], str)
+        ]
+        return repo, issue, printed, github_module
+
+    def test_adds_the_default_label(self):
+        repo, issue, printed, _ = self._run([self.AI_SCOPE])
+        issue.add_to_labels.assert_called_once_with("ai-assisted")
+        repo.create_label.assert_not_called()
+        self.assertIn("Added the label 'ai-assisted' to PR #12: Claude Code.", printed)
+
+    def test_a_custom_label(self):
+        _repo, issue, _printed, _ = self._run([self.AI_SCOPE], label="AI generated")
+        issue.add_to_labels.assert_called_once_with("AI generated")
+
+    def test_creates_a_missing_label(self):
+        repo, issue, _printed, _ = self._run(
+            [self.AI_SCOPE], get_label=_StubGithubException(404)
+        )
+        repo.create_label.assert_called_once_with(
+            "ai-assisted", main.AI_LABEL_COLOR, "Written with the help of an AI tool"
+        )
+        issue.add_to_labels.assert_called_once_with("ai-assisted")
+
+    def test_already_labelled(self):
+        _repo, issue, printed, _ = self._run([self.AI_SCOPE], labels=("ai-assisted",))
+        issue.add_to_labels.assert_not_called()
+        self.assertTrue(any("already has the label" in p for p in printed))
+
+    def test_no_ai_no_label_and_no_api_call(self):
+        _repo, _issue, printed, github_module = self._run(
+            [main.ScopeResult(label="Commit 1/1")]
+        )
+        github_module.Github.assert_not_called()
+        self.assertIn("No AI tool found in the pull request; no label added.", printed)
+
+    def test_off_or_outside_a_pull_request_does_nothing(self):
+        _repo, _issue, printed, github_module = self._run(
+            [self.AI_SCOPE], label="false"
+        )
+        github_module.Github.assert_not_called()
+        self.assertEqual(printed, [])
+        with (
+            patch.dict(os.environ, {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "push"}),
+            patch("builtins.print") as mock_print,
+        ):
+            main.add_ai_label([self.AI_SCOPE])
+        mock_print.assert_not_called()
+
+    def test_forbidden_names_the_permission(self):
+        _repo, _issue, printed, _ = self._run(
+            [self.AI_SCOPE], add=_StubGithubException(403)
+        )
+        warning = next(p for p in printed if "::warning::" in p)
+        self.assertIn("pull-requests: write", warning)
+
+    def test_other_api_errors_warn(self):
+        _repo, _issue, printed, _ = self._run(
+            [self.AI_SCOPE], get_label=_StubGithubException(500)
+        )
+        warning = next(p for p in printed if "::warning::" in p)
+        self.assertNotIn("pull-requests: write", warning)
+
+    def test_any_other_error_warns(self):
+        _repo, _issue, printed, _ = self._run([self.AI_SCOPE], add=RuntimeError("boom"))
+        self.assertIn("::warning::Unable to add the AI label: boom", printed)
+
+    def test_missing_token_warns(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "pull_request"},
+                clear=True,
+            ),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("main.get_pr_opener_tool", return_value=None),
+            patch.dict(
+                sys.modules,
+                {"github": MagicMock(GithubException=_StubGithubException)},
+            ),
+            patch("builtins.print") as mock_print,
+        ):
+            main.add_ai_label([self.AI_SCOPE])
+        self.assertIn("GITHUB_TOKEN is not set", mock_print.call_args[0][0])
+
+    def test_missing_repository_warns(self):
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AI_LABEL": "true",
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "GITHUB_TOKEN": "t",
+                },
+                clear=True,
+            ),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("main.get_pr_opener_tool", return_value=None),
+            patch.dict(
+                sys.modules,
+                {"github": MagicMock(GithubException=_StubGithubException)},
+            ),
+            patch("builtins.print") as mock_print,
+        ):
+            main.add_ai_label([self.AI_SCOPE])
+        self.assertIn("GITHUB_REPOSITORY is not set", mock_print.call_args[0][0])
+
+    def test_fork_with_a_read_only_token_warns(self):
+        with (
+            patch.dict(
+                os.environ, {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "pull_request"}
+            ),
+            patch("main.is_fork_pr_with_readonly_token", return_value=True),
+            patch("main.get_pr_opener_tool", return_value=None),
+            patch("builtins.print") as mock_print,
+        ):
+            main.add_ai_label([self.AI_SCOPE])
+        warning = mock_print.call_args[0][0]
+        self.assertIn("::warning::AI tools found (Claude Code)", warning)
+        self.assertIn("read-only", warning)
+
+    def test_a_missing_pygithub_warns(self):
+        with (
+            patch.dict(
+                os.environ, {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "pull_request"}
+            ),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("main.get_pr_opener_tool", return_value=None),
+            patch.dict(sys.modules, {"github": None}),
+            patch("builtins.print") as mock_print,
+        ):
+            main.add_ai_label([self.AI_SCOPE])
+        self.assertIn("Unable to add the AI label", mock_print.call_args[0][0])
 
 
 if __name__ == "__main__":
