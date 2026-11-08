@@ -1911,7 +1911,8 @@ def add_ai_label(results: list[ScopeResult]) -> None:
         if not repo_name:
             raise ValueError("GITHUB_REPOSITORY is not set")
         pr_number = get_pr_number()
-        repo = Github(auth=Auth.Token(token)).get_repo(repo_name)
+        api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+        repo = Github(auth=Auth.Token(token), base_url=api_url).get_repo(repo_name)
         issue = repo.get_issue(pr_number)
         if any(label.name == name for label in issue.labels):
             print(f"PR #{pr_number} already has the label '{name}' ({found}).")
@@ -1921,9 +1922,14 @@ def add_ai_label(results: list[ScopeResult]) -> None:
         except GithubException as e:
             if e.status != 404:
                 raise
-            repo.create_label(
-                name, AI_LABEL_COLOR, "Written with the help of an AI tool"
-            )
+            try:
+                repo.create_label(
+                    name, AI_LABEL_COLOR, "Written with the help of an AI tool"
+                )
+            except GithubException as created:
+                # 422: another run created it in the meantime; use that one.
+                if created.status != 422:
+                    raise
         issue.add_to_labels(name)
         print(f"Added the label '{name}' to PR #{pr_number}: {found}.")
     except GithubException as e:

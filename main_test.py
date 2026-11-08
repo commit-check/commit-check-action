@@ -3784,7 +3784,9 @@ class TestAddAiLabel(unittest.TestCase):
     def setUp(self):
         main.PR_BODY_AI_TOOLS.clear()
 
-    def _run(self, results, label="true", labels=(), get_label=None, add=None):
+    def _run(
+        self, results, label="true", labels=(), get_label=None, add=None, create=None
+    ):
         issue = MagicMock()
         issue.labels = [MagicMock() for _ in labels]
         for mock_label, name in zip(issue.labels, labels):
@@ -3795,6 +3797,8 @@ class TestAddAiLabel(unittest.TestCase):
         repo.get_issue.return_value = issue
         if get_label is not None:
             repo.get_label.side_effect = get_label
+        if create is not None:
+            repo.create_label.side_effect = create
         github_module = MagicMock()
         github_module.GithubException = _StubGithubException
         github_module.Github.return_value.get_repo.return_value = repo
@@ -3807,6 +3811,7 @@ class TestAddAiLabel(unittest.TestCase):
                     "GITHUB_REPOSITORY": "owner/repo",
                     "GITHUB_EVENT_NAME": "pull_request",
                     "GITHUB_REF": "refs/pull/12/merge",
+                    "GITHUB_API_URL": "https://ghe.example.com/api/v3",
                 },
             ),
             patch("main.is_fork_pr_with_readonly_token", return_value=False),
@@ -3840,6 +3845,30 @@ class TestAddAiLabel(unittest.TestCase):
             "ai-assisted", main.AI_LABEL_COLOR, "Written with the help of an AI tool"
         )
         issue.add_to_labels.assert_called_once_with("ai-assisted")
+
+    def test_uses_the_api_url_of_the_server(self):
+        _repo, _issue, _printed, github_module = self._run([self.AI_SCOPE])
+        self.assertEqual(
+            github_module.Github.call_args.kwargs["base_url"],
+            "https://ghe.example.com/api/v3",
+        )
+
+    def test_a_label_created_meanwhile_is_still_added(self):
+        _repo, issue, printed, _ = self._run(
+            [self.AI_SCOPE],
+            get_label=_StubGithubException(404),
+            create=_StubGithubException(422),
+        )
+        issue.add_to_labels.assert_called_once_with("ai-assisted")
+        self.assertIn("Added the label 'ai-assisted' to PR #12: Claude Code.", printed)
+
+    def test_a_label_that_cannot_be_created_is_not_added(self):
+        _repo, issue, _printed, _ = self._run(
+            [self.AI_SCOPE],
+            get_label=_StubGithubException(404),
+            create=_StubGithubException(403),
+        )
+        issue.add_to_labels.assert_not_called()
 
     def test_already_labelled(self):
         _repo, issue, printed, _ = self._run([self.AI_SCOPE], labels=("ai-assisted",))
