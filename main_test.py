@@ -390,6 +390,45 @@ class TestCheckScope(unittest.TestCase):
 
 
 class TestRunPrMessageChecks(unittest.TestCase):
+    """Commits the clone lacks are piped in; the rest are checked by hash."""
+
+    def setUp(self):
+        resolves = patch("main._rev_resolves", return_value=False)
+        resolves.start()
+        self.addCleanup(resolves.stop)
+        main.API_AUTHORS.clear()
+        self.addCleanup(main.API_AUTHORS.clear)
+
+    def test_a_commit_in_the_clone_is_checked_by_its_hash(self):
+        """The CLI then reads that commit's own author (CC017, ignore_authors)."""
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with (
+            patch("main._rev_resolves", return_value=True),
+            patch("main.subprocess.run", return_value=mock_result) as mock_run,
+        ):
+            scopes = main.run_pr_message_checks([(SHA_A, "fix: something")])
+        self.assertEqual(scopes[0].status, "pass")
+        self.assertEqual(scopes[0].sha, SHA_A)
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["commit-check", "--format", "json", "--message", "--rev", SHA_A],
+        )
+        self.assertIsNone(mock_run.call_args[1]["input"])
+        self.assertIsNone(mock_run.call_args[1]["env"])
+
+    def test_an_api_listed_commit_carries_its_author(self):
+        """No commit to read, so the API's author goes in git's variables."""
+        main.API_AUTHORS[SHA_A] = ("google-labs-jules[bot]", "jules@example.com")
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+            main.run_pr_message_checks([(SHA_A, "fix: something")])
+        self.assertEqual(mock_run.call_args[1]["input"], "fix: something")
+        env = mock_run.call_args[1]["env"]
+        self.assertEqual(env["GIT_AUTHOR_NAME"], "google-labs-jules[bot]")
+        self.assertEqual(env["GIT_AUTHOR_EMAIL"], "jules@example.com")
+        # The rest of the environment is kept: PATH finds the CLI.
+        self.assertEqual(env.get("PATH"), os.environ.get("PATH"))
+
     def test_single_message_pass(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
         with patch("main.subprocess.run", return_value=mock_result) as mock_run:
@@ -1158,9 +1197,17 @@ class TestGetMessagesFromApi(unittest.TestCase):
     def _run(self, total, api_commits, head="b2"):
         pull = MagicMock()
         pull.get_commits.return_value = [
-            MagicMock(sha=sha, commit=MagicMock(message=msg))
+            MagicMock(
+                sha=sha,
+                commit=MagicMock(
+                    message=msg,
+                    author=MagicMock(email=f"{sha}@example.com"),
+                ),
+            )
             for sha, msg in api_commits
         ]
+        for listed in pull.get_commits.return_value:
+            listed.commit.author.name = f"author {listed.sha}"
         github_module = MagicMock()
         github_module.Github.return_value.get_repo.return_value.get_pull.return_value = pull
         env = {
@@ -1184,6 +1231,37 @@ class TestGetMessagesFromApi(unittest.TestCase):
             github_module.Github.call_args[1]["base_url"],
             "https://ghe.example.com/api/v3",
         )
+
+    def test_records_each_commit_author(self):
+        main.API_AUTHORS.clear()
+        self.addCleanup(main.API_AUTHORS.clear)
+        self._run(2, [("a1", "feat: one"), ("b2", "fix: two")])
+        self.assertEqual(
+            main.API_AUTHORS,
+            {
+                "a1": ("author a1", "a1@example.com"),
+                "b2": ("author b2", "b2@example.com"),
+            },
+        )
+
+    def test_a_commit_without_an_author_records_nothing(self):
+        main.API_AUTHORS.clear()
+        self.addCleanup(main.API_AUTHORS.clear)
+        pull = MagicMock()
+        pull.get_commits.return_value = [
+            MagicMock(sha="b2", commit=MagicMock(message="fix: two", author=None))
+        ]
+        github_module = MagicMock()
+        github_module.Github.return_value.get_repo.return_value.get_pull.return_value = pull
+        env = {"GITHUB_TOKEN": "token", "GITHUB_REPOSITORY": "owner/repo"}
+        with (
+            patch.dict(os.environ, env),
+            patch("main.get_pr_event", return_value={"number": 7, "commits": 1}),
+            patch("main.get_pr_head_sha", return_value="b2"),
+            patch.dict(sys.modules, {"github": github_module}),
+        ):
+            self.assertEqual(main.get_messages_from_api(), [("b2", "fix: two")])
+        self.assertEqual(main.API_AUTHORS, {})
 
     def test_a_list_that_ends_elsewhere_is_not_used(self):
         # A force push after the event: same count, other commits.

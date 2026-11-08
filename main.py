@@ -489,6 +489,10 @@ def get_messages_from_head_ref(base_ref: str) -> list[Commit]:
 #: The most commits GitHub's pull request commits endpoint returns.
 API_COMMIT_LIMIT = 250
 
+#: Author (name, email) of each commit listed by the API, by hash. Those
+#: commits are not in the clone, so this is the only record of who wrote them.
+API_AUTHORS: dict[str, tuple[str, str]] = {}
+
 
 def get_messages_from_api() -> list[Commit]:
     """The pull request's commits from the REST API, for a clone without them.
@@ -509,7 +513,12 @@ def get_messages_from_api() -> list[Commit]:
     pull = (
         Github(auth=Auth.Token(token), base_url=api_url).get_repo(repo).get_pull(number)
     )
-    commits = [(c.sha, c.commit.message) for c in pull.get_commits()]
+    listed = list(pull.get_commits())
+    commits = [(c.sha, c.commit.message) for c in listed]
+    for c in listed:
+        author = c.commit.author
+        if author is not None:
+            API_AUTHORS[c.sha] = (author.name or "", author.email or "")
     # A force push after the event can leave the same count but other commits.
     head = get_pr_head_sha()
     if len(commits) != total or (head and commits[-1][0] != head):
@@ -578,7 +587,9 @@ def _relay_cli_notices(text: str) -> None:
 
 
 def run_check_json(
-    args: list[str], input_text: str | None = None
+    args: list[str],
+    input_text: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any] | None, str]:
     """Run ``commit-check --format json`` and return (exit code, parsed JSON, raw output).
 
@@ -602,6 +613,7 @@ def run_check_json(
         text=True,
         encoding="utf-8",
         check=False,
+        env={**os.environ, **env} if env else None,
     )
     out = result.stdout or ""
     err = result.stderr or ""
@@ -621,28 +633,45 @@ def run_check_json(
 
 
 def check_scope(
-    label: str, args: list[str], input_text: str | None = None, sha: str = ""
+    label: str,
+    args: list[str],
+    input_text: str | None = None,
+    sha: str = "",
+    env: dict[str, str] | None = None,
 ) -> ScopeResult:
     """Run commit-check for one scope and wrap the outcome in a ScopeResult.
 
     ``sha`` names the commit a message scope checked; it rides along on both
     outcomes so an unparsable CLI response still says which commit it was.
     """
-    _rc, data, raw = run_check_json(args, input_text=input_text)
+    _rc, data, raw = run_check_json(args, input_text=input_text, env=env)
     if isinstance(data, dict):
         return ScopeResult(label=label, checks=data.get("checks", []), sha=sha)
     return ScopeResult(label=label, raw_text=raw, sha=sha)
 
 
 def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
-    """Check each PR commit message individually via commit-check --message."""
+    """Check each PR commit individually via commit-check --message.
+
+    A commit the clone holds is checked by its hash (``--rev``), so the CLI
+    reads its message and its own author: the AI author rule (CC017) and
+    ``ignore_authors`` then judge that commit's author, not whoever HEAD or
+    the runner's git config names. A commit listed only by the API is piped
+    in, with the author the API recorded passed as git's author variables.
+    """
     results: list[ScopeResult] = []
     total = len(pr_commits)
     for index, (sha, msg) in enumerate(pr_commits, start=1):
+        label = f"Commit {index}/{total}"
+        if sha and _rev_resolves(sha):
+            results.append(check_scope(label, ["--message", "--rev", sha], sha=sha))
+            continue
+        env = None
+        if sha in API_AUTHORS:
+            name, email = API_AUTHORS[sha]
+            env = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email}
         results.append(
-            check_scope(
-                f"Commit {index}/{total}", ["--message"], input_text=msg, sha=sha
-            )
+            check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
         )
     return results
 
