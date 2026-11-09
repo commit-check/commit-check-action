@@ -129,8 +129,9 @@ click away:
 > <summary>Show all 4 checks</summary>
 >
 > ```text
-> Commit message
+> Pull request
 >   ✔ PR title (feat: add login page)
+> Commit message
 >   ✔ Commit 1/2 (d87faca) (feat: add login page)
 >   ✖ Commit 2/2 (5584f46) (1 failure)
 >       CC001 message
@@ -172,7 +173,7 @@ names the line to remove:
 > | PR description | `Claude Code` | [CC013 ai-attribution](https://commit-check.com/rules/#cc013) |
 >
 > ```text
-> PR description
+> Pull request
 >   ✖ PR description (1 failure)
 >       CC013 ai-attribution
 >         value: Claude Code

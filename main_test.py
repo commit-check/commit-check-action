@@ -1735,10 +1735,21 @@ class TestRenderStepLog(unittest.TestCase):
             fail_scope("Branch"),
         ]
         output = self._run(results)
-        # One group for commit-message scopes, one for the branch scope.
-        self.assertEqual(output.count("::group::"), 2)
+        # One group each for the pull request, the commits and the branch.
+        self.assertEqual(output.count("::group::"), 3)
+        self.assertIn("::group::Pull request", output)
         self.assertIn("::group::Commit message", output)
         self.assertIn("::group::Branch", output)
+
+    def test_title_and_description_share_one_group(self):
+        """The commits come after both, so the commit group is not split."""
+        results = [
+            pass_scope("PR title"),
+            pass_scope("PR description"),
+            pass_scope("Commit 1/1"),
+        ]
+        groups = [name for name, _ in main._grouped(results)]
+        self.assertEqual(groups, ["Pull request", "Commit message"])
 
     def test_raw_text_fallback_is_printed(self):
         scope = main.ScopeResult(label="Branch", raw_text="unexpected output")
@@ -1801,8 +1812,9 @@ class TestRenderJobSummary(unittest.TestCase):
             "<summary>Show all 4 checks</summary>\n"
             "\n"
             "```text\n"
-            "Commit message\n"
+            "Pull request\n"
             "  ✔ PR title (feat: add login page)\n"
+            "Commit message\n"
             "  ✔ Commit 1/2 (feat: add user auth)\n"
             "  ✔ Commit 2/2 (fix: resolve timeout)\n"
             "Branch\n"
@@ -1839,8 +1851,9 @@ class TestRenderJobSummary(unittest.TestCase):
             "<summary>Show all 3 checks</summary>\n"
             "\n"
             "```text\n"
-            "Commit message\n"
+            "Pull request\n"
             "  ✔ PR title (feat: add login page)\n"
+            "Commit message\n"
             "  ✖ Commit 2/2 (1 failure)\n"
             "      CC001 message\n"
             "        value: bad message\n"
@@ -1890,8 +1903,9 @@ class TestRenderJobSummary(unittest.TestCase):
             "<summary>Show all 5 checks</summary>\n"
             "\n"
             "```text\n"
-            "Commit message\n"
+            "Pull request\n"
             "  ✔ PR title (feat: Add login page)\n"
+            "Commit message\n"
             "  ✖ Commit 1/3 (d87faca) (1 failure)\n"
             "      CC001 message\n"
             "        value: bad message\n"
@@ -2950,8 +2964,9 @@ class TestSkippedScopes(unittest.TestCase):
             "<summary>Show all 2 checks</summary>\n"
             "\n"
             "```text\n"
-            "Commit message\n"
+            "Pull request\n"
             "  ⊘ PR title (skipped)\n"
+            "Commit message\n"
             "  ⊘ Commit 1/1 (skipped)\n"
             "```\n"
             "\n"
@@ -3198,7 +3213,7 @@ class TestWarnedScopes(unittest.TestCase):
             "<summary>Show all 2 checks</summary>\n"
             "\n"
             "```text\n"
-            "Commit message\n"
+            "Pull request\n"
             "  ✔ PR title (feat: add login page)\n"
             "Branch\n"
             "  ⚠ Branch (1 warning)\n"
@@ -3719,6 +3734,21 @@ class TestRunCommitCheckPrBody(unittest.TestCase):
             "PR description", ["--ai-attribution-only"], input_text="Adds a parser."
         )
         self.assertEqual([r.label for r in results], ["PR description"])
+
+    def test_no_ai_rule_ran_reads_as_skipped_not_passed(self):
+        """Under ai_attribution = "ignore" the CLI runs no rule on the description."""
+        results, _ = self._run(True, "false")
+        self.assertEqual(results[0].status, "skip")
+        self.assertEqual(results[0].skip_reason, main.AI_POLICY_IGNORED)
+
+    def test_a_rule_that_ran_keeps_its_verdict(self):
+        checks = [{"rule_id": "CC013", "check": "ai_attribution", "status": "pass"}]
+        scope = main.ScopeResult(label="PR description", checks=list(checks))
+        self.assertEqual(main.skip_when_no_ai_rule_ran(scope).checks, checks)
+
+    def test_unparsable_output_still_fails(self):
+        scope = main.ScopeResult(label="PR description", raw_text="Error: bad config")
+        self.assertEqual(main.skip_when_no_ai_rule_ran(scope).status, "fail")
 
     def test_ai_label_alone_reads_it_but_reports_no_scope(self):
         results, mock_scope = self._run(False, "true")
