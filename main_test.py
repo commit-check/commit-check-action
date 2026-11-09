@@ -154,6 +154,7 @@ class TestLogEnvVars(unittest.TestCase):
                 "::debug::PR_COMMENTS=false",
                 "::debug::PR_TITLE=false",
                 "::debug::PR_BODY_AI_ATTRIBUTION=false",
+                "::debug::MESSAGE_AI_ATTRIBUTION=false",
                 "::debug::AI_LABEL=false",
             ],
         )
@@ -420,6 +421,21 @@ class TestRunPrMessageChecks(unittest.TestCase):
         env = mock_run.call_args[1]["env"]
         self.assertEqual(env["GIT_AUTHOR_NAME"], "Renovate Bot")
         self.assertEqual(env["GIT_AUTHOR_EMAIL"], "bot@renovateapp.com")
+
+    def test_message_ai_attribution_checks_only_the_ai_rules(self):
+        """The commit still goes in with its author, so CC017 judges it."""
+        self.local_author.return_value = ("Jane Dev", "jane@example.com")
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with (
+            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("main.subprocess.run", return_value=mock_result) as mock_run,
+        ):
+            main.run_pr_message_checks([(SHA_A, "WIP")])
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["commit-check", "--format", "json", "--message-ai-attribution"],
+        )
+        self.assertEqual(mock_run.call_args[1]["env"]["GIT_AUTHOR_NAME"], "Jane Dev")
 
     def test_a_blank_author_field_is_left_to_git(self):
         self.local_author.return_value = ("Renovate Bot", "")
@@ -959,6 +975,43 @@ class TestRunCommitCheck(unittest.TestCase):
         mock_pr.assert_not_called()
         # HEAD is the commit that was checked, so the scope names it too.
         mock_scope.assert_called_once_with("Commit message", ["--message"], sha=SHA_A)
+
+    def test_message_ai_attribution_alone_checks_each_commit(self):
+        """With message: false the commits are still checked, for AI only."""
+        with (
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.get_pr_commit_messages", return_value=[(SHA_A, "WIP")]),
+            patch("main.run_pr_message_checks", return_value=[pass_scope()]) as mock_pr,
+            patch("main.run_other_checks", return_value=[]) as mock_other,
+        ):
+            rc, _results = main.run_commit_check()
+        self.assertEqual(rc, 0)
+        mock_pr.assert_called_once_with([(SHA_A, "WIP")])
+        mock_other.assert_called_once_with([], rev=None)
+
+    def test_message_ai_attribution_narrows_the_head_check(self):
+        """Outside a PR, HEAD is checked for AI only, even with message: true."""
+        with (
+            patch("main.MESSAGE_ENABLED", True),
+            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.get_pr_commit_messages", return_value=[]),
+            patch("main.head_sha", return_value=SHA_A),
+            patch(
+                "main.check_scope", return_value=pass_scope("Commit message")
+            ) as mock_scope,
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            main.run_commit_check()
+        mock_scope.assert_called_once_with(
+            "Commit message", ["--message-ai-attribution"], sha=SHA_A
+        )
 
     def test_message_flag_removed_before_other_checks_in_pr(self):
         captured_args = []

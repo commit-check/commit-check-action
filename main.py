@@ -88,6 +88,20 @@ JOB_SUMMARY_ENABLED = env_flag("JOB_SUMMARY")
 PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
 PR_TITLE_ENABLED = env_flag("PR_TITLE")
 PR_BODY_AI_ATTRIBUTION_ENABLED = env_flag("PR_BODY_AI_ATTRIBUTION")
+MESSAGE_AI_ATTRIBUTION_ENABLED = env_flag("MESSAGE_AI_ATTRIBUTION")
+
+
+def message_check_args() -> list[str]:
+    """The CLI flag each commit message is checked with.
+
+    ``message-ai-attribution: true`` narrows the check to the AI rules (CC013
+    to CC017), whatever ``message`` says: ``message`` defaults to true, so
+    asking for the AI rules alone must not need it turned off as well.
+    """
+    if MESSAGE_AI_ATTRIBUTION_ENABLED:
+        return ["--message-ai-attribution"]
+    return ["--message"]
+
 
 #: The label ``ai-label: true`` puts on a pull request that an AI tool wrote.
 DEFAULT_AI_LABEL = "ai-assisted"
@@ -255,6 +269,7 @@ def log_env_vars():
         "PR_COMMENTS",
         "PR_TITLE",
         "PR_BODY_AI_ATTRIBUTION",
+        "MESSAGE_AI_ATTRIBUTION",
         "AI_LABEL",
     ):
         value = os.getenv(name, "false")
@@ -790,7 +805,7 @@ def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
             names = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL")
             env = {key: value for key, value in zip(names, author) if value} or None
         results.append(
-            check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
+            check_scope(label, message_check_args(), input_text=msg, sha=sha, env=env)
         )
     return results
 
@@ -817,7 +832,7 @@ def run_other_checks(args: list[str], rev: str | None = None) -> list[ScopeResul
 def build_check_args() -> list[str]:
     """Map enabled validation switches to commit-check CLI arguments."""
     flags = [
-        ("--message", MESSAGE_ENABLED),
+        ("--message", MESSAGE_ENABLED or MESSAGE_AI_ATTRIBUTION_ENABLED),
         ("--branch", BRANCH_ENABLED),
         ("--author-name", AUTHOR_NAME_ENABLED),
         ("--author-email", AUTHOR_EMAIL_ENABLED),
@@ -833,7 +848,8 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
       2. PR description, AI rules only (when ``pr-body-ai-attribution: true`` and in a PR
          event; with only ``ai-label`` set it is read for the label, and no
          scope is reported)
-      3. Individual PR commit messages (when ``message: true`` and in a PR event)
+      3. Individual PR commit messages (when ``message: true`` and in a PR event;
+         AI rules only with ``message-ai-attribution: true``)
       4. All remaining checks (branch, author name/email, etc.)
 
     Outside of a PR event all enabled checks are handed to the CLI at once.
@@ -861,7 +877,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
                 PR_BODY_AI_TOOLS[:] = scope.ai_tools
 
     # ---- 3. Commit message checks -----------------------------------------
-    if MESSAGE_ENABLED:
+    if MESSAGE_ENABLED or MESSAGE_AI_ATTRIBUTION_ENABLED:
         pr_commits = get_pr_commit_messages()
         if pr_commits:
             # In PR context: check each commit individually to avoid
@@ -879,7 +895,9 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     # ---- 4. Remaining checks (branch, author, etc.) -----------------------
     # Outside a PR, check the HEAD commit message directly.
     if "--message" in args:
-        results.append(check_scope("Commit message", ["--message"], sha=head_sha()))
+        results.append(
+            check_scope("Commit message", message_check_args(), sha=head_sha())
+        )
         args = [a for a in args if a != "--message"]
     rev = None
     if is_pr_event() and any(flag in AUTHOR_FLAGS for flag in args):
