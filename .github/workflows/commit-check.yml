@@ -38,3 +38,6 @@ jobs:
           job-summary: ${{ matrix.os == 'ubuntu-latest' }}
           pr-comments: ${{ github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' }}
           pr-title: true
+          pr-body-ai-attribution: true
+          # One leg is enough: all three would try to add the same label.
+          ai-label: ${{ matrix.os == 'ubuntu-latest' }}
