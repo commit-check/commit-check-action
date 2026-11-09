@@ -463,6 +463,47 @@ def get_pr_opener_tool() -> str | None:
     return AI_AGENT_BOTS.get(str(login).lower())
 
 
+def lines_removed(text: str, fixed: str) -> list[str]:
+    """The non-blank lines of ``text`` that ``fixed`` no longer has, in order.
+
+    A line repeated in ``text`` counts once per copy ``fixed`` dropped.
+    """
+    kept: dict[str, int] = {}
+    for line in fixed.splitlines():
+        kept[line] = kept.get(line, 0) + 1
+    removed = []
+    for line in text.splitlines():
+        if kept.get(line, 0):
+            kept[line] -= 1
+        elif line.strip():
+            removed.append(line.strip())
+    return removed
+
+
+def name_the_line_changes(scope: ScopeResult, body: str) -> None:
+    """Name the lines to change instead of repeating the description.
+
+    For a message the CLI's ``fix`` is the corrected text, short enough to
+    paste. A description can run to a page, and the summary, the comment and
+    the annotation would each repeat it in full; the lines to delete or add
+    are what its author needs.
+    """
+    for check in scope.checks:
+        fixed = check.get("fix") or ""
+        if not fixed:
+            continue
+        removed = lines_removed(body, fixed)
+        added = lines_removed(fixed, body)
+        parts = []
+        if removed:
+            parts.append("remove " + "; ".join(f'"{line}"' for line in removed))
+        if added:
+            parts.append("add " + "; ".join(f'"{line}"' for line in added))
+        if parts:
+            check["suggest"] = "In the description, " + ", and ".join(parts)
+            check["fix"] = ""
+
+
 #: The AI tools found in the pull request description when it was read for
 #: the label only (``ai-label`` without ``pr-body-ai-attribution``), so it is no scope.
 PR_BODY_AI_TOOLS: list[str] = []
@@ -814,6 +855,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
                 "PR description", ["--ai-attribution-only"], input_text=pr_body
             )
             if PR_BODY_AI_ATTRIBUTION_ENABLED:
+                name_the_line_changes(scope, pr_body)
                 results.append(scope)
             else:
                 PR_BODY_AI_TOOLS[:] = scope.ai_tools
