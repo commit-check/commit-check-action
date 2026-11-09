@@ -432,6 +432,35 @@ def skipped_author_scope(flag: str) -> ScopeResult:
     )
 
 
+#: Why an AI-only scope ran no rule: under the default policy there is none to run.
+AI_POLICY_IGNORED = 'ai_attribution is "ignore": set it to "forbid" or "disclose"'
+
+
+def skip_when_no_ai_rule_ran(scope: ScopeResult) -> ScopeResult:
+    """Report an AI-only scope that ran no rule as skipped, not passed.
+
+    Under the default ``ai_attribution = "ignore"`` the CLI builds none of
+    the AI rules, so it returns an empty list of checks. Shown as a pass, that
+    read as "checked, nothing found" to someone who turned the input on and
+    forgot the policy.
+    """
+    if scope.checks or scope.raw_text:
+        return scope
+    scope.checks = [
+        {
+            "rule_id": "CC013",
+            "check": "ai_attribution",
+            "status": "skip",
+            "value": "",
+            "error": "",
+            "suggest": "",
+            "docs_url": "",
+            "reason": AI_POLICY_IGNORED,
+        }
+    ]
+    return scope
+
+
 def get_pr_title() -> str | None:
     """Read PR title from GitHub event payload."""
     if not is_pr_event():
@@ -856,7 +885,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
             )
             if PR_BODY_AI_ATTRIBUTION_ENABLED:
                 name_the_line_changes(scope, pr_body)
-                results.append(scope)
+                results.append(skip_when_no_ai_rule_ran(scope))
             else:
                 PR_BODY_AI_TOOLS[:] = scope.ai_tools
 
@@ -924,7 +953,9 @@ def _rule_markdown_link(check: dict[str, str]) -> str:
 
 def _scope_group(label: str) -> str:
     """Group name for a scope label, used to fold the step log output."""
-    if label == "PR title" or label.startswith("Commit"):
+    if label in ("PR title", "PR description"):
+        return "Pull request"
+    if label.startswith("Commit"):
         return "Commit message"
     if label.startswith("Author"):
         return "Author"
