@@ -3716,7 +3716,7 @@ class TestRunCommitCheckPrBody(unittest.TestCase):
     def test_pr_body_is_a_scope_checked_with_the_ai_rules_only(self):
         results, mock_scope = self._run(True, "false")
         mock_scope.assert_called_once_with(
-            "PR description", ["--ai-only"], input_text="Adds a parser."
+            "PR description", ["--ai-attribution-only"], input_text="Adds a parser."
         )
         self.assertEqual([r.label for r in results], ["PR description"])
 

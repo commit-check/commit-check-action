@@ -810,7 +810,9 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     if (PR_BODY_ENABLED or ai_label_name()) and is_pr_event():
         pr_body = get_pr_body()
         if pr_body:
-            scope = check_scope("PR description", ["--ai-only"], input_text=pr_body)
+            scope = check_scope(
+                "PR description", ["--ai-attribution-only"], input_text=pr_body
+            )
             if PR_BODY_ENABLED:
                 results.append(scope)
             else:
