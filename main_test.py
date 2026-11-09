@@ -3737,6 +3737,89 @@ class TestRunCommitCheckPrBody(unittest.TestCase):
         self.assertEqual(results, [])
 
 
+class TestDescriptionLineChanges(unittest.TestCase):
+    BODY = "## Summary\nAdds a parser.\n\nLink to Devin run: https://app.devin.ai/sessions/1\n"
+
+    def _scope(self, *checks):
+        return main.ScopeResult(label="PR description", checks=list(checks))
+
+    def test_lines_removed_keeps_order_and_counts_copies(self):
+        self.assertEqual(main.lines_removed("a\nb\na\n\nc", "a\nc"), ["b", "a"])
+
+    def test_forbid_names_the_line_to_delete(self):
+        scope = self._scope(
+            {
+                "rule_id": "CC013",
+                "suggest": "Remove the AI lines.",
+                "fix": "## Summary\nAdds a parser.",
+            }
+        )
+        main.name_the_line_changes(scope, self.BODY)
+        self.assertEqual(
+            scope.checks[0]["suggest"],
+            'In the description, remove "Link to Devin run: https://app.devin.ai/sessions/1"',
+        )
+        self.assertEqual(scope.checks[0]["fix"], "")
+
+    def test_disclose_names_the_line_to_add_and_the_one_it_replaces(self):
+        body = "Adds a parser.\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
+        scope = self._scope(
+            {
+                "rule_id": "CC015",
+                "suggest": "x",
+                "fix": "Adds a parser.\n\nAssisted-by: Claude",
+            },
+            {"rule_id": "CC014", "suggest": "x", "fix": body + "\nAssisted-by: Claude"},
+        )
+        main.name_the_line_changes(scope, body)
+        self.assertEqual(
+            [c["suggest"] for c in scope.checks],
+            [
+                (
+                    'In the description, remove "Co-Authored-By: Claude'
+                    ' <noreply@anthropic.com>", and add "Assisted-by: Claude"'
+                ),
+                'In the description, add "Assisted-by: Claude"',
+            ],
+        )
+
+    def test_a_check_without_a_fix_or_a_change_is_left_alone(self):
+        scope = self._scope(
+            {"rule_id": "CC013", "suggest": "s", "fix": ""},
+            {"rule_id": "CC013", "suggest": "s", "fix": "same"},
+        )
+        main.name_the_line_changes(scope, "same")
+        self.assertEqual(
+            scope.checks,
+            [
+                {"rule_id": "CC013", "suggest": "s", "fix": ""},
+                {"rule_id": "CC013", "suggest": "s", "fix": "same"},
+            ],
+        )
+
+    def test_run_names_the_lines_for_a_reported_description(self):
+        scope = self._scope(
+            {
+                "rule_id": "CC013",
+                "status": "fail",
+                "suggest": "s",
+                "fix": "## Summary\nAdds a parser.",
+            }
+        )
+        with (
+            patch("main.PR_TITLE_ENABLED", False),
+            patch("main.PR_BODY_AI_ATTRIBUTION_ENABLED", True),
+            patch.dict(os.environ, {"AI_LABEL": "false"}),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_body", return_value=self.BODY),
+            patch("main.check_scope", return_value=scope),
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            _rc, results = main.run_commit_check()
+        self.assertEqual(results[0].checks[0]["fix"], "")
+
+
 class TestAiToolsFound(unittest.TestCase):
     def setUp(self):
         main.PR_BODY_AI_TOOLS.clear()
