@@ -23,9 +23,10 @@
 
 The GitHub Action for [Commit Check](https://github.com/commit-check/commit-check),
 commit policy as code for teams and AI agents. It checks every commit of a pull
-request — message, branch, author, and optionally the PR title — against your
-`cchk.toml`, and reports the result in the job summary, as annotations on the
-diff and, if you want, as a PR comment.
+request — message, branch, author, and optionally the PR title and the AI
+attribution in its description — against your `cchk.toml`, and reports the
+result in the job summary, as annotations on the diff and, if you want, as a PR
+comment. It can also label the pull requests that AI tools wrote.
 
 ## Usage
 
@@ -159,6 +160,28 @@ The rest follow the same layout:
 The step log prints the same tree, plus one annotation per finding on the
 Files changed tab. With `pr-comments: true` the same report is posted to the
 pull request, and later runs edit that one comment instead of adding more.
+
+With `pr-body-ai-attribution: true` and `ai_attribution = "forbid"`, a
+description that credits an AI co-author fails the same way, and the report
+names the line to remove:
+
+> ❌ **1 of 2 checks failed**
+>
+> | Scope | Checked value | Failed checks |
+> |---|---|---|
+> | PR description | `Claude Code` | [CC013 ai-attribution](https://commit-check.com/rules/#cc013) |
+>
+> ```text
+> PR description
+>   ✖ PR description (1 failure)
+>       CC013 ai-attribution
+>         value: Claude Code
+>         AI attribution is forbidden in this project — detected: Claude Code
+>         Suggest: In the description, remove "Co-Authored-By: Claude <noreply@anthropic.com>"
+> ```
+
+With `ai-label: true`, a pull request an AI tool wrote also gets the
+`ai-assisted` label.
 
 ## Outputs
 
