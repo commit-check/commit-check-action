@@ -87,7 +87,7 @@ DRY_RUN_ENABLED = env_flag("DRY_RUN")
 JOB_SUMMARY_ENABLED = env_flag("JOB_SUMMARY")
 PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
 PR_TITLE_ENABLED = env_flag("PR_TITLE")
-PR_BODY_ENABLED = env_flag("PR_BODY")
+PR_BODY_AI_ATTRIBUTION_ENABLED = env_flag("PR_BODY_AI_ATTRIBUTION")
 
 #: The label ``ai-label: true`` puts on a pull request that an AI tool wrote.
 DEFAULT_AI_LABEL = "ai-assisted"
@@ -254,7 +254,7 @@ def log_env_vars():
         "JOB_SUMMARY",
         "PR_COMMENTS",
         "PR_TITLE",
-        "PR_BODY",
+        "PR_BODY_AI_ATTRIBUTION",
         "AI_LABEL",
     ):
         value = os.getenv(name, "false")
@@ -464,7 +464,7 @@ def get_pr_opener_tool() -> str | None:
 
 
 #: The AI tools found in the pull request description when it was read for
-#: the label only (``ai-label`` without ``pr-body``), so it is no scope.
+#: the label only (``ai-label`` without ``pr-body-ai-attribution``), so it is no scope.
 PR_BODY_AI_TOOLS: list[str] = []
 
 
@@ -789,7 +789,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
 
     Checks are evaluated in order:
       1. PR title (when ``pr-title: true`` and in a PR event)
-      2. PR description, AI rules only (when ``pr-body: true`` and in a PR
+      2. PR description, AI rules only (when ``pr-body-ai-attribution: true`` and in a PR
          event; with only ``ai-label`` set it is read for the label, and no
          scope is reported)
       3. Individual PR commit messages (when ``message: true`` and in a PR event)
@@ -807,13 +807,13 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
             results.append(check_scope("PR title", ["--message"], input_text=pr_title))
 
     # ---- 2. PR description ------------------------------------------------
-    if (PR_BODY_ENABLED or ai_label_name()) and is_pr_event():
+    if (PR_BODY_AI_ATTRIBUTION_ENABLED or ai_label_name()) and is_pr_event():
         pr_body = get_pr_body()
         if pr_body:
             scope = check_scope(
                 "PR description", ["--ai-attribution-only"], input_text=pr_body
             )
-            if PR_BODY_ENABLED:
+            if PR_BODY_AI_ATTRIBUTION_ENABLED:
                 results.append(scope)
             else:
                 PR_BODY_AI_TOOLS[:] = scope.ai_tools

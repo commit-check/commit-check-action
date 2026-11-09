@@ -153,7 +153,7 @@ class TestLogEnvVars(unittest.TestCase):
                 "::debug::JOB_SUMMARY=false",
                 "::debug::PR_COMMENTS=false",
                 "::debug::PR_TITLE=false",
-                "::debug::PR_BODY=false",
+                "::debug::PR_BODY_AI_ATTRIBUTION=false",
                 "::debug::AI_LABEL=false",
             ],
         )
@@ -3699,7 +3699,7 @@ class TestRunCommitCheckPrBody(unittest.TestCase):
         )
         with (
             patch("main.PR_TITLE_ENABLED", False),
-            patch("main.PR_BODY_ENABLED", pr_body_enabled),
+            patch("main.PR_BODY_AI_ATTRIBUTION_ENABLED", pr_body_enabled),
             patch.dict(os.environ, {"AI_LABEL": ai_label}),
             patch("main.MESSAGE_ENABLED", False),
             patch("main.BRANCH_ENABLED", False),
