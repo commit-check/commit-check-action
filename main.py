@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -66,9 +67,22 @@ CHECK_LABELS = {
 }
 
 
+#: Boolean inputs whose value was neither true nor false, as ``(name, value)``.
+#: ``main`` fails the step on them before any check runs.
+INVALID_FLAGS: list[tuple[str, str]] = []
+
+
 def env_flag(name: str, default: str = "false") -> bool:
-    """Read a GitHub Action boolean-style environment variable."""
-    return os.getenv(name, default).lower() == "true"
+    """Read a GitHub Action boolean input: ``true`` or ``false``, any case.
+
+    Anything else (``yes``, ``on``, a typo) used to read as false and turn
+    the check off without a word. It is now recorded in ``INVALID_FLAGS``,
+    and the step fails with the input's name.
+    """
+    value = os.getenv(name, default).strip().lower()
+    if value not in ("true", "false"):
+        INVALID_FLAGS.append((name, os.getenv(name, default)))
+    return value == "true"
 
 
 def _reconfigure_io() -> None:
@@ -577,14 +591,13 @@ def parse_commit_messages(output: str) -> list[Commit]:
 
     The fields alternate hash, message, hash, message; git puts a newline
     between commits, which lands on the front of the next hash and is
-    stripped along with the message's trailing newline. Commits are paired
-    before empty messages are dropped, so a blank message never shifts the
-    hashes of the commits after it.
+    stripped along with the message's trailing newline. A commit with an
+    empty message is kept, as ``(sha, "")``: it is a commit of the pull
+    request like any other, and ``allow_empty_commits`` is the rule that
+    judges it.
     """
     fields = [f.strip("\n") for f in output.split(COMMIT_MESSAGE_DELIMITER)]
-    return [
-        (sha, message) for sha, message in zip(fields[0::2], fields[1::2]) if message
-    ]
+    return [(sha, message) for sha, message in zip(fields[0::2], fields[1::2]) if sha]
 
 
 def _messages_in_range(revision_range: str) -> list[Commit]:
@@ -841,12 +854,29 @@ def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
         if author:
             names = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL")
             env = {key: value for key, value in zip(names, author) if value} or None
-        results.append(
-            keep_ai_rules(
-                check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
-            )
-        )
+        if msg.strip():
+            scope = check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
+        else:
+            scope = check_empty_message(label, sha, env)
+        results.append(keep_ai_rules(scope))
     return results
+
+
+def check_empty_message(
+    label: str, sha: str, env: dict[str, str] | None
+) -> ScopeResult:
+    """Check a commit whose message is empty, from an empty file.
+
+    Piped, an empty message reads to the CLI as no input at all, and it
+    checks HEAD in its place: the merge commit, which passes. A file names
+    the message, so the empty one is judged (``allow_empty_commits``).
+    """
+    fd, path = tempfile.mkstemp(prefix="commit-msg-", dir=os.getenv("RUNNER_TEMP"))
+    os.close(fd)
+    try:
+        return check_scope(label, ["--message", path], sha=sha, env=env)
+    finally:
+        os.unlink(path)
 
 
 def run_other_checks(args: list[str], rev: str | None = None) -> list[ScopeResult]:
@@ -1837,14 +1867,15 @@ def _is_bot(comment: Any) -> bool:
 def _find_own_comments(comments: list[Any]) -> tuple[Any | None, list[Any]]:
     """Pick the comment to update and the ones to delete.
 
-    Returns ``(target, stale)``. Only comments carrying ``COMMENT_MARKER`` are
-    ever deleted — those are unambiguously ours. A comment from an earlier
+    Returns ``(target, stale)``. Only comments a bot posted with
+    ``COMMENT_MARKER`` in them are ever edited or deleted: a person can paste
+    the marker too (quoting a report, say), and their comment is theirs. A comment from an earlier
     version has no marker, so it is adopted (edited, which adds the marker)
     when there is no marked comment yet, and only if a bot posted it: the
     legacy signal is a title prefix, which a person can type by accident, and
     editing someone's comment out from under them is not recoverable.
     """
-    marked = [c for c in comments if COMMENT_MARKER in c.body]
+    marked = [c for c in comments if COMMENT_MARKER in c.body and _is_bot(c)]
     if marked:
         return marked[-1], marked[:-1]
 
@@ -1915,7 +1946,8 @@ def add_pr_comments(results: list[ScopeResult]) -> int:
         if not repo_name:
             raise ValueError("GITHUB_REPOSITORY is not set")
 
-        g = Github(auth=Auth.Token(token))
+        api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+        g = Github(auth=Auth.Token(token), base_url=api_url)
         repo = g.get_repo(repo_name)
         pull_request = repo.get_issue(pr_number)
 
@@ -2061,9 +2093,23 @@ def log_error_and_exit(ret_code: int) -> None:
     sys.exit(ret_code)
 
 
+def fail_on_invalid_flags() -> None:
+    """Stop with an error when a boolean input is neither true nor false."""
+    if not INVALID_FLAGS:
+        return
+    for name, value in INVALID_FLAGS:
+        input_name = name.lower().replace("_", "-")
+        print(
+            f"::error::Input {input_name} must be true or false, got "
+            f"{_log_safe(repr(value))}"
+        )
+    sys.exit(1)
+
+
 def main():
     """Main function to run commit-check and render all output surfaces."""
     _reconfigure_io()
+    fail_on_invalid_flags()
     log_env_vars()
 
     ret_code, results = run_commit_check()

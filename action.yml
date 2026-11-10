@@ -77,7 +77,7 @@ runs:
 
         # The pinned commit-check needs Python 3.11+. Say so here: on an older
         # python3, pip would only report that no matching version exists.
-        if ! $PYTHON_CMD -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+        if ! $PYTHON_CMD -I -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
           echo "::error::commit-check-action needs Python 3.11 or newer on PATH, found $($PYTHON_CMD --version 2>&1). Add actions/setup-python with python-version 3.11 or newer before this step."
           exit 1
         fi
@@ -88,7 +88,11 @@ runs:
         WORK="$RUNNER_TEMP/commit-check-action"
         rm -rf "$WORK"   # a second invocation in the same job starts clean, so the wheel glob below matches exactly one file
         mkdir -p "$WORK/wheels"
-        $PYTHON_CMD -m venv "$WORK/venv"
+        # -I (isolated mode) everywhere below: `python -m` otherwise puts the
+        # current directory, the caller's checkout, first on sys.path, so a
+        # pip.py or venv.py at the repository root would run in place of pip
+        # or venv, with this step's GITHUB_TOKEN.
+        $PYTHON_CMD -I -m venv "$WORK/venv"
         if [[ "$RUNNER_OS" == "Windows" ]]; then
           source "$WORK/venv/Scripts/activate"
         else
@@ -98,7 +102,7 @@ runs:
         # One download of the pinned closure, into the scratch dir. Wheels only:
         # the offline install below cannot build an sdist, so a platform without
         # binary wheels fails here, with pip's message, rather than later.
-        $PYTHON_CMD -m pip download -q --only-binary=:all: -d "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
+        $PYTHON_CMD -I -m pip download -q --only-binary=:all: -d "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         # Verify the commit-check wheel's build provenance (PyGithub and the
         # transitive wheels are pinned but not attested; see README "Runner requirements").
@@ -110,7 +114,7 @@ runs:
 
         # Install offline from the wheels we already downloaded and verified:
         # no second trip to PyPI, and the installed set is exactly the downloaded set.
-        $PYTHON_CMD -m pip install -q --no-cache-dir --no-index --find-links "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
+        $PYTHON_CMD -I -m pip install -q --no-cache-dir --no-index --find-links "$WORK/wheels" -r "$GITHUB_ACTION_PATH/requirements.txt"
 
         $PYTHON_CMD "$GITHUB_ACTION_PATH/main.py"
       env:
