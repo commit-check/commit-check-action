@@ -24,6 +24,14 @@ jobs:
           fetch-depth: 0  # Required for merge-base checks
           # Nothing after checkout needs authenticated git.
           persist-credentials: false
+      # The install step must never run a pip.py or venv.py from the
+      # checkout in place of pip or venv. If it did, these stop the job.
+      - name: Plant pip.py and venv.py in the workspace
+        shell: bash
+        run: |
+          for name in pip venv; do
+            echo 'raise SystemExit("a workspace module ran in place of pip or venv")' > "$name.py"
+          done
       - uses: ./ # self test
         with:
           message: true
