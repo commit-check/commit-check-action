@@ -423,19 +423,53 @@ class TestRunPrMessageChecks(unittest.TestCase):
         self.assertEqual(env["GIT_AUTHOR_EMAIL"], "bot@renovateapp.com")
 
     def test_message_ai_attribution_checks_only_the_ai_rules(self):
-        """The commit still goes in with its author, so CC017 judges it."""
+        """The format rules' verdicts are dropped; the commit still goes in
+        with its author, so CC017 judges it."""
         self.local_author.return_value = ("Jane Dev", "jane@example.com")
-        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        output = json_output(
+            make_check("message", status="fail"),
+            make_check("ai_author", status="fail", rule_id="CC017"),
+            make_check("ai_co_author", rule_id="CC015"),
+        )
+        mock_result = MagicMock(returncode=1, stdout=output)
         with (
             patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
             patch("main.subprocess.run", return_value=mock_result) as mock_run,
         ):
-            main.run_pr_message_checks([(SHA_A, "WIP")])
+            [scope] = main.run_pr_message_checks([(SHA_A, "WIP")])
         self.assertEqual(
-            mock_run.call_args[0][0],
-            ["commit-check", "--format", "json", "--message-ai-attribution"],
+            mock_run.call_args[0][0], ["commit-check", "--format", "json", "--message"]
         )
         self.assertEqual(mock_run.call_args[1]["env"]["GIT_AUTHOR_NAME"], "Jane Dev")
+        self.assertEqual([c["rule_id"] for c in scope.checks], ["CC017", "CC015"])
+        self.assertEqual(scope.status, "fail")
+
+    def test_message_ai_attribution_passes_a_badly_formatted_message(self):
+        mock_result = MagicMock(
+            returncode=1,
+            stdout=json_output(
+                make_check("message", status="fail"),
+                make_check("subject_min_length", status="fail", rule_id="CC005"),
+                make_check("ai_attribution", rule_id="CC013"),
+            ),
+        )
+        with (
+            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("main.subprocess.run", return_value=mock_result),
+        ):
+            [scope] = main.run_pr_message_checks([(SHA_A, "WIP")])
+        self.assertEqual(scope.status, "pass")
+
+    def test_message_ai_attribution_under_ignore_is_skipped(self):
+        """No AI rule ran: say so rather than report a pass."""
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with (
+            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("main.subprocess.run", return_value=mock_result),
+        ):
+            [scope] = main.run_pr_message_checks([(SHA_A, "feat: x")])
+        self.assertEqual(scope.status, "skip")
+        self.assertEqual(scope.checks[0]["reason"], main.AI_POLICY_IGNORED)
 
     def test_a_blank_author_field_is_left_to_git(self):
         self.local_author.return_value = ("Renovate Bot", "")
@@ -1009,9 +1043,7 @@ class TestRunCommitCheck(unittest.TestCase):
             patch("main.run_other_checks", return_value=[]),
         ):
             main.run_commit_check()
-        mock_scope.assert_called_once_with(
-            "Commit message", ["--message-ai-attribution"], sha=SHA_A
-        )
+        mock_scope.assert_called_once_with("Commit message", ["--message"], sha=SHA_A)
 
     def test_message_flag_removed_before_other_checks_in_pr(self):
         captured_args = []

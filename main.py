@@ -91,16 +91,8 @@ PR_BODY_AI_ATTRIBUTION_ENABLED = env_flag("PR_BODY_AI_ATTRIBUTION")
 MESSAGE_AI_ATTRIBUTION_ENABLED = env_flag("MESSAGE_AI_ATTRIBUTION")
 
 
-def message_check_args() -> list[str]:
-    """The CLI flag each commit message is checked with.
-
-    ``message-ai-attribution: true`` narrows the check to the AI rules (CC013
-    to CC017), whatever ``message`` says: ``message`` defaults to true, so
-    asking for the AI rules alone must not need it turned off as well.
-    """
-    if MESSAGE_AI_ATTRIBUTION_ENABLED:
-        return ["--message-ai-attribution"]
-    return ["--message"]
+#: The AI attribution rules: what ``message-ai-attribution: true`` keeps.
+AI_RULE_IDS = frozenset({"CC013", "CC014", "CC015", "CC016", "CC017"})
 
 
 #: The label ``ai-label: true`` puts on a pull request that an AI tool wrote.
@@ -476,6 +468,22 @@ def skip_when_no_ai_rule_ran(scope: ScopeResult) -> ScopeResult:
     return scope
 
 
+def keep_ai_rules(scope: ScopeResult) -> ScopeResult:
+    """Narrow a commit message scope to the AI rules (CC013 to CC017).
+
+    ``message-ai-attribution: true`` does this whatever ``message`` says:
+    ``message`` defaults to true, so asking for the AI rules alone must not
+    need it turned off as well. The CLI runs every message rule and the
+    format rules' verdicts are dropped here, so the CLI needs no flag of
+    its own for it. A scope left with no rule, under the default
+    ``ai_attribution = "ignore"``, is reported as skipped.
+    """
+    if not MESSAGE_AI_ATTRIBUTION_ENABLED or scope.raw_text:
+        return scope
+    scope.checks = [c for c in scope.checks if c.get("rule_id") in AI_RULE_IDS]
+    return skip_when_no_ai_rule_ran(scope)
+
+
 def get_pr_title() -> str | None:
     """Read PR title from GitHub event payload."""
     if not is_pr_event():
@@ -834,7 +842,9 @@ def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
             names = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL")
             env = {key: value for key, value in zip(names, author) if value} or None
         results.append(
-            check_scope(label, message_check_args(), input_text=msg, sha=sha, env=env)
+            keep_ai_rules(
+                check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
+            )
         )
     return results
 
@@ -925,7 +935,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     # Outside a PR, check the HEAD commit message directly.
     if "--message" in args:
         results.append(
-            check_scope("Commit message", message_check_args(), sha=head_sha())
+            keep_ai_rules(check_scope("Commit message", ["--message"], sha=head_sha()))
         )
         args = [a for a in args if a != "--message"]
     rev = None
