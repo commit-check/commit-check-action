@@ -272,6 +272,8 @@ fails when a contributor did not install the hook.
   <strong>cpp-linter</strong>&nbsp;&nbsp;
   <a href="https://github.com/freebsd"><img src="https://avatars.githubusercontent.com/freebsd?s=200&v=4" alt="FreeBSD" width="28"/></a>
   <strong>FreeBSD</strong>&nbsp;&nbsp;
+  <a href="https://github.com/junit-team"><img src="https://avatars.githubusercontent.com/junit-team?s=200&v=4" alt="JUnit" width="28"/></a>
+  <strong>JUnit</strong>&nbsp;&nbsp;
   <strong> and <a href="https://github.com/commit-check/commit-check-action/network/dependents">many more</a>.</strong>
 </p>
 
