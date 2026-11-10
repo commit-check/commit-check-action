@@ -245,9 +245,12 @@ class TestParseCommitMessages(unittest.TestCase):
         self.assertEqual(main.COMMIT_LOG_FORMAT, "--pretty=format:%H%x00%B%x00")
         self.assertNotIn("\x00", main.COMMIT_LOG_FORMAT)
 
-    def test_an_empty_message_does_not_shift_the_hashes_after_it(self):
+    def test_an_empty_message_is_kept_and_does_not_shift_the_hashes(self):
         output = f"{SHA_A}\x00\n\x00\n{SHA_B}\x00feat: second\n\x00"
-        self.assertEqual(main.parse_commit_messages(output), [(SHA_B, "feat: second")])
+        self.assertEqual(
+            main.parse_commit_messages(output),
+            [(SHA_A, ""), (SHA_B, "feat: second")],
+        )
 
     def test_empty_output_is_no_commits(self):
         self.assertEqual(main.parse_commit_messages(""), [])
@@ -2455,6 +2458,7 @@ class TestAddPrComments(unittest.TestCase):
     def test_skips_when_comment_is_up_to_date(self):
         body = main.render_pr_comment([fail_scope()])
         existing = MagicMock(body=body)
+        existing.user.type = "Bot"
         mock_pull_request = MagicMock()
         mock_pull_request.get_comments.return_value = [existing]
         mock_repo = MagicMock()
@@ -2903,6 +2907,14 @@ class TestFindOwnComments(unittest.TestCase):
         target, stale = main._find_own_comments([legacy])
         self.assertIs(target, legacy)
         self.assertEqual(stale, [])
+
+    def test_human_comment_with_the_marker_is_never_touched(self):
+        """A person can paste the marker too, e.g. quoting a report."""
+        quoted = self._comment(f"{main.COMMENT_MARKER}\nquoted", user_type="User")
+        mine = self._comment(f"{main.COMMENT_MARKER}\nreport")
+        self.assertEqual(main._find_own_comments([quoted, mine]), (mine, []))
+        self.assertEqual(main._find_own_comments([mine, quoted]), (mine, []))
+        self.assertEqual(main._find_own_comments([quoted]), (None, []))
 
     def test_no_comments_yields_nothing_to_update(self):
         target, stale = main._find_own_comments([])
@@ -4199,3 +4211,116 @@ class TestPrAuthorChecksEveryCommit(unittest.TestCase):
             [(s.label, s.status) for s in results], [("Author email", "skip")]
         )
         self.assertFalse([c for c in commands if c[0] == "commit-check"], commands)
+
+
+class TestBooleanInputs(unittest.TestCase):
+    """A boolean input is true or false; anything else fails the step."""
+
+    def setUp(self):
+        main.INVALID_FLAGS.clear()
+        self.addCleanup(main.INVALID_FLAGS.clear)
+
+    def test_true_and_false_in_any_case_and_padding(self):
+        for value, expected in (
+            ("true", True),
+            (" True ", True),
+            ("FALSE", False),
+            ("false", False),
+        ):
+            with patch.dict(os.environ, {"MESSAGE": value}):
+                self.assertIs(main.env_flag("MESSAGE"), expected, value)
+        self.assertEqual(main.INVALID_FLAGS, [])
+
+    def test_unset_input_takes_the_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(main.env_flag("MESSAGE"))
+        self.assertEqual(main.INVALID_FLAGS, [])
+
+    def test_other_values_are_recorded(self):
+        for value in ("yes", "on", "1", "maybe"):
+            with patch.dict(os.environ, {"MESSAGE": value}):
+                self.assertFalse(main.env_flag("MESSAGE"))
+        self.assertEqual(
+            main.INVALID_FLAGS,
+            [
+                ("MESSAGE", "yes"),
+                ("MESSAGE", "on"),
+                ("MESSAGE", "1"),
+                ("MESSAGE", "maybe"),
+            ],
+        )
+
+    def test_invalid_input_fails_before_any_check(self):
+        main.INVALID_FLAGS.append(("PR_TITLE", "yes"))
+        out = io.StringIO()
+        with (
+            patch("sys.stdout", out),
+            patch("main.run_commit_check") as run,
+            self.assertRaises(SystemExit) as cm,
+        ):
+            main.main()
+        self.assertEqual(cm.exception.code, 1)
+        run.assert_not_called()
+        self.assertIn(
+            "::error::Input pr-title must be true or false, got 'yes'", out.getvalue()
+        )
+
+
+class TestPrCommentApiUrl(unittest.TestCase):
+    """The PR comment goes to the same API host as every other call (GHES)."""
+
+    def test_comment_client_uses_github_api_url(self):
+        github_module = MagicMock()
+        pull_request = MagicMock()
+        pull_request.get_comments.return_value = []
+        github_module.Github.return_value.get_repo.return_value.get_issue.return_value = pull_request
+        with (
+            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("main.get_pr_number", return_value=7),
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "GITHUB_TOKEN": "t",
+                    "GITHUB_REPOSITORY": "o/r",
+                    "GITHUB_API_URL": "https://ghe.example.com/api/v3",
+                },
+            ),
+            patch.dict(sys.modules, {"github": github_module}),
+        ):
+            main.add_pr_comments([fail_scope()])
+        _, kwargs = github_module.Github.call_args
+        self.assertEqual(kwargs["base_url"], "https://ghe.example.com/api/v3")
+
+
+class TestEmptyCommitMessage(unittest.TestCase):
+    """An empty message is checked as empty, never as HEAD's message."""
+
+    def test_an_empty_message_goes_to_the_cli_as_an_empty_file(self):
+        seen: list[tuple[list[str], str | None, str]] = []
+
+        def run(command, **kwargs):
+            path = command[-1]
+            with open(path, encoding="utf-8") as f:
+                seen.append((command, kwargs.get("input"), f.read()))
+            return MagicMock(
+                returncode=1,
+                stdout=json_output(make_check("allow_empty_commits", status="fail")),
+                stderr="",
+            )
+
+        with (
+            patch("main.subprocess.run", side_effect=run),
+            patch("main._local_author", return_value=None),
+        ):
+            results = main.run_pr_message_checks([("a1", "")])
+        command, piped, content = seen[0]
+        self.assertEqual(command[:4], ["commit-check", "--format", "json", "--message"])
+        self.assertIsNone(piped)
+        self.assertEqual(content, "")
+        self.assertFalse(os.path.exists(command[-1]))
+        self.assertEqual(
+            [(s.label, s.sha, s.status) for s in results],
+            [("Commit 1/1", "a1", "fail")],
+        )
