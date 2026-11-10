@@ -4105,7 +4105,7 @@ class TestPrAuthorChecksEveryCommit(unittest.TestCase):
         main.API_AUTHORS.clear()
         self.addCleanup(main.API_AUTHORS.clear)
 
-    def _run(self, commits, authors, resolves=True):
+    def _run(self, commits, authors, resolves=True, message=False):
         commands: list[list[str]] = []
 
         def run(command, **_kwargs):
@@ -4114,6 +4114,10 @@ class TestPrAuthorChecksEveryCommit(unittest.TestCase):
                 return MagicMock(returncode=0 if resolves else 1, stdout="")
             if command[:2] == ["git", "fetch"]:
                 return MagicMock(returncode=1, stdout="")
+            if "--message" in command:
+                return MagicMock(
+                    returncode=0, stdout=json_output(make_check("message"))
+                )
             check = command[3].lstrip("-").replace("-", "_")
             sha = command[-1]
             status = "fail" if "noreply" in authors[sha][1] else "pass"
@@ -4123,19 +4127,33 @@ class TestPrAuthorChecksEveryCommit(unittest.TestCase):
             )
 
         with (
-            patch("main.MESSAGE_ENABLED", False),
+            patch("main.MESSAGE_ENABLED", message),
             patch("main.BRANCH_ENABLED", False),
             patch("main.AUTHOR_NAME_ENABLED", False),
             patch("main.AUTHOR_EMAIL_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.get_pr_commit_messages", return_value=commits),
+            patch("main.get_pr_commit_messages", return_value=commits) as listed,
             patch("main._local_author", side_effect=lambda sha: authors.get(sha)),
             patch("main.get_pr_head_sha", return_value=commits[-1][0]),
             patch("main.subprocess.run", side_effect=run),
             patch("sys.stdout", io.StringIO()),
         ):
             rc, results = main.run_commit_check()
+        self.listed_calls = listed.call_count
         return rc, results, commands
+
+    def test_the_commits_are_listed_once_for_messages_and_authors(self):
+        commits = [("a1", "feat: one")]
+        _rc, results, _commands = self._run(
+            commits, {"a1": ("Dev", "dev@example.org")}, message=True
+        )
+        self.assertEqual(self.listed_calls, 1)
+        self.assertEqual([s.label for s in results], ["Commit 1/1", "Author email"])
+
+    def test_a_commit_whose_author_cannot_be_read_is_passed_over(self):
+        commits = [("a1", "feat: one"), ("b2", "feat: two")]
+        _rc, results, _commands = self._run(commits, {"b2": ("Dev", "dev@example.org")})
+        self.assertEqual([(s.label, s.sha) for s in results], [("Author email", "b2")])
 
     def test_an_earlier_commit_by_another_author_is_checked(self):
         """FreeBSD atf forbids noreply emails; the tip alone hid this one."""
