@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -567,14 +568,13 @@ def parse_commit_messages(output: str) -> list[Commit]:
 
     The fields alternate hash, message, hash, message; git puts a newline
     between commits, which lands on the front of the next hash and is
-    stripped along with the message's trailing newline. Commits are paired
-    before empty messages are dropped, so a blank message never shifts the
-    hashes of the commits after it.
+    stripped along with the message's trailing newline. A commit with an
+    empty message is kept, as ``(sha, "")``: it is a commit of the pull
+    request like any other, and ``allow_empty_commits`` is the rule that
+    judges it.
     """
     fields = [f.strip("\n") for f in output.split(COMMIT_MESSAGE_DELIMITER)]
-    return [
-        (sha, message) for sha, message in zip(fields[0::2], fields[1::2]) if message
-    ]
+    return [(sha, message) for sha, message in zip(fields[0::2], fields[1::2]) if sha]
 
 
 def _messages_in_range(revision_range: str) -> list[Commit]:
@@ -831,10 +831,29 @@ def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
         if author:
             names = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL")
             env = {key: value for key, value in zip(names, author) if value} or None
-        results.append(
-            check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
-        )
+        if msg.strip():
+            scope = check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
+        else:
+            scope = check_empty_message(label, sha, env)
+        results.append(scope)
     return results
+
+
+def check_empty_message(
+    label: str, sha: str, env: dict[str, str] | None
+) -> ScopeResult:
+    """Check a commit whose message is empty, from an empty file.
+
+    Piped, an empty message reads to the CLI as no input at all, and it
+    checks HEAD in its place: the merge commit, which passes. A file names
+    the message, so the empty one is judged (``allow_empty_commits``).
+    """
+    fd, path = tempfile.mkstemp(prefix="commit-msg-", dir=os.getenv("RUNNER_TEMP"))
+    os.close(fd)
+    try:
+        return check_scope(label, ["--message", path], sha=sha, env=env)
+    finally:
+        os.unlink(path)
 
 
 def run_other_checks(args: list[str], rev: str | None = None) -> list[ScopeResult]:

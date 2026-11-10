@@ -245,9 +245,12 @@ class TestParseCommitMessages(unittest.TestCase):
         self.assertEqual(main.COMMIT_LOG_FORMAT, "--pretty=format:%H%x00%B%x00")
         self.assertNotIn("\x00", main.COMMIT_LOG_FORMAT)
 
-    def test_an_empty_message_does_not_shift_the_hashes_after_it(self):
+    def test_an_empty_message_is_kept_and_does_not_shift_the_hashes(self):
         output = f"{SHA_A}\x00\n\x00\n{SHA_B}\x00feat: second\n\x00"
-        self.assertEqual(main.parse_commit_messages(output), [(SHA_B, "feat: second")])
+        self.assertEqual(
+            main.parse_commit_messages(output),
+            [(SHA_A, ""), (SHA_B, "feat: second")],
+        )
 
     def test_empty_output_is_no_commits(self):
         self.assertEqual(main.parse_commit_messages(""), [])
@@ -4186,3 +4189,35 @@ class TestPrCommentApiUrl(unittest.TestCase):
             main.add_pr_comments([fail_scope()])
         _, kwargs = github_module.Github.call_args
         self.assertEqual(kwargs["base_url"], "https://ghe.example.com/api/v3")
+
+
+class TestEmptyCommitMessage(unittest.TestCase):
+    """An empty message is checked as empty, never as HEAD's message."""
+
+    def test_an_empty_message_goes_to_the_cli_as_an_empty_file(self):
+        seen: list[tuple[list[str], str | None, str]] = []
+
+        def run(command, **kwargs):
+            path = command[-1]
+            with open(path, encoding="utf-8") as f:
+                seen.append((command, kwargs.get("input"), f.read()))
+            return MagicMock(
+                returncode=1,
+                stdout=json_output(make_check("allow_empty_commits", status="fail")),
+                stderr="",
+            )
+
+        with (
+            patch("main.subprocess.run", side_effect=run),
+            patch("main._local_author", return_value=None),
+        ):
+            results = main.run_pr_message_checks([("a1", "")])
+        command, piped, content = seen[0]
+        self.assertEqual(command[:4], ["commit-check", "--format", "json", "--message"])
+        self.assertIsNone(piped)
+        self.assertEqual(content, "")
+        self.assertFalse(os.path.exists(command[-1]))
+        self.assertEqual(
+            [(s.label, s.sha, s.status) for s in results],
+            [("Commit 1/1", "a1", "fail")],
+        )
