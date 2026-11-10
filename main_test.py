@@ -4096,3 +4096,88 @@ class TestAddAiLabel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPrAuthorChecksEveryCommit(unittest.TestCase):
+    """The author checks read every PR commit's author, not only the tip."""
+
+    def setUp(self):
+        main.API_AUTHORS.clear()
+        self.addCleanup(main.API_AUTHORS.clear)
+
+    def _run(self, commits, authors, resolves=True):
+        commands: list[list[str]] = []
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            if command[:2] == ["git", "rev-parse"]:
+                return MagicMock(returncode=0 if resolves else 1, stdout="")
+            if command[:2] == ["git", "fetch"]:
+                return MagicMock(returncode=1, stdout="")
+            check = command[3].lstrip("-").replace("-", "_")
+            sha = command[-1]
+            status = "fail" if "noreply" in authors[sha][1] else "pass"
+            return MagicMock(
+                returncode=0,
+                stdout=json_output(make_check(check, status=status, value=sha)),
+            )
+
+        with (
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", True),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
+            patch("main.get_pr_commit_messages", return_value=commits),
+            patch("main._local_author", side_effect=lambda sha: authors.get(sha)),
+            patch("main.get_pr_head_sha", return_value=commits[-1][0]),
+            patch("main.subprocess.run", side_effect=run),
+            patch("sys.stdout", io.StringIO()),
+        ):
+            rc, results = main.run_commit_check()
+        return rc, results, commands
+
+    def test_an_earlier_commit_by_another_author_is_checked(self):
+        """FreeBSD atf forbids noreply emails; the tip alone hid this one."""
+        commits = [("a1", "feat: one"), ("b2", "feat: two")]
+        authors = {
+            "a1": ("Dev", "dev@users.noreply.github.com"),
+            "b2": ("Dev", "dev@example.org"),
+        }
+        rc, results, commands = self._run(commits, authors)
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            [(s.label, s.sha, s.status) for s in results],
+            [("Author email", "a1", "fail"), ("Author email", "b2", "pass")],
+        )
+        self.assertIn(
+            ["commit-check", "--format", "json", "--author-email", "--rev", "a1"],
+            commands,
+        )
+
+    def test_one_author_is_checked_once_on_the_newest_commit(self):
+        commits = [("a1", "feat: one"), ("b2", "feat: two"), ("c3", "feat: three")]
+        same = ("Dev", "dev@example.org")
+        rc, results, _commands = self._run(
+            commits, dict.fromkeys(("a1", "b2", "c3"), same)
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual([(s.label, s.sha) for s in results], [("Author email", "c3")])
+
+    def test_an_api_listed_author_is_used(self):
+        main.API_AUTHORS["a1"] = ("Dev", "dev@users.noreply.github.com")
+        _rc, results, _ = self._run(
+            [("a1", "feat: one")], {"a1": ("Dev", "dev@users.noreply.github.com")}
+        )
+        self.assertEqual([(s.sha, s.status) for s in results], [("a1", "fail")])
+
+    def test_a_commit_that_cannot_be_had_falls_back_to_the_tip(self):
+        """Neither in the clone nor fetchable: the tip path decides (here: skip)."""
+        commits = [("a1", "feat: one")]
+        _rc, results, commands = self._run(
+            commits, {"a1": ("Dev", "dev@example.org")}, resolves=False
+        )
+        self.assertEqual(
+            [(s.label, s.status) for s in results], [("Author email", "skip")]
+        )
+        self.assertFalse([c for c in commands if c[0] == "commit-check"], commands)

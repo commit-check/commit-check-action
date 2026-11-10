@@ -824,6 +824,36 @@ def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
     return results
 
 
+def run_pr_author_checks(
+    flags: list[str], pr_commits: list[Commit]
+) -> list[ScopeResult]:
+    """Run the author checks on every author of the pull request's commits.
+
+    Checking only the branch tip let an earlier commit by another author,
+    say a GitHub noreply address that ``author_email_pattern`` forbids, go
+    through. Each distinct author is checked once, on the newest commit
+    that carries it, so a one-person pull request still reports one scope
+    per check. A commit the clone lacks is fetched without its history.
+
+    Returns ``[]`` when no author can be read, or a commit cannot be had
+    even by fetching it, so the caller falls back to the branch tip as before.
+    """
+    newest: dict[tuple[str, str], str] = {}
+    for sha, _msg in pr_commits:
+        author = API_AUTHORS.get(sha) or (_local_author(sha) if sha else None)
+        if author:
+            newest.pop(author, None)
+            newest[author] = sha
+    revs = [sha for sha in newest.values() if _rev_resolves(sha) or _fetch_commit(sha)]
+    if len(revs) != len(newest):
+        return []
+    return [
+        check_scope(CHECK_LABELS[flag], [flag, "--rev", sha], sha=sha)
+        for flag in flags
+        for sha in revs
+    ]
+
+
 def run_other_checks(args: list[str], rev: str | None = None) -> list[ScopeResult]:
     """Run each non-message check (branch, author) once, as its own scope.
 
@@ -863,7 +893,8 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
          event; with only ``ai-label`` set it is read for the label, and no
          scope is reported)
       3. Individual PR commit messages (when ``message: true`` and in a PR event)
-      4. All remaining checks (branch, author name/email, etc.)
+      4. Author checks on every PR commit's author, then the remaining checks
+         (branch; outside a PR, the HEAD commit and its author)
 
     Outside of a PR event all enabled checks are handed to the CLI at once.
     """
@@ -890,6 +921,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
                 PR_BODY_AI_TOOLS[:] = scope.ai_tools
 
     # ---- 3. Commit message checks -----------------------------------------
+    pr_commits: list[Commit] | None = None
     if MESSAGE_ENABLED:
         pr_commits = get_pr_commit_messages()
         if pr_commits:
@@ -911,6 +943,14 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
         results.append(check_scope("Commit message", ["--message"], sha=head_sha()))
         args = [a for a in args if a != "--message"]
     rev = None
+    author_flags = [flag for flag in args if flag in AUTHOR_FLAGS]
+    if is_pr_event() and author_flags:
+        if pr_commits is None:
+            pr_commits = get_pr_commit_messages()
+        author_scopes = run_pr_author_checks(author_flags, pr_commits)
+        if author_scopes:
+            results.extend(author_scopes)
+            args = [a for a in args if a not in AUTHOR_FLAGS]
     if is_pr_event() and any(flag in AUTHOR_FLAGS for flag in args):
         rev = pr_head_rev()
         if rev is None:
