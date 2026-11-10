@@ -4134,7 +4134,7 @@ class TestBooleanInputs(unittest.TestCase):
         self.assertEqual(main.INVALID_FLAGS, [])
 
     def test_other_values_are_recorded(self):
-        for value in ("yes", "on", "1", "ture"):
+        for value in ("yes", "on", "1", "tru"):
             with patch.dict(os.environ, {"MESSAGE": value}):
                 self.assertFalse(main.env_flag("MESSAGE"))
         self.assertEqual(
@@ -4143,7 +4143,7 @@ class TestBooleanInputs(unittest.TestCase):
                 ("MESSAGE", "yes"),
                 ("MESSAGE", "on"),
                 ("MESSAGE", "1"),
-                ("MESSAGE", "ture"),
+                ("MESSAGE", "tru"),
             ],
         )
 
