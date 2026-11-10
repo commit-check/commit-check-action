@@ -8,7 +8,7 @@
 **Catch bad commits before they merge — on every pull request.**
 
 [![Release](https://img.shields.io/github/v/release/commit-check/commit-check-action?labelColor=0b1620&color=2c9ccd&label=release)](https://github.com/commit-check/commit-check-action/releases)
-[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=186&color=2c9ccd&logo=github&logoColor=white&labelColor=0b1620)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
+[![Used by](https://img.shields.io/static/v1?label=Used%20by&message=190&color=2c9ccd&logo=github&logoColor=white&labelColor=0b1620)](https://github.com/commit-check/commit-check-action/network/dependents)<!-- used by badge -->
 [![Marketplace](https://img.shields.io/badge/Marketplace-commit--check--action-2c9ccd?labelColor=0b1620&logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/commit-check-action)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://github.com/commit-check/commit-check-action/blob/main/action.yml#L84-L94)
 [![Coverage](https://img.shields.io/codecov/c/github/commit-check/commit-check-action?labelColor=0b1620&color=2c9ccd&label=coverage)](https://codecov.io/gh/commit-check/commit-check-action)
@@ -130,8 +130,9 @@ click away:
 > <summary>Show all 4 checks</summary>
 >
 > ```text
-> Commit message
+> Pull request
 >   ✔ PR title (feat: add login page)
+> Commit message
 >   ✔ Commit 1/2 (d87faca) (feat: add login page)
 >   ✖ Commit 2/2 (5584f46) (1 failure)
 >       CC001 message
@@ -173,7 +174,7 @@ names the line to remove:
 > | PR description | `Claude Code` | [CC013 ai-attribution](https://commit-check.com/rules/#cc013) |
 >
 > ```text
-> PR description
+> Pull request
 >   ✖ PR description (1 failure)
 >       CC013 ai-attribution
 >         value: Claude Code

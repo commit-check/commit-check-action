@@ -2,6 +2,11 @@
 
 inherit_from = "github:commit-check/.github:commit-check.toml"
 
+[commit]
+# Exercises pr-body-ai-attribution in the self-test: under the default
+# "ignore" the PR description check runs no rule.
+ai_attribution = "forbid"
+
 [branch]
 require_rebase_target = "origin/main"
 allow_branch_names = ["create-pull-request/.+"]
