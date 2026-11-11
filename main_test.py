@@ -1004,6 +1004,33 @@ class TestRunCommitCheck(unittest.TestCase):
             "PR title", ["--message"], input_text="feat: a feature"
         )
 
+    def test_pr_title_is_not_held_to_commit_only_rules(self):
+        # require_body and require_signed_off_by judge a commit; a title has
+        # no body or trailers, so it could never pass them.
+        title = main.ScopeResult(
+            label="PR title",
+            checks=[
+                make_check("message", "pass", "CC001", value="feat: add login"),
+                make_check("require_body", "fail", "CC011", value="feat: add login"),
+                make_check("require_signed_off_by", "fail", "CC012"),
+                make_check("ai_author", "fail", "CC017", value="Claude <x@y.z>"),
+            ],
+        )
+        with (
+            patch("main.PR_TITLE_ENABLED", True),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_title", return_value="feat: add login"),
+            patch("main.check_scope", return_value=title),
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            rc, results = main.run_commit_check()
+        self.assertEqual(rc, 0)
+        self.assertEqual([c["rule_id"] for c in results[0].checks], ["CC001"])
+
     def test_pr_title_failure_propagates(self):
         with (
             patch("main.PR_TITLE_ENABLED", True),
@@ -4221,6 +4248,18 @@ class TestRealCommitCheckBinary(unittest.TestCase):
             "<sub>Rules: [CC001](https://commit-check.com/rules/#cc001)</sub>",
             main.render_report([scope]),
         )
+
+    def test_a_title_meets_only_the_rules_a_title_can(self):
+        with open(self.config, "w", encoding="utf-8") as f:
+            f.write("[commit]\nrequire_body = true\nrequire_signed_off_by = true\n")
+        rc, data = self._run("feat: add login page")
+        failed = {c["rule_id"] for c in data["checks"] if c["status"] == "fail"}
+        self.assertEqual(rc, 1)
+        self.assertEqual(failed, {"CC011", "CC012"})
+        scope = main.drop_commit_only_rules(
+            main.ScopeResult(label="PR title", checks=data["checks"])
+        )
+        self.assertEqual(scope.status, "pass")
 
 
 class TestStderrIsNotPartOfTheJson(unittest.TestCase):

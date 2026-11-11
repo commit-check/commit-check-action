@@ -502,6 +502,22 @@ def keep_ai_rules(scope: ScopeResult) -> ScopeResult:
     return skip_when_no_ai_rule_ran(scope)
 
 
+#: Rules about a commit rather than about a line of text: it has a body
+#: (CC011), a sign-off (CC012), an author that is no AI tool (CC017). A pull
+#: request title has neither body nor trailers nor an author of its own, so
+#: judged as a commit message it could never pass the first two, and the
+#: third would judge whatever git identity the runner has.
+COMMIT_ONLY_RULE_IDS = frozenset({"CC011", "CC012", "CC017"})
+
+
+def drop_commit_only_rules(scope: ScopeResult) -> ScopeResult:
+    """Narrow the PR title scope to the rules a one-line title can meet."""
+    scope.checks = [
+        c for c in scope.checks if c.get("rule_id") not in COMMIT_ONLY_RULE_IDS
+    ]
+    return scope
+
+
 def get_pr_title() -> str | None:
     """Read PR title from GitHub event payload."""
     if not is_pr_event():
@@ -972,7 +988,8 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     if PR_TITLE_ENABLED and is_pr_event():
         pr_title = get_pr_title()
         if pr_title:
-            results.append(check_scope("PR title", ["--message"], input_text=pr_title))
+            scope = check_scope("PR title", ["--message"], input_text=pr_title)
+            results.append(drop_commit_only_rules(scope))
 
     # ---- 2. PR description ------------------------------------------------
     if (PR_BODY_AI_ATTRIBUTION_ENABLED or ai_label_name()) and is_pr_event():
