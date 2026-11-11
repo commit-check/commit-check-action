@@ -37,6 +37,10 @@ inputs:
     description: check pull request title following conventional commits
     required: false
     default: false
+  message-ai-attribution:
+    description: check each commit against the AI attribution rules (ai_attribution in cchk.toml) only, without the format rules; overrides message
+    required: false
+    default: false
   pr-body-ai-attribution:
     description: check the pull request description against the AI attribution rules (ai_attribution in cchk.toml)
     required: false
@@ -122,6 +126,7 @@ runs:
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}
         PR_TITLE: ${{ inputs.pr-title }}
+        MESSAGE_AI_ATTRIBUTION: ${{ inputs.message-ai-attribution }}
         PR_BODY_AI_ATTRIBUTION: ${{ inputs.pr-body-ai-attribution }}
         AI_LABEL: ${{ inputs.ai-label }}
         GITHUB_TOKEN: ${{ github.token }}

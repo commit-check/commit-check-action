@@ -102,6 +102,12 @@ JOB_SUMMARY_ENABLED = env_flag("JOB_SUMMARY")
 PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
 PR_TITLE_ENABLED = env_flag("PR_TITLE")
 PR_BODY_AI_ATTRIBUTION_ENABLED = env_flag("PR_BODY_AI_ATTRIBUTION")
+MESSAGE_AI_ATTRIBUTION_ENABLED = env_flag("MESSAGE_AI_ATTRIBUTION")
+
+
+#: The AI attribution rules: what ``message-ai-attribution: true`` keeps.
+AI_RULE_IDS = frozenset({"CC013", "CC014", "CC015", "CC016", "CC017"})
+
 
 #: The label ``ai-label: true`` puts on a pull request that an AI tool wrote.
 DEFAULT_AI_LABEL = "ai-assisted"
@@ -269,6 +275,7 @@ def log_env_vars():
         "PR_COMMENTS",
         "PR_TITLE",
         "PR_BODY_AI_ATTRIBUTION",
+        "MESSAGE_AI_ATTRIBUTION",
         "AI_LABEL",
     ):
         value = os.getenv(name, "false")
@@ -473,6 +480,22 @@ def skip_when_no_ai_rule_ran(scope: ScopeResult) -> ScopeResult:
         }
     ]
     return scope
+
+
+def keep_ai_rules(scope: ScopeResult) -> ScopeResult:
+    """Narrow a commit message scope to the AI rules (CC013 to CC017).
+
+    ``message-ai-attribution: true`` does this whatever ``message`` says:
+    ``message`` defaults to true, so asking for the AI rules alone must not
+    need it turned off as well. The CLI runs every message rule and the
+    format rules' verdicts are dropped here, so the CLI needs no flag of
+    its own for it. A scope left with no rule, under the default
+    ``ai_attribution = "ignore"``, is reported as skipped.
+    """
+    if not MESSAGE_AI_ATTRIBUTION_ENABLED or scope.raw_text:
+        return scope
+    scope.checks = [c for c in scope.checks if c.get("rule_id") in AI_RULE_IDS]
+    return skip_when_no_ai_rule_ran(scope)
 
 
 def get_pr_title() -> str | None:
@@ -835,7 +858,7 @@ def run_pr_message_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
             scope = check_scope(label, ["--message"], input_text=msg, sha=sha, env=env)
         else:
             scope = check_empty_message(label, sha, env)
-        results.append(scope)
+        results.append(keep_ai_rules(scope))
     return results
 
 
@@ -908,7 +931,7 @@ def run_other_checks(args: list[str], rev: str | None = None) -> list[ScopeResul
 def build_check_args() -> list[str]:
     """Map enabled validation switches to commit-check CLI arguments."""
     flags = [
-        ("--message", MESSAGE_ENABLED),
+        ("--message", MESSAGE_ENABLED or MESSAGE_AI_ATTRIBUTION_ENABLED),
         ("--branch", BRANCH_ENABLED),
         ("--author-name", AUTHOR_NAME_ENABLED),
         ("--author-email", AUTHOR_EMAIL_ENABLED),
@@ -924,7 +947,8 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
       2. PR description, AI rules only (when ``pr-body-ai-attribution: true`` and in a PR
          event; with only ``ai-label`` set it is read for the label, and no
          scope is reported)
-      3. Individual PR commit messages (when ``message: true`` and in a PR event)
+      3. Individual PR commit messages (when ``message: true`` and in a PR event;
+         AI rules only with ``message-ai-attribution: true``)
       4. Author checks on every PR commit's author, then the remaining checks
          (branch; outside a PR, the HEAD commit and its author)
 
@@ -954,7 +978,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
 
     # ---- 3. Commit message checks -----------------------------------------
     pr_commits: list[Commit] | None = None
-    if MESSAGE_ENABLED:
+    if MESSAGE_ENABLED or MESSAGE_AI_ATTRIBUTION_ENABLED:
         pr_commits = get_pr_commit_messages()
         if pr_commits:
             # In PR context: check each commit individually to avoid
@@ -972,7 +996,9 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     # ---- 4. Remaining checks (branch, author, etc.) -----------------------
     # Outside a PR, check the HEAD commit message directly.
     if "--message" in args:
-        results.append(check_scope("Commit message", ["--message"], sha=head_sha()))
+        results.append(
+            keep_ai_rules(check_scope("Commit message", ["--message"], sha=head_sha()))
+        )
         args = [a for a in args if a != "--message"]
     rev = None
     author_flags = [flag for flag in args if flag in AUTHOR_FLAGS]
