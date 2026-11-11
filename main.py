@@ -1161,12 +1161,18 @@ def _first_value(scope: ScopeResult) -> str:
 
     The text the action piped in when it has it, then the whole message the
     ``message`` rule reports, then whichever rule names a value first. A PR
-    description has no such line: its first line does not identify it.
+    description has no such line: its first line does not identify it. An
+    AI rule's value is the tool or the author it found, never the text, so
+    it never stands in for a commit's subject.
     """
     if scope.label == "PR description":
         return ""
     values = [scope.text, _message_value(scope)]
-    values.extend(str(check.get("value") or "") for check in scope.checks)
+    values.extend(
+        str(check.get("value") or "")
+        for check in scope.checks
+        if check.get("rule_id") not in AI_RULE_IDS
+    )
     for value in values:
         if value.strip():
             return value.strip().splitlines()[0].strip()
@@ -1697,23 +1703,31 @@ def _hunk(scope: ScopeResult, status: str) -> list[str]:
     """
     is_commit = bool(scope.sha) and scope.label.startswith("Commit")
     lines = [f"@@ {scope.sha[:7] if is_commit else scope.label} @@"]
+    value = _first_value(scope)
     removed: list[str] = []
     added: list[str] = []
     advice: list[str] = []
+    # Whether a piece of advice is about the value itself: a subject or a
+    # branch name that has to change. Advice about something else, such as
+    # an AI tool as the commit's author, leaves the subject as context.
+    about_value = False
     for check in _findings(scope, status):
         minus, plus = _line_edits(scope, check)
         removed.extend(minus)
         added.extend(plus)
         if not (minus or plus):
             advice.append(_advice(check))
+            checked = str(check.get("value") or "").strip()
+            about_value |= not checked or checked.splitlines()[0].strip() == value
     if scope.raw_text and not scope.checks:
         advice.append("the output could not be parsed, see the step log")
+        about_value = True
     removed, added, advice = (list(dict.fromkeys(x)) for x in (removed, added, advice))
-    value = _first_value(scope)
     if value and value not in removed:
-        # Advice is about the value itself, so it is what was found; a fix
-        # that only touches other lines leaves it as context.
-        lines.append(f"{'-' if advice else ' '} {value}")
+        # Advice about the value means it is what was found; a fix that only
+        # touches other lines, or advice about something else, leaves it as
+        # context.
+        lines.append(f"{'-' if about_value else ' '} {value}")
     lines.extend(f"- {line}" for line in removed)
     lines.extend(f"+ {line}" for line in added)
     lines.extend(f"# {line}" for line in advice)
