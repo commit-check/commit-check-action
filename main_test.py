@@ -2765,13 +2765,13 @@ class TestPrCommentSizeLimit(unittest.TestCase):
 
     def test_the_diff_goes_too_when_the_listing_was_not_enough(self):
         results = self._failing_commits(2)
-        short = main.render_report(results, "short")
         with (
-            patch("main.COMMENT_LIMIT", len(short) - 1),
             patch.dict(os.environ, self.RUN),
             patch("main.JOB_SUMMARY_ENABLED", False),
         ):
-            comment = main.render_pr_comment(results)
+            short = main.render_report(results, "short")
+            with patch("main.COMMENT_LIMIT", len(short) - 1):
+                comment = main.render_pr_comment(results)
         self.assertNotIn("```diff", comment)
         self.assertNotIn("How to fix</b>", comment)
         self.assertIn(
