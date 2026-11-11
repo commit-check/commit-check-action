@@ -502,6 +502,22 @@ def keep_ai_rules(scope: ScopeResult) -> ScopeResult:
     return skip_when_no_ai_rule_ran(scope)
 
 
+#: Rules about a commit rather than about a line of text: it has a body
+#: (CC011), a sign-off (CC012), an author that is no AI tool (CC017). A pull
+#: request title has neither body nor trailers nor an author of its own, so
+#: judged as a commit message it could never pass the first two, and the
+#: third would judge whatever git identity the runner has.
+COMMIT_ONLY_RULE_IDS = frozenset({"CC011", "CC012", "CC017"})
+
+
+def drop_commit_only_rules(scope: ScopeResult) -> ScopeResult:
+    """Narrow the PR title scope to the rules a one-line title can meet."""
+    scope.checks = [
+        c for c in scope.checks if c.get("rule_id") not in COMMIT_ONLY_RULE_IDS
+    ]
+    return scope
+
+
 def get_pr_title() -> str | None:
     """Read PR title from GitHub event payload."""
     if not is_pr_event():
@@ -972,7 +988,8 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     if PR_TITLE_ENABLED and is_pr_event():
         pr_title = get_pr_title()
         if pr_title:
-            results.append(check_scope("PR title", ["--message"], input_text=pr_title))
+            scope = check_scope("PR title", ["--message"], input_text=pr_title)
+            results.append(drop_commit_only_rules(scope))
 
     # ---- 2. PR description ------------------------------------------------
     if (PR_BODY_AI_ATTRIBUTION_ENABLED or ai_label_name()) and is_pr_event():
@@ -2041,7 +2058,25 @@ def _report_footer() -> str:
     )
 
 
-def render_report(results: list[ScopeResult]) -> str:
+def _run_url() -> str:
+    """Link to this workflow run, whose page holds the job summary."""
+    repository = os.getenv("GITHUB_REPOSITORY", "")
+    run_id = os.getenv("GITHUB_RUN_ID", "")
+    if not (repository and run_id):
+        return ""
+    server = os.getenv("GITHUB_SERVER_URL") or "https://github.com"
+    return f"{server.rstrip('/')}/{repository}/actions/runs/{run_id}"
+
+
+def _elsewhere(what: str) -> str:
+    """Point to where the parts a shortened comment left out can be read."""
+    where = "job summary" if _summary_written() else "step log"
+    url = _run_url()
+    place = f"[{where}]({url})" if url else where
+    return f"{what} are in the {place} of this run."
+
+
+def render_report(results: list[ScopeResult], detail: str = "full") -> str:
     """Render the Markdown report shared by the job summary and PR comment.
 
     Opens with the hidden marker and a heading that is the verdict — the
@@ -2049,6 +2084,10 @@ def render_report(results: list[ScopeResult]) -> str:
     group, the diff of what failed, a diff of the warnings when the config
     listed any rule under ``warn``, the folded "How to fix", and the folded
     listing of every scope.
+
+    ``detail`` is for a PR comment that would not fit (``render_pr_comment``):
+    ``"short"`` leaves out the listing, ``"headline"`` everything below the
+    group lines, and either says where to read what it left out.
 
     A warned scope counts toward "passed", never toward "failed": it ran,
     found something, and is reported in full, but the config asked for it to
@@ -2077,6 +2116,10 @@ def render_report(results: list[ScopeResult]) -> str:
         lines.extend([_group_lines(results), ""])
     if skipped and _skip_reasons(results):
         lines.extend([_skip_reasons(results), ""])
+    if detail == "headline":
+        what = "The findings and how to fix them" if failed or warned else "All checks"
+        lines.extend([_elsewhere(what), "", _report_footer()])
+        return "\n".join(lines)
     if failed:
         lines.extend([*_diff_block(results), ""])
     if warned:
@@ -2084,7 +2127,11 @@ def render_report(results: list[ScopeResult]) -> str:
     if failed:
         how = _how_to_fix(results)
         lines.extend([*how, ""] if how else [])
-    lines.extend([*_all_checks(results), "", _report_footer()])
+    if detail == "short":
+        lines.extend([_elsewhere(f"All {_plural(total, 'check')}"), ""])
+    else:
+        lines.extend([*_all_checks(results), ""])
+    lines.append(_report_footer())
     return "\n".join(lines)
 
 
@@ -2093,9 +2140,31 @@ def render_job_summary(results: list[ScopeResult]) -> str:
     return render_report(results)
 
 
+#: The longest comment GitHub accepts, in UTF-16 code units.
+COMMENT_LIMIT = 65536
+
+
+def _comment_length(body: str) -> int:
+    """Length of a comment as GitHub counts it: in UTF-16 code units."""
+    return len(body.encode("utf-16-le")) // 2
+
+
 def render_pr_comment(results: list[ScopeResult]) -> str:
-    """Create the Markdown body for the PR comment (same report as summary)."""
-    return render_report(results)
+    """Create the Markdown body for the PR comment (same report as summary).
+
+    The report grows with the pull request: every failing commit's message
+    is quoted in the diff, the prompt and the listing. A few dozen failing
+    commits ran past GitHub's limit, the API refused the comment, and an
+    earlier one, perhaps saying "passed", stayed on the pull request. So a
+    report that does not fit drops the listing, then everything under the
+    group lines, and points to the run for the rest. The job summary, with
+    its far higher limit, keeps the full report.
+    """
+    for detail in ("full", "short"):
+        body = render_report(results, detail)
+        if _comment_length(body) <= COMMENT_LIMIT:
+            return body
+    return render_report(results, "headline")
 
 
 # ---------------------------------------------------------------------------

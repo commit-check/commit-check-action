@@ -1004,6 +1004,33 @@ class TestRunCommitCheck(unittest.TestCase):
             "PR title", ["--message"], input_text="feat: a feature"
         )
 
+    def test_pr_title_is_not_held_to_commit_only_rules(self):
+        # require_body and require_signed_off_by judge a commit; a title has
+        # no body or trailers, so it could never pass them.
+        title = main.ScopeResult(
+            label="PR title",
+            checks=[
+                make_check("message", "pass", "CC001", value="feat: add login"),
+                make_check("require_body", "fail", "CC011", value="feat: add login"),
+                make_check("require_signed_off_by", "fail", "CC012"),
+                make_check("ai_author", "fail", "CC017", value="Claude <x@y.z>"),
+            ],
+        )
+        with (
+            patch("main.PR_TITLE_ENABLED", True),
+            patch("main.MESSAGE_ENABLED", False),
+            patch("main.BRANCH_ENABLED", False),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.is_pr_event", return_value=True),
+            patch("main.get_pr_title", return_value="feat: add login"),
+            patch("main.check_scope", return_value=title),
+            patch("main.run_other_checks", return_value=[]),
+        ):
+            rc, results = main.run_commit_check()
+        self.assertEqual(rc, 0)
+        self.assertEqual([c["rule_id"] for c in results[0].checks], ["CC001"])
+
     def test_pr_title_failure_propagates(self):
         with (
             patch("main.PR_TITLE_ENABLED", True),
@@ -2744,6 +2771,95 @@ class TestRenderPrComment(unittest.TestCase):
         self.assertIn("```diff\n@@ Commit 1/1 @@\n", comment)
 
 
+class TestPrCommentSizeLimit(unittest.TestCase):
+    """A report too long for a comment gives up its longest parts first."""
+
+    RUN_URL = "https://github.com/o/r/actions/runs/42"
+
+    def setUp(self):
+        self.RUN = {
+            "GITHUB_REPOSITORY": "o/r",
+            "GITHUB_RUN_ID": "42",
+            "GITHUB_SERVER_URL": "https://github.com",
+        }
+
+    def _failing_commits(self, count: int) -> list[main.ScopeResult]:
+        body = "\n".join(
+            f"Line {i} of a body that explains the change." for i in range(8)
+        )
+        return [
+            main.ScopeResult(
+                label=f"Commit {i}/{count}",
+                sha=f"{i:040x}",
+                checks=[
+                    make_check(
+                        "require_signed_off_by",
+                        "fail",
+                        "CC012",
+                        value=f"Update module {i}\n\n{body}",
+                        error="Signed-off-by trailer not found in the commit message",
+                        fix=f"Update module {i}\n\n{body}\n\nSigned-off-by: A <a@b.c>",
+                    )
+                ],
+            )
+            for i in range(1, count + 1)
+        ]
+
+    def test_a_report_that_fits_is_the_job_summary(self):
+        results = self._failing_commits(3)
+        self.assertEqual(
+            main.render_pr_comment(results), main.render_job_summary(results)
+        )
+
+    def test_dozens_of_failing_commits_still_fit(self):
+        results = self._failing_commits(60)
+        self.assertGreater(len(main.render_job_summary(results)), main.COMMENT_LIMIT)
+        with (
+            patch.dict(os.environ, self.RUN),
+            patch("main.JOB_SUMMARY_ENABLED", True),
+            patch("main.GITHUB_STEP_SUMMARY", "/tmp/summary.md"),
+        ):
+            comment = main.render_pr_comment(results)
+        self.assertLessEqual(main._comment_length(comment), main.COMMENT_LIMIT)
+        self.assertTrue(comment.startswith(main.COMMENT_MARKER))
+        self.assertIn("Commit Check failed", comment)
+        self.assertNotIn("<summary>All 60 checks</summary>", comment)
+        self.assertIn(
+            f"All 60 checks are in the [job summary]({self.RUN_URL}) of this run.",
+            comment,
+        )
+
+    def test_the_diff_goes_too_when_the_listing_was_not_enough(self):
+        results = self._failing_commits(2)
+        with (
+            patch.dict(os.environ, self.RUN),
+            patch("main.JOB_SUMMARY_ENABLED", False),
+        ):
+            short = main.render_report(results, "short")
+            with patch("main.COMMENT_LIMIT", len(short) - 1):
+                comment = main.render_pr_comment(results)
+        self.assertNotIn("```diff", comment)
+        self.assertNotIn("How to fix</b>", comment)
+        self.assertIn(
+            "The findings and how to fix them are in the "
+            f"[step log]({self.RUN_URL}) of this run.",
+            comment,
+        )
+        self.assertIn("Commits: 2 of 2 failed", comment)
+
+    def test_a_passing_headline_names_no_findings(self):
+        env = {k: v for k, v in os.environ.items() if k != "GITHUB_RUN_ID"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("main.JOB_SUMMARY_ENABLED", False),
+        ):
+            body = main.render_report([pass_scope("Branch")], "headline")
+        self.assertIn("All checks are in the step log of this run.", body)
+
+    def test_length_is_counted_as_github_counts_it(self):
+        self.assertEqual(main._comment_length("a🤖"), 3)
+
+
 class TestUnparsableScopeInTheReport(unittest.TestCase):
     """A CLI response that is not JSON is a failure with no rule to link."""
 
@@ -4260,6 +4376,18 @@ class TestRealCommitCheckBinary(unittest.TestCase):
             "<sub>Rules: [CC001](https://commit-check.com/rules/#cc001)</sub>",
             main.render_report([scope]),
         )
+
+    def test_a_title_meets_only_the_rules_a_title_can(self):
+        with open(self.config, "w", encoding="utf-8") as f:
+            f.write("[commit]\nrequire_body = true\nrequire_signed_off_by = true\n")
+        rc, data = self._run("feat: add login page")
+        failed = {c["rule_id"] for c in data["checks"] if c["status"] == "fail"}
+        self.assertEqual(rc, 1)
+        self.assertEqual(failed, {"CC011", "CC012"})
+        scope = main.drop_commit_only_rules(
+            main.ScopeResult(label="PR title", checks=data["checks"])
+        )
+        self.assertEqual(scope.status, "pass")
 
 
 class TestStderrIsNotPartOfTheJson(unittest.TestCase):
