@@ -2705,6 +2705,95 @@ class TestRenderPrComment(unittest.TestCase):
         self.assertIn("```diff\n@@ Commit 1/1 @@\n", comment)
 
 
+class TestPrCommentSizeLimit(unittest.TestCase):
+    """A report too long for a comment gives up its longest parts first."""
+
+    RUN_URL = "https://github.com/o/r/actions/runs/42"
+
+    def setUp(self):
+        self.RUN = {
+            "GITHUB_REPOSITORY": "o/r",
+            "GITHUB_RUN_ID": "42",
+            "GITHUB_SERVER_URL": "https://github.com",
+        }
+
+    def _failing_commits(self, count: int) -> list[main.ScopeResult]:
+        body = "\n".join(
+            f"Line {i} of a body that explains the change." for i in range(8)
+        )
+        return [
+            main.ScopeResult(
+                label=f"Commit {i}/{count}",
+                sha=f"{i:040x}",
+                checks=[
+                    make_check(
+                        "require_signed_off_by",
+                        "fail",
+                        "CC012",
+                        value=f"Update module {i}\n\n{body}",
+                        error="Signed-off-by trailer not found in the commit message",
+                        fix=f"Update module {i}\n\n{body}\n\nSigned-off-by: A <a@b.c>",
+                    )
+                ],
+            )
+            for i in range(1, count + 1)
+        ]
+
+    def test_a_report_that_fits_is_the_job_summary(self):
+        results = self._failing_commits(3)
+        self.assertEqual(
+            main.render_pr_comment(results), main.render_job_summary(results)
+        )
+
+    def test_dozens_of_failing_commits_still_fit(self):
+        results = self._failing_commits(60)
+        self.assertGreater(len(main.render_job_summary(results)), main.COMMENT_LIMIT)
+        with (
+            patch.dict(os.environ, self.RUN),
+            patch("main.JOB_SUMMARY_ENABLED", True),
+            patch("main.GITHUB_STEP_SUMMARY", "/tmp/summary.md"),
+        ):
+            comment = main.render_pr_comment(results)
+        self.assertLessEqual(main._comment_length(comment), main.COMMENT_LIMIT)
+        self.assertTrue(comment.startswith(main.COMMENT_MARKER))
+        self.assertIn("Commit Check failed", comment)
+        self.assertNotIn("<summary>All 60 checks</summary>", comment)
+        self.assertIn(
+            f"All 60 checks are in the [job summary]({self.RUN_URL}) of this run.",
+            comment,
+        )
+
+    def test_the_diff_goes_too_when_the_listing_was_not_enough(self):
+        results = self._failing_commits(2)
+        short = main.render_report(results, "short")
+        with (
+            patch("main.COMMENT_LIMIT", len(short) - 1),
+            patch.dict(os.environ, self.RUN),
+            patch("main.JOB_SUMMARY_ENABLED", False),
+        ):
+            comment = main.render_pr_comment(results)
+        self.assertNotIn("```diff", comment)
+        self.assertNotIn("How to fix</b>", comment)
+        self.assertIn(
+            "The findings and how to fix them are in the "
+            f"[step log]({self.RUN_URL}) of this run.",
+            comment,
+        )
+        self.assertIn("Commits: 2 of 2 failed", comment)
+
+    def test_a_passing_headline_names_no_findings(self):
+        env = {k: v for k, v in os.environ.items() if k != "GITHUB_RUN_ID"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("main.JOB_SUMMARY_ENABLED", False),
+        ):
+            body = main.render_report([pass_scope("Branch")], "headline")
+        self.assertIn("All checks are in the step log of this run.", body)
+
+    def test_length_is_counted_as_github_counts_it(self):
+        self.assertEqual(main._comment_length("a🤖"), 3)
+
+
 class TestUnparsableScopeInTheReport(unittest.TestCase):
     """A CLI response that is not JSON is a failure with no rule to link."""
 
