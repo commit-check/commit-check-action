@@ -11,18 +11,18 @@ Everything except the comment. The action does not degrade on a fork PR:
 | Surface | Fork PR | Why |
 |---|---|---|
 | The check's pass/fail status | ✅ works | the job's own conclusion |
-| `::error` annotations on the **Files changed** tab | ✅ works | workflow commands are written by the runner, not the API |
-| The **job summary** — the full report table and details | ✅ works | `$GITHUB_STEP_SUMMARY` is a file on the runner |
+| `::error` annotations on the run page | ✅ works | workflow commands are written by the runner, not the API |
+| The **job summary** — the full report | ✅ works | `$GITHUB_STEP_SUMMARY` is a file on the runner |
 | The `result` output for later steps | ✅ works | `$GITHUB_OUTPUT` is a file on the runner |
 | A **PR comment** | ❌ skipped | writing a comment needs the API, and the token is read-only |
 
 So a contributor pushing to a fork already gets the red check, the per-finding annotations
-on their diff, and the whole report in the job summary. The action says so in the log:
+on the run page, and the whole report in the job summary. The action says so in the log:
 
 ```text
 ::warning::Skipping PR comment: pull requests from forked repositories cannot write
 comments via the pull_request event (GITHUB_TOKEN is read-only for forks). The findings
-are in this job's summary and in the annotations on the Files changed tab.
+are in this job's summary and in the annotations on the run page.
 ```
 
 (with `job-summary: false` the message names the annotations alone, since there is no

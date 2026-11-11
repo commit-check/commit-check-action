@@ -22,10 +22,33 @@ import main
 #: between a contributor's machine and CI. Golden tests pin it so they assert on
 #: the report layout rather than on whatever version happens to be installed.
 PINNED_VERSION = "2.13.1"
+HOOK_GUIDE = "https://commit-check.com/guides/integrations/#as-a-pre-commit-hook"
 FOOTER = (
-    f"_commit-check {PINNED_VERSION} · "
-    "[Rules reference](https://commit-check.com/rules/)_"
+    f"<sub>Checked by [Commit Check](https://commit-check.com) {PINNED_VERSION} · "
+    "[Rules](https://commit-check.com/rules/) · "
+    f"[Check before you push]({HOOK_GUIDE})</sub>"
 )
+MARKS = "https://raw.githubusercontent.com/commit-check/.github/main/branding/status"
+
+
+def heading(glyph: str, word: str, verdict: str) -> str:
+    """The report's first visible line: the status tile and the verdict."""
+    return (
+        f'## <img alt="{glyph}" width="24" height="24" align="top" '
+        f'src="{MARKS}/{word}.png"> Commit Check {verdict}'
+    )
+
+
+def group_line(glyph: str, word: str, text: str) -> str:
+    """One group's line of the report: its line mark, name and result."""
+    return (
+        f'<img alt="{glyph}" width="16" height="16" align="top" '
+        f'src="{MARKS}/line-{word}.png"> {text}'
+    )
+
+
+#: The step log's colour codes, which most assertions read past.
+ANSI_CODES = re.compile(r"\x1b\[[0-9;]*m")
 pin_version = patch("main._commit_check_version", new=lambda: PINNED_VERSION)
 
 # ---------------------------------------------------------------------------
@@ -396,6 +419,15 @@ class TestCheckScope(unittest.TestCase):
         self.assertEqual(scope.raw_text, "unexpected output")
         self.assertEqual(scope.status, "fail")
 
+    def test_keeps_the_text_it_piped_in(self):
+        """The report compares it with a rule's fix to name the lines to change."""
+        mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
+        with patch("main.subprocess.run", return_value=mock_result):
+            piped = main.check_scope("PR title", ["--message"], input_text="feat: x")
+            read_by_the_cli = main.check_scope("Branch", ["--branch"])
+        self.assertEqual(piped.text, "feat: x")
+        self.assertEqual(read_by_the_cli.text, "")
+
 
 class TestRunPrMessageChecks(unittest.TestCase):
     """Each commit's raw message is piped in, with that commit's own author."""
@@ -462,6 +494,33 @@ class TestRunPrMessageChecks(unittest.TestCase):
         ):
             [scope] = main.run_pr_message_checks([(SHA_A, "WIP")])
         self.assertEqual(scope.status, "pass")
+        self.assertEqual(scope.text, "WIP")
+
+    def test_message_ai_attribution_keeps_the_head_message_for_the_report(self):
+        """Outside a PR nothing is piped in, and the message rule, whose
+        value is the whole message, is one of the rules dropped."""
+        message = "feat: x\n\nCo-authored-by: Claude <noreply@anthropic.com>"
+        scope = main.ScopeResult(
+            label="Commit message",
+            checks=[
+                make_check("message", value=message),
+                make_check(
+                    "ai_attribution",
+                    status="fail",
+                    rule_id="CC013",
+                    value="Claude Code",
+                    fix="feat: x",
+                ),
+            ],
+        )
+        with patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True):
+            main.keep_ai_rules(scope)
+        self.assertEqual([c["rule_id"] for c in scope.checks], ["CC013"])
+        self.assertEqual(scope.text, message)
+        self.assertEqual(
+            main._line_edits(scope, scope.checks[0]),
+            (["Co-authored-by: Claude <noreply@anthropic.com>"], []),
+        )
 
     def test_message_ai_attribution_under_ignore_is_skipped(self):
         """No AI rule ran: say so rather than report a pass."""
@@ -1558,34 +1617,62 @@ class TestCommitCheckVersionPin(unittest.TestCase):
 
 
 class TestRenderStepLog(unittest.TestCase):
-    def _run(self, results):
+    def _run(self, results, colours=False):
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
             main.render_step_log(results)
-        return buffer.getvalue()
+        output = buffer.getvalue()
+        return output if colours else ANSI_CODES.sub("", output)
 
     def test_all_pass_prints_success_line(self):
         output = self._run([pass_scope("Branch")])
-        self.assertIn("✔ commit-check: all checks passed", output)
+        self.assertIn("✔ Commit Check: all checks passed", output)
 
     def test_failure_prints_group_and_error_annotation(self):
         output = self._run([fail_scope("Commit 1/1")])
-        self.assertIn("::group::Commit message", output)
+        self.assertIn("::group::✖ Commits: failed", output)
         self.assertIn("::endgroup::", output)
-        self.assertIn("✖ Commit 1/1 (1 failure)", output)
+        self.assertIn("  ✖ 1/1          bad message\n", output)
         self.assertIn("      CC001 message", output)
         self.assertIn("value: bad message", output)
         self.assertIn("Suggest: Use <type>(<scope>): <description>", output)
         self.assertIn("Docs: https://commit-check.com/rules/#cc001", output)
-        # The annotation names the scope, which the title alone cannot carry,
-        # then the value and the suggestion, so it can be acted on where it
-        # is shown (the Files changed tab) without opening the step log.
+        # The run page shows one line of an annotation, so the first line
+        # names the scope, which the title alone cannot carry, and what to
+        # change. The rule's own sentence follows for whoever expands it.
         self.assertIn(
-            "::error title=CC001 message::Commit 1/1: The commit message should "
-            "follow Conventional Commits."
-            "%0Avalue: bad message"
-            "%0ASuggest: Use <type>(<scope>): <description>\n",
+            '::error title=CC001 message::Commit 1/1 "bad message": '
+            "Use <type>(<scope>): <description>"
+            "%0AThe commit message should follow Conventional Commits.\n",
             output,
+        )
+
+    def test_group_title_carries_the_result_of_the_group(self):
+        """GitHub folds every group, so the title is all a reader sees."""
+        output = self._run(
+            [
+                pass_scope("Commit 1/3"),
+                fail_scope("Commit 2/3"),
+                fix_scope("Commit 3/3"),
+                pass_scope("Author name"),
+                pass_scope("Author email"),
+                warn_scope(),
+            ]
+        )
+        self.assertIn("::group::✖ Commits: 2 of 3 failed\n", output)
+        self.assertIn("::group::✔ Author: 2 passed\n", output)
+        self.assertIn("::group::⚠ Branch: 1 warning\n", output)
+
+    def test_only_the_status_glyph_of_a_row_is_coloured(self):
+        output = self._run(
+            [pass_scope("Branch", value="feature/x"), fail_scope("Commit 1/1")],
+            colours=True,
+        )
+        self.assertIn("  \x1b[32m✔\x1b[0m branch       feature/x\n", output)
+        self.assertIn("  \x1b[31m✖\x1b[0m 1/1          bad message\n", output)
+        self.assertIn("\n      CC001 message\n", output)
+        self.assertIn(
+            "\x1b[31m\x1b[1m✖ Commit Check: 1 of 2 checks failed\x1b[0m\n", output
         )
 
     def test_commit_text_cannot_issue_workflow_commands(self):
@@ -1610,24 +1697,32 @@ class TestRenderStepLog(unittest.TestCase):
                 )
             ],
         )
-        output = self._run([scope])
+        output = self._run([scope], colours=True)
         tree = output.split("::endgroup::")[0]
         for line in tree.splitlines()[1:]:  # past ::group::, our own command
             self.assertFalse(line.lstrip().startswith("::"), line)
             self.assertNotIn("##[", line)
-            self.assertNotIn("\x1b", line)
+            # The only escape sequences left are the action's own colours.
+            self.assertNotIn("\x1b", ANSI_CODES.sub("", line))
         self.assertIn("        \\::warning title=Forged::text\n", tree)
         self.assertIn("          \\::add-mask::secret\n", tree)
         self.assertIn("        old #\\#[error]form\n", tree)
         self.assertIn("        esc\\x1b]52;c;eA==\\x07\n", tree)
-        # The annotations are commands already; their payload is left as is.
-        self.assertIn("%0A::warning title=Forged::text%0A", output)
+        # The annotation names the subject alone, on one line.
+        self.assertIn('::Commit 1/1 "bad subject": The commit message', output)
+
+    def test_a_subject_that_starts_like_a_command_stays_text_in_its_row(self):
+        scope = main.ScopeResult(
+            label="Commit 1/1", checks=[make_check("message", value="::error::x")]
+        )
+        output = self._run([scope])
+        self.assertIn("  ✔ 1/1          ::error::x\n", output)
 
     def test_log_safe_leaves_ordinary_text_alone(self):
         for text in [
             "feat: add login",
             "value: a::b",
-            "  ✔ Branch (feature/x)",
+            "  ✔ branch       feature/x",
             "tab\there",
         ]:
             self.assertEqual(main._log_safe(text), text)
@@ -1636,26 +1731,20 @@ class TestRenderStepLog(unittest.TestCase):
         output = self._run([fix_scope("Commit 2/3", sha=SHA_B)])
         self.assertIn(
             "::error title=CC002 subject-capitalized::Commit 2/3 (5584f46): "
-            "Subject must start with a capital letter"
-            "%0Avalue: feat: add login page"
-            "%0AFix: feat: Add login page\n",
+            'change "feat: add login page" to "feat: Add login page"'
+            "%0ASubject must start with a capital letter\n",
             output,
         )
 
-    def test_annotation_and_tree_print_the_same_detail_lines(self):
-        """One helper feeds both surfaces, so they cannot drift."""
-        check = fix_scope().checks[0]
-        tree = main._finding_lines(check, include_error=True)
-        annotation = main._finding_lines(check, include_error=False)
+    def test_finding_lines_are_the_value_the_error_and_the_fix(self):
         self.assertEqual(
-            tree,
+            main._finding_lines(fix_scope().checks[0]),
             [
                 "value: feat: add login page",
                 "Subject must start with a capital letter",
                 "Fix: feat: Add login page",
             ],
         )
-        self.assertEqual([ln for ln in tree if ln in annotation], annotation)
 
     def test_annotation_without_an_error_still_names_the_kind_of_finding(self):
         scope = main.ScopeResult(
@@ -1702,9 +1791,8 @@ class TestRenderStepLog(unittest.TestCase):
             listing,
         )
         self.assertIn(
-            "%0ASuggest: Drop the WIP marker: %22stuff%22%0AFix: stuff\n".replace(
-                "%22", '"'
-            ),
+            '::Commit 1/1: change "wip: stuff" to "stuff"'
+            "%0AWIP commits are not allowed\n",
             output,
         )
 
@@ -1733,11 +1821,11 @@ class TestRenderStepLog(unittest.TestCase):
             "        Signed-off-by: Jane Doe <jane@example.com>\n",
             listing,
         )
-        # In the annotation the same rows ride on %0A, so the trailer lands
-        # where it would in the message.
+        # The annotation names the one line the fix adds.
         self.assertIn(
-            "%0AFix: feat: add login page%0A%0ASigned-off-by: "
-            "Jane Doe <jane@example.com>\n",
+            '::Commit 1/1 (d87faca) "feat: add login page": '
+            'add "Signed-off-by: Jane Doe <jane@example.com>"'
+            "%0ASigned-off-by not found in latest commit\n",
             output,
         )
 
@@ -1749,11 +1837,11 @@ class TestRenderStepLog(unittest.TestCase):
         ]
         results[0].sha = "c" * 40
         output = self._run(results)
-        self.assertIn("  ✔ Commit 1/3 (ccccccc) (fix: first)\n", output)
-        self.assertIn("  ✖ Commit 2/3 (5584f46) (1 failure)\n", output)
-        self.assertIn("  ✖ Commit 3/3 (d87faca)\n", output)
+        self.assertIn("  ✔ ccccccc      fix: first\n", output)
+        self.assertIn("  ✖ 5584f46      feat: add login page\n", output)
+        self.assertIn("  ✖ d87faca\n", output)
         self.assertIn(
-            "::error title=commit-check: Commit 3/3 (d87faca)::output could not "
+            "::error title=Commit Check: Commit 3/3 (d87faca)::output could not "
             "be parsed\n",
             output,
         )
@@ -1764,14 +1852,28 @@ class TestRenderStepLog(unittest.TestCase):
         output = self._run([fail_scope("Commit 1/2"), fix_scope("Commit 2/2")])
         self.assertEqual(output.count("::error"), 2)
         self.assertNotIn("::error::", output)
-        self.assertIn("\n✖ commit-check: 2 of 2 checks failed\n", output)
+        self.assertIn("\n✖ Commit Check: 2 of 2 checks failed\n", output)
         self.assertNotIn("passed", output)
+
+    def test_failure_verdict_says_where_the_fix_is(self):
+        with patch("main.JOB_SUMMARY_ENABLED", True):
+            output = self._run([fail_scope("Commit 1/1")])
+        self.assertTrue(
+            output.endswith(
+                "How to fix: see the job summary. "
+                f"Check before you push: {HOOK_GUIDE}\n"
+            )
+        )
+        # With no summary to send the reader to, the log is the report.
+        with patch("main.JOB_SUMMARY_ENABLED", False):
+            output = self._run([fail_scope("Commit 1/1")])
+        self.assertIn("How to fix: see the findings above. ", output)
 
     def test_failure_verdict_counts_scopes_and_names_the_warnings(self):
         output = self._run(
             [fail_scope("Commit 1/1"), pass_scope("PR title"), warn_scope()]
         )
-        self.assertIn("\n✖ commit-check: 1 of 3 checks failed, 1 warning\n", output)
+        self.assertIn("\n✖ Commit Check: 1 of 3 checks failed, 1 warning\n", output)
         self.assertNotIn("dry-run", output)
 
     def test_failure_reason_is_printed_once(self):
@@ -1803,6 +1905,7 @@ class TestRenderStepLog(unittest.TestCase):
                 make_check(
                     "message",
                     status="fail",
+                    value="50% done",
                     error="first line\nsecond line with 100% certainty",
                 )
             ],
@@ -1810,11 +1913,11 @@ class TestRenderStepLog(unittest.TestCase):
         output = self._run([scope])
         annotation = next(ln for ln in output.splitlines() if ln.startswith("::error"))
         self.assertNotIn("\n", annotation.removeprefix("::error "))
-        self.assertIn("first line", annotation)
+        self.assertIn('Commit 1/1 "50%25 done": first line', annotation)
 
     def test_pass_scopes_show_the_checked_value(self):
         output = self._run([pass_scope("Branch", value="feature/add-login")])
-        self.assertIn("✔ Branch (feature/add-login)", output)
+        self.assertIn("✔ branch       feature/add-login", output)
 
     def test_groups_scopes_by_category(self):
         results = [
@@ -1825,9 +1928,9 @@ class TestRenderStepLog(unittest.TestCase):
         output = self._run(results)
         # One group each for the pull request, the commits and the branch.
         self.assertEqual(output.count("::group::"), 3)
-        self.assertIn("::group::Pull request", output)
-        self.assertIn("::group::Commit message", output)
-        self.assertIn("::group::Branch", output)
+        self.assertIn("::group::✖ Pull request: failed", output)
+        self.assertIn("::group::✔ Commits: passed", output)
+        self.assertIn("::group::✖ Branch: failed", output)
 
     def test_title_and_description_share_one_group(self):
         """The commits come after both, so the commit group is not split."""
@@ -1837,17 +1940,14 @@ class TestRenderStepLog(unittest.TestCase):
             pass_scope("Commit 1/1"),
         ]
         groups = [name for name, _ in main._grouped(results)]
-        self.assertEqual(groups, ["Pull request", "Commit message"])
+        self.assertEqual(groups, ["Pull request", "Commits"])
 
     def test_raw_text_fallback_is_printed(self):
         scope = main.ScopeResult(label="Branch", raw_text="unexpected output")
         output = self._run([scope])
-        # No "(0 failures)": there is no check list to count, and claiming zero
-        # next to a ✖ reads as a contradiction.
-        self.assertIn("✖ Branch", output)
-        self.assertNotIn("0 failures", output)
+        self.assertIn("  ✖ branch\n", output)
         self.assertIn("unexpected output", output)
-        self.assertIn("::error title=commit-check: Branch::", output)
+        self.assertIn("::error title=Commit Check: Branch::", output)
 
     def test_dry_run_downgrades_annotations_and_prints_verdict(self):
         """Dry-run still reports every failure, but nothing may say "error".
@@ -1860,22 +1960,30 @@ class TestRenderStepLog(unittest.TestCase):
             output = self._run([fail_scope("Commit 1/1"), pass_scope("Branch")])
         self.assertNotIn("::error", output)
         self.assertIn(
-            "::warning title=CC001 message::Commit 1/1: The commit message should "
-            "follow Conventional Commits.",
+            '::warning title=CC001 message::Commit 1/1 "bad message": '
+            "Use <type>(<scope>): <description>",
             output,
         )
         self.assertIn(
-            "commit-check (dry-run): 1 of 2 checks failed; not failing the job",
+            "Commit Check (dry-run): 1 of 2 checks failed; not failing the job",
             output,
         )
         self.assertNotIn("all checks passed", output)
-        self.assertNotIn("✖ commit-check", output)
+        self.assertNotIn("✖ Commit Check", output)
 
     def test_dry_run_without_failures_prints_the_usual_verdict(self):
         with patch("main.DRY_RUN_ENABLED", True):
             output = self._run([pass_scope("Branch")])
-        self.assertIn("✔ commit-check: all checks passed", output)
+        self.assertIn("✔ Commit Check: all checks passed", output)
         self.assertNotIn("dry-run", output)
+
+
+#: Fixed lines of the report's "How to fix" section.
+AGENT_PROMPT = "Fix these Commit Check findings without changing any code:"
+HOOK_HELP = (
+    f"**Next time.** The [pre-commit hook]({HOOK_GUIDE}) runs the same "
+    "rules before you push."
+)
 
 
 class TestRenderJobSummary(unittest.TestCase):
@@ -1888,25 +1996,28 @@ class TestRenderJobSummary(unittest.TestCase):
             pass_scope("Commit 2/2", value="fix: resolve timeout"),
             pass_scope("Branch", value="feature/add-login"),
         ]
+        results[1].sha, results[2].sha = SHA_A, SHA_B
         body = main.render_report(results)
         self.assertEqual(
             body,
             f"{main.COMMENT_MARKER}\n"
-            f"{main.REPORT_TITLE}\n"
+            f"{heading('✔', 'passed', 'passed')}\n"
             "\n"
-            "✅ **All 4 checks passed**\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Commits: 2 passed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Branch: passed')}\n"
             "\n"
             "<details>\n"
-            "<summary>Show all 4 checks</summary>\n"
+            "<summary>All 4 checks</summary>\n"
             "\n"
             "```text\n"
             "Pull request\n"
-            "  ✔ PR title (feat: add login page)\n"
-            "Commit message\n"
-            "  ✔ Commit 1/2 (feat: add user auth)\n"
-            "  ✔ Commit 2/2 (fix: resolve timeout)\n"
+            "  ✔ title        feat: add login page\n"
+            "Commits\n"
+            "  ✔ d87faca      feat: add user auth\n"
+            "  ✔ 5584f46      fix: resolve timeout\n"
             "Branch\n"
-            "  ✔ Branch (feature/add-login)\n"
+            "  ✔ branch       feature/add-login\n"
             "```\n"
             "\n"
             "</details>\n"
@@ -1916,7 +2027,8 @@ class TestRenderJobSummary(unittest.TestCase):
 
     @pin_version
     def test_failure_golden_output(self):
-        """Pin the full failure report: failed row in the table, all in details."""
+        """Pin the full failure report: the diff of what failed, how to fix
+        it, and every scope in the listing."""
         results = [
             pass_scope("PR title", value="feat: add login page"),
             fail_scope("Commit 2/2"),
@@ -1926,29 +2038,55 @@ class TestRenderJobSummary(unittest.TestCase):
         self.assertEqual(
             body,
             f"{main.COMMENT_MARKER}\n"
-            f"{main.REPORT_TITLE}\n"
+            f"{heading('✖', 'failed', 'failed')}\n"
             "\n"
-            "❌ **1 of 3 checks failed**\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
+            f"{group_line('✖', 'failed', 'Commits: failed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Branch: passed')}\n"
             "\n"
-            "| Scope | Checked value | Failed checks |\n"
-            "|---|---|---|\n"
-            "| Commit 2/2 | `bad message` | "
-            "[CC001 message](https://commit-check.com/rules/#cc001) |\n"
+            "```diff\n"
+            "@@ Commit 2/2 @@\n"
+            "- bad message\n"
+            "# Use <type>(<scope>): <description>\n"
+            "```\n"
+            "\n"
+            "<sub>Rules: [CC001](https://commit-check.com/rules/#cc001)</sub>\n"
             "\n"
             "<details>\n"
-            "<summary>Show all 3 checks</summary>\n"
+            "<summary><b>How to fix</b></summary>\n"
+            "\n"
+            "**With an AI coding agent.** Paste this prompt:\n"
+            "\n"
+            "```text\n"
+            f"{AGENT_PROMPT}\n"
+            '- Commit 2/2 "bad message": Use <type>(<scope>): <description>\n'
+            "```\n"
+            "\n"
+            "**Commit messages.** Reword it, then force-push:\n"
+            "\n"
+            "```bash\n"
+            "git commit --amend\n"
+            "git push --force-with-lease\n"
+            "```\n"
+            "\n"
+            f"{HOOK_HELP}\n"
+            "\n"
+            "</details>\n"
+            "\n"
+            "<details>\n"
+            "<summary>All 3 checks</summary>\n"
             "\n"
             "```text\n"
             "Pull request\n"
-            "  ✔ PR title (feat: add login page)\n"
-            "Commit message\n"
-            "  ✖ Commit 2/2 (1 failure)\n"
+            "  ✔ title        feat: add login page\n"
+            "Commits\n"
+            "  ✖ 2/2          bad message\n"
             "      CC001 message\n"
             "        value: bad message\n"
             "        The commit message should follow Conventional Commits.\n"
             "        Suggest: Use <type>(<scope>): <description>\n"
             "Branch\n"
-            "  ✔ Branch (feature/add-login)\n"
+            "  ✔ branch       feature/add-login\n"
             "```\n"
             "\n"
             "</details>\n"
@@ -1958,8 +2096,9 @@ class TestRenderJobSummary(unittest.TestCase):
 
     @pin_version
     def test_failure_golden_output_with_commits(self):
-        """Pin the report for a pull request's commits: the table row links
-        to the commit, the tree names it, and a mechanical fix is shown."""
+        """Pin the report for a pull request's commits: each is named by its
+        short hash, linked under the diff, and a mechanical fix is a green
+        line."""
         results = [
             pass_scope("PR title", value="feat: Add login page"),
             fail_scope("Commit 1/3", sha=SHA_A),
@@ -1971,42 +2110,74 @@ class TestRenderJobSummary(unittest.TestCase):
         env = {"GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SERVER_URL": ""}
         with patch.dict(os.environ, env):
             body = main.render_report(results)
+        commits = "https://github.com/acme/widgets/commit"
         self.assertEqual(
             body,
             f"{main.COMMENT_MARKER}\n"
-            f"{main.REPORT_TITLE}\n"
+            f"{heading('✖', 'failed', 'failed')}\n"
             "\n"
-            "❌ **2 of 5 checks failed**\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
+            f"{group_line('✖', 'failed', 'Commits: 2 of 3 failed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Branch: passed')}\n"
             "\n"
-            "| Scope | Checked value | Failed checks |\n"
-            "|---|---|---|\n"
-            f"| [Commit 1/3 (d87faca)](https://github.com/acme/widgets/commit/{SHA_A})"
-            " | `bad message` | "
-            "[CC001 message](https://commit-check.com/rules/#cc001) |\n"
-            f"| [Commit 2/3 (5584f46)](https://github.com/acme/widgets/commit/{SHA_B})"
-            " | `feat: add login page` | "
-            "[CC002 subject-capitalized](https://commit-check.com/rules/#cc002) |\n"
+            "```diff\n"
+            "@@ d87faca @@\n"
+            "- bad message\n"
+            "# Use <type>(<scope>): <description>\n"
+            "@@ 5584f46 @@\n"
+            "- feat: add login page\n"
+            "+ feat: Add login page\n"
+            "```\n"
+            "\n"
+            f"<sub>Commits: [`d87faca`]({commits}/{SHA_A}) "
+            f"[`5584f46`]({commits}/{SHA_B}) &nbsp;|&nbsp; "
+            "Rules: [CC001](https://commit-check.com/rules/#cc001) · "
+            "[CC002](https://commit-check.com/rules/#cc002)</sub>\n"
             "\n"
             "<details>\n"
-            "<summary>Show all 5 checks</summary>\n"
+            "<summary><b>How to fix</b></summary>\n"
+            "\n"
+            "**With an AI coding agent.** Paste this prompt:\n"
+            "\n"
+            "```text\n"
+            f"{AGENT_PROMPT}\n"
+            '- Commit d87faca "bad message": Use <type>(<scope>): <description>\n'
+            '- Commit 5584f46: change "feat: add login page" to '
+            '"feat: Add login page"\n'
+            "```\n"
+            "\n"
+            "**Commit messages.** Reword them, then force-push:\n"
+            "\n"
+            "```bash\n"
+            'git rebase -i d87faca~1   # change "pick" to "reword" on the '
+            "commits above\n"
+            "git push --force-with-lease\n"
+            "```\n"
+            "\n"
+            f"{HOOK_HELP}\n"
+            "\n"
+            "</details>\n"
+            "\n"
+            "<details>\n"
+            "<summary>All 5 checks</summary>\n"
             "\n"
             "```text\n"
             "Pull request\n"
-            "  ✔ PR title (feat: Add login page)\n"
-            "Commit message\n"
-            "  ✖ Commit 1/3 (d87faca) (1 failure)\n"
+            "  ✔ title        feat: Add login page\n"
+            "Commits\n"
+            "  ✖ d87faca      bad message\n"
             "      CC001 message\n"
             "        value: bad message\n"
             "        The commit message should follow Conventional Commits.\n"
             "        Suggest: Use <type>(<scope>): <description>\n"
-            "  ✖ Commit 2/3 (5584f46) (1 failure)\n"
+            "  ✖ 5584f46      feat: add login page\n"
             "      CC002 subject-capitalized\n"
             "        value: feat: add login page\n"
             "        Subject must start with a capital letter\n"
             "        Fix: feat: Add login page\n"
-            "  ✔ Commit 3/3 (37d6def) (fix: Handle timeout)\n"
+            "  ✔ 37d6def      fix: Handle timeout\n"
             "Branch\n"
-            "  ✔ Branch (feature/add-login)\n"
+            "  ✔ branch       feature/add-login\n"
             "```\n"
             "\n"
             "</details>\n"
@@ -2014,7 +2185,7 @@ class TestRenderJobSummary(unittest.TestCase):
             f"{FOOTER}",
         )
 
-    def test_table_link_honours_the_server_url(self):
+    def test_commit_link_honours_the_server_url(self):
         """GitHub Enterprise Server is not github.com."""
         env = {
             "GITHUB_REPOSITORY": "acme/widgets",
@@ -2023,26 +2194,36 @@ class TestRenderJobSummary(unittest.TestCase):
         with patch.dict(os.environ, env):
             body = main.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
         self.assertIn(
-            f"| [Commit 1/1 (5584f46)](https://ghe.example.com/acme/widgets/commit/{SHA_B}) |",
+            f"<sub>Commits: [`5584f46`](https://ghe.example.com/acme/widgets/commit/{SHA_B}) ",
             body,
         )
 
-    def test_table_has_no_link_without_a_repository_to_link_into(self):
+    def test_no_commit_link_without_a_repository_to_link_into(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": ""}):
             body = main.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
-        self.assertIn("| Commit 1/1 (5584f46) | `feat: add login page` |", body)
+        self.assertIn("@@ 5584f46 @@\n- feat: add login page\n", body)
+        self.assertIn("\n<sub>Rules: [CC002](", body)
         self.assertNotIn("/commit/", body)
 
     def test_scopes_without_a_commit_are_never_linked(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/widgets"}):
             body = main.render_report([fail_scope("Branch")])
-        self.assertIn("| Branch | `bad message` |", body)
+        self.assertIn("@@ Branch @@\n- bad message\n", body)
+        self.assertNotIn("/commit/", body)
+
+    def test_an_author_scope_is_named_by_its_label_not_its_commit(self):
+        """An author check runs on a commit, but the finding is the author."""
+        scope = fail_scope("Author email", sha=SHA_A)
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/widgets"}):
+            body = main.render_report([scope])
+        self.assertIn("@@ Author email @@\n", body)
+        self.assertIn("  ✖ email        bad message\n", body)
         self.assertNotIn("/commit/", body)
 
     def test_skipped_scope_carries_the_sha_too(self):
         scope = skip_scope("Commit 1/1")
         scope.sha = SHA_A
-        self.assertIn("  ⊘ Commit 1/1 (d87faca) (skipped)", main.render_report([scope]))
+        self.assertIn("  ⊘ d87faca      skipped\n", main.render_report([scope]))
 
     def test_a_check_is_a_thing_checked_not_a_rule_evaluation(self):
         """The total counts scopes, so it tracks the policy, not the PR size.
@@ -2060,15 +2241,18 @@ class TestRenderJobSummary(unittest.TestCase):
                 make_check("subject_min_length", status="fail", rule_id="CC005"),
             ],
         )
-        body = main.render_report([pass_scope("Branch"), two_failures])
-        self.assertIn("❌ **1 of 2 checks failed**", body)
-        self.assertIn("<summary>Show all 2 checks</summary>", body)
-        # Both failing rules are still named, in the table and the details.
+        body = main.render_report(
+            [pass_scope("Branch"), two_failures, pass_scope("Commit 2/2")]
+        )
+        self.assertIn("> Commits: 1 of 2 failed", body)
+        self.assertIn("<summary>All 3 checks</summary>", body)
+        # Both failing rules are still named, under the diff and in the listing.
+        self.assertIn("<sub>Rules: CC001 · CC005</sub>", body)
         self.assertIn("CC001 message", body)
         self.assertIn("CC005 subject-min-length", body)
 
     def test_total_does_not_grow_with_the_number_of_rules(self):
-        """Adding rules to one scope must not change the headline total."""
+        """Adding rules to one scope must not change the totals."""
         one_rule = [pass_scope("Branch")]
         many_rules = [
             main.ScopeResult(
@@ -2078,28 +2262,37 @@ class TestRenderJobSummary(unittest.TestCase):
                 ],
             )
         ]
-        self.assertIn("✅ **All 1 check passed**", main.render_report(one_rule))
-        self.assertIn("✅ **All 1 check passed**", main.render_report(many_rules))
-
-    def test_table_has_no_constant_result_column(self):
-        """Only failures reach the table, so a result column would never vary."""
-        body = main.render_job_summary([fail_scope("Commit 1/1")])
-        self.assertIn("| Scope | Checked value | Failed checks |", body)
-        self.assertNotIn("| Result |", body)
+        for results in (one_rule, many_rules):
+            body = main.render_report(results)
+            self.assertIn("> Branch: passed\n", body)
+            self.assertIn("<summary>All 1 check</summary>", body)
 
     def test_body_opens_with_hidden_marker(self):
         body = main.render_job_summary([pass_scope("Branch")])
         self.assertTrue(body.startswith(main.COMMENT_MARKER))
 
+    def test_the_heading_is_the_verdict(self):
+        """The mark carries the status, so no tick ever sits next to a failure."""
+        cases = [
+            ([pass_scope("Branch")], heading("✔", "passed", "passed")),
+            ([fail_scope("Branch")], heading("✖", "failed", "failed")),
+            ([warn_scope()], heading("⚠", "warned", "passed with warnings")),
+            ([skip_scope("Branch")], heading("⊘", "skipped", "skipped")),
+        ]
+        for results, expected in cases:
+            with self.subTest(expected=expected):
+                lines = main.render_report(results).splitlines()
+                self.assertEqual(lines[1], expected)
+
     def test_all_pass(self):
         body = main.render_job_summary([pass_scope("Branch", value="main")])
-        self.assertIn(main.REPORT_TITLE, body)
-        self.assertIn("✅ **All 1 check passed**", body)
+        self.assertIn("Commit Check passed\n", body)
         self.assertIn("<details>", body)
-        self.assertIn("<summary>Show all 1 check</summary>", body)
+        self.assertIn("<summary>All 1 check</summary>", body)
         self.assertIn("```text", body)
-        self.assertIn("Branch", body)
-        self.assertIn("  ✔ Branch (main)", body)
+        self.assertIn("\nBranch\n  ✔ branch       main\n", body)
+        self.assertNotIn("```diff", body)
+        self.assertNotIn("How to fix", body)
 
     def test_all_pass_groups_scopes_like_step_log(self):
         results = [
@@ -2111,42 +2304,61 @@ class TestRenderJobSummary(unittest.TestCase):
             pass_scope("Author email", value="jane@example.com"),
         ]
         body = main.render_job_summary(results)
-        # Group headers in the details block mirror the step log ordering.
-        self.assertLess(body.index("Commit message"), body.index("Branch"))
-        self.assertLess(body.index("Branch"), body.index("Author"))
-        self.assertIn("  ✔ PR title (feat: add login page)", body)
-        self.assertIn("  ✔ Branch (feature/pr-12)", body)
-        self.assertIn("  ✔ Author email (jane@example.com)", body)
+        listing = body.split("```text\n")[1]
+        # Group headers in the listing mirror the step log ordering.
+        self.assertLess(listing.index("Commits\n"), listing.index("Branch\n"))
+        self.assertLess(listing.index("Branch\n"), listing.index("Author\n"))
+        self.assertIn("  ✔ title        feat: add login page\n", listing)
+        self.assertIn("  ✔ branch       feature/pr-12\n", listing)
+        self.assertIn("  ✔ email        jane@example.com\n", listing)
+        self.assertIn("> Author: 2 passed", body)
 
     def test_all_pass_truncates_long_values(self):
         long_value = "x" * 200
         body = main.render_job_summary([pass_scope("Commit 1/1", value=long_value)])
-        self.assertIn(f"  ✔ Commit 1/1 ({'x' * 57}...)", body)
+        self.assertIn(f"  ✔ 1/1          {'x' * 57}...\n", body)
 
     def test_all_pass_without_value_shows_plain_label(self):
         body = main.render_job_summary([pass_scope("Branch")])
-        self.assertIn("  ✔ Branch", body)
-        self.assertNotIn("  ✔ Branch (", body)
+        self.assertIn("  ✔ branch\n", body)
 
-    def test_failure_renders_table_with_rule_links(self):
+    def test_failure_shows_the_diff_and_the_rule_links(self):
         body = main.render_job_summary([fail_scope("Commit 1/1")])
-        self.assertIn(main.REPORT_TITLE, body)
-        self.assertIn("❌ **1 of 1 check failed**", body)
-        self.assertIn("| Scope | Checked value | Failed checks |", body)
+        self.assertIn("Commit Check failed\n", body)
+        self.assertIn("> Commits: failed\n", body)
         self.assertIn(
-            "| Commit 1/1 | `bad message` | "
-            "[CC001 message](https://commit-check.com/rules/#cc001) |",
+            "```diff\n"
+            "@@ Commit 1/1 @@\n"
+            "- bad message\n"
+            "# Use <type>(<scope>): <description>\n"
+            "```\n",
             body,
         )
-        self.assertIn("<details>", body)
-        self.assertIn("<summary>Show all 1 check</summary>", body)
-        self.assertIn("```text", body)
-        self.assertIn("✖ Commit 1/1 (1 failure)", body)
+        self.assertIn(
+            "<sub>Rules: [CC001](https://commit-check.com/rules/#cc001)", body
+        )
+        self.assertIn("<summary>All 1 check</summary>", body)
+        self.assertIn("  ✖ 1/1          bad message\n", body)
         self.assertIn("      CC001 message", body)
-        # The failing value appears in full; the table truncates at 60.
         self.assertIn("        value: bad message", body)
         self.assertIn("        Suggest: Use <type>(<scope>): <description>", body)
-        self.assertIn("[Rules reference](https://commit-check.com/rules/)", body)
+        self.assertIn("[Rules](https://commit-check.com/rules/)", body)
+
+    def test_a_failing_value_is_printed_in_full(self):
+        """It is the one value the reader has to act on; the cap is for the
+        rows that passed."""
+        subject = "feat: " + "x" * 100
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            checks=[
+                make_check(
+                    "subject_max_length", status="fail", rule_id="CC004", value=subject
+                )
+            ],
+        )
+        body = main.render_report([scope])
+        self.assertIn(f"- {subject}\n", body)
+        self.assertIn(f"  ✖ 1/1          {subject}\n", body)
 
     def test_failure_details_show_all_scopes_and_values(self):
         results = [
@@ -2154,16 +2366,326 @@ class TestRenderJobSummary(unittest.TestCase):
             pass_scope("Commit 2/2", value="fix: resolve timeout"),
         ]
         body = main.render_job_summary(results)
-        self.assertIn("✔ Commit 2/2 (fix: resolve timeout)", body)
-        self.assertIn("✖ Commit 1/2 (1 failure)", body)
+        self.assertIn("  ✔ 2/2          fix: resolve timeout\n", body)
+        self.assertIn("  ✖ 1/2          bad message\n", body)
 
-    def test_pass_scope_renders_checkmark_without_value(self):
+    def test_passing_scopes_stay_out_of_the_diff(self):
         body = main.render_job_summary([pass_scope("Branch"), fail_scope("Commit 1/1")])
-        # Pass scopes stay out of the table; the details block carries them.
-        table = body.split("<details>")[0]
-        self.assertNotIn("| Branch |", table)
-        self.assertIn("| Commit 1/1 | `bad message` |", table)
-        self.assertIn("✔ Branch", body)
+        diff = body.split("```diff\n")[1].split("```")[0]
+        self.assertEqual(diff.count("@@ "), 1)
+        self.assertIn("@@ Commit 1/1 @@", diff)
+        self.assertIn("  ✔ branch\n", body)
+
+
+def ai_scope(label: str = "Commit 1/1", sha: str = SHA_A) -> main.ScopeResult:
+    """A commit that credits an AI co-author, under ``ai_attribution = "forbid"``:
+    the rule's value is the tool, and its fix the message without the trailer."""
+    return main.ScopeResult(
+        label=label,
+        sha=sha,
+        text=(
+            "feat: add OAuth providers\n\n"
+            "Co-authored-by: Claude <noreply@anthropic.com>\n"
+        ),
+        checks=[
+            make_check(
+                "ai_attribution",
+                status="fail",
+                rule_id="CC013",
+                value="Claude Code",
+                error="AI attribution is forbidden in this project",
+                suggest="Remove the AI trailer lines and re-commit.",
+                fix="feat: add OAuth providers",
+                docs_url="https://commit-check.com/rules/#cc013",
+            )
+        ],
+    )
+
+
+class TestLineEdits(unittest.TestCase):
+    """What a rule's fix removes and adds, which the diff shows red and green."""
+
+    def test_a_subject_rule_is_compared_with_the_subject_alone(self):
+        """Its fix is the subject, so the body is not something it removed."""
+        scope = fix_scope()
+        scope.text = "feat: add login page\n\nThe body stays.\n"
+        self.assertEqual(
+            main._line_edits(scope, scope.checks[0]),
+            (["feat: add login page"], ["feat: Add login page"]),
+        )
+
+    def test_a_whole_message_fix_is_compared_with_the_whole_message(self):
+        message = "feat: add login page\n\nThe body stays."
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            text=message + "\n",
+            checks=[
+                make_check(
+                    "require_signed_off_by",
+                    status="fail",
+                    rule_id="CC012",
+                    value=message,
+                    fix=f"{message}\n\nSigned-off-by: Jane Doe <jane@example.com>",
+                )
+            ],
+        )
+        self.assertEqual(
+            main._line_edits(scope, scope.checks[0]),
+            ([], ["Signed-off-by: Jane Doe <jane@example.com>"]),
+        )
+
+    def test_an_ai_rule_is_compared_with_the_message_not_with_its_value(self):
+        """The value is the tool's name; the fix drops the trailer."""
+        scope = ai_scope()
+        self.assertEqual(
+            main._line_edits(scope, scope.checks[0]),
+            (["Co-authored-by: Claude <noreply@anthropic.com>"], []),
+        )
+
+    def test_an_ai_rule_without_the_message_has_no_line_to_name(self):
+        scope = ai_scope()
+        scope.text = ""
+        self.assertEqual(main._line_edits(scope, scope.checks[0]), ([], []))
+        self.assertEqual(
+            main._instruction(scope, scope.checks[0]),
+            "Remove the AI trailer lines and re-commit.",
+        )
+
+    def test_the_message_rule_supplies_the_text_outside_a_pull_request(self):
+        """Nothing is piped in for the HEAD commit, but the message rule's
+        value is the whole message."""
+        scope = ai_scope()
+        scope.checks.insert(0, make_check("message", value=scope.text.strip()))
+        scope.text = ""
+        self.assertEqual(
+            main._line_edits(scope, scope.checks[1]),
+            (["Co-authored-by: Claude <noreply@anthropic.com>"], []),
+        )
+        self.assertEqual(main._first_value(scope), "feat: add OAuth providers")
+
+    def test_a_rule_without_a_fix_has_no_edits(self):
+        scope = fail_scope()
+        self.assertEqual(main._line_edits(scope, scope.checks[0]), ([], []))
+
+    def test_a_fix_with_nothing_to_compare_it_with_has_no_edits(self):
+        scope = main.ScopeResult(
+            label="Branch", checks=[make_check("branch", status="fail", fix="x")]
+        )
+        self.assertEqual(main._line_edits(scope, scope.checks[0]), ([], []))
+
+    def test_recorded_edits_win_over_the_fix(self):
+        """A description is too long to carry as a fix, so its line changes
+        are recorded when it is checked."""
+        scope = fail_scope("PR description")
+        scope.edits["CC001"] = (["Generated with Claude Code"], [])
+        self.assertEqual(
+            main._line_edits(scope, scope.checks[0]),
+            (["Generated with Claude Code"], []),
+        )
+
+    def test_instruction_names_each_kind_of_change(self):
+        scope = fail_scope()
+        check = scope.checks[0]
+        cases = [
+            ((["a"], ["b"]), 'change "a" to "b"'),
+            ((["a", "b"], []), 'remove "a"; "b"'),
+            (([], ["c"]), 'add "c"'),
+            ((["a", "b"], ["c"]), 'remove "a"; "b", and add "c"'),
+        ]
+        for edits, expected in cases:
+            with self.subTest(expected=expected):
+                scope.edits["CC001"] = edits
+                self.assertEqual(main._instruction(scope, check), expected)
+
+    def test_advice_drops_what_only_the_rule_page_needs(self):
+        cases = {
+            "Use <type>(<scope>): <description>, where <type> is one of: feat, fix": (
+                "Use <type>(<scope>): <description>"
+            ),
+            "Use <type>/<description> with an allowed type, or add the branch "
+            "to allow_branch_names in config": (
+                "Use <type>/<description> with an allowed type"
+            ),
+            'In the description, remove "x"': 'remove "x"',
+            "Add a body\nexplaining the change": "Add a body",
+        }
+        for suggest, expected in cases.items():
+            with self.subTest(suggest=suggest):
+                check = make_check("message", status="fail", suggest=suggest)
+                self.assertEqual(main._advice(check), expected)
+
+    def test_advice_falls_back_to_the_error_without_its_link(self):
+        check = make_check(
+            "message",
+            status="fail",
+            error="Follow Conventional Commits. See https://www.conventionalcommits.org",
+        )
+        self.assertEqual(main._advice(check), "Follow Conventional Commits.")
+
+
+class TestDiffBlock(unittest.TestCase):
+    def _hunks(self, results, status="fail"):
+        lines = main._diff_block(results, status)
+        return lines[1 : lines.index("```")]
+
+    def test_a_fix_on_another_line_leaves_the_subject_as_context(self):
+        self.assertEqual(
+            self._hunks([ai_scope()]),
+            [
+                "@@ d87faca @@",
+                "  feat: add OAuth providers",
+                "- Co-authored-by: Claude <noreply@anthropic.com>",
+            ],
+        )
+
+    def test_advice_is_about_the_value_so_the_value_is_red(self):
+        scope = fail_scope("Commit 1/1", sha=SHA_A)
+        scope.checks.append(
+            make_check(
+                "subject_min_length",
+                status="fail",
+                rule_id="CC005",
+                value="bad message",
+                suggest="Write a subject of at least 20 characters",
+            )
+        )
+        self.assertEqual(
+            self._hunks([scope]),
+            [
+                "@@ d87faca @@",
+                "- bad message",
+                "# Use <type>(<scope>): <description>",
+                "# Write a subject of at least 20 characters",
+            ],
+        )
+
+    def test_two_rules_that_ask_for_the_same_line_show_it_once(self):
+        scope = ai_scope()
+        scope.checks.append({**scope.checks[0], "rule_id": "CC015"})
+        self.assertEqual(len(self._hunks([scope])), 3)
+
+    def test_a_description_is_named_by_its_label_and_shows_only_the_lines(self):
+        scope = fail_scope("PR description")
+        scope.text = "Adds login.\n\nGenerated with Claude Code\n"
+        scope.edits["CC001"] = (["Generated with Claude Code"], [])
+        self.assertEqual(
+            self._hunks([scope]),
+            ["@@ PR description @@", "- Generated with Claude Code"],
+        )
+
+    def test_a_long_list_is_cut_and_the_rest_folded(self):
+        results = [fail_scope(f"Commit {n}/8", sha=f"{n}" * 40) for n in range(1, 9)]
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/widgets"}):
+            lines = main._diff_block(results)
+        body = "\n".join(lines)
+        shown, folded = body.split("<details>")
+        self.assertEqual(shown.count("@@ "), main.MAX_HUNKS)
+        self.assertIn("<summary>and 3 more</summary>\n\n```diff\n@@ 6666666 @@", folded)
+        self.assertEqual(folded.count("@@ "), 3)
+        # Only the commits in view are linked; the rule is named once.
+        links = lines[-1]
+        self.assertEqual(links.count("/commit/"), main.MAX_HUNKS)
+        self.assertNotIn("6666666", links)
+        self.assertEqual(links.count("[CC001]"), 1)
+
+    def test_one_or_two_leftovers_are_not_worth_a_fold(self):
+        results = [fail_scope(f"Commit {n}/7", sha=f"{n}" * 40) for n in range(1, 8)]
+        body = "\n".join(main._diff_block(results))
+        self.assertEqual(body.count("@@ "), 7)
+        self.assertNotIn("<details>", body)
+
+    def test_warnings_get_the_same_block(self):
+        self.assertEqual(
+            self._hunks([warn_scope(), fail_scope()], "warn"),
+            ["@@ Branch @@", "- jsmith/fix-x", "# Use <type>/<description>"],
+        )
+
+
+class TestHowToFix(unittest.TestCase):
+    def _body(self, results):
+        return "\n".join(main._how_to_fix(results))
+
+    def test_nothing_failed_nothing_to_fix(self):
+        self.assertEqual(main._how_to_fix([pass_scope(), warn_scope()]), [])
+
+    def test_the_prompt_lists_every_failing_scope_with_its_instruction(self):
+        results = [
+            fail_scope("PR title"),
+            ai_scope("Commit 1/2"),
+            fix_scope("Commit 2/2"),
+            pass_scope("Branch"),
+        ]
+        self.assertIn(
+            "```text\n"
+            f"{AGENT_PROMPT}\n"
+            '- PR title "bad message": Use <type>(<scope>): <description>\n'
+            '- Commit d87faca "feat: add OAuth providers": remove '
+            '"Co-authored-by: Claude <noreply@anthropic.com>"\n'
+            '- Commit 5584f46: change "feat: add login page" to '
+            '"feat: Add login page"\n'
+            "```\n",
+            self._body(results),
+        )
+
+    def test_only_the_last_commit_failing_is_an_amend(self):
+        for scope in (
+            fail_scope("Commit 3/3", sha=SHA_A),
+            fail_scope("Commit message"),
+        ):
+            with self.subTest(label=scope.label):
+                body = self._body([scope])
+                self.assertIn("Reword it, then force-push:", body)
+                self.assertIn("```bash\ngit commit --amend\ngit push --force", body)
+                self.assertNotIn("rebase", body)
+
+    def test_an_earlier_commit_needs_a_rebase_from_its_parent(self):
+        body = self._body(
+            [fail_scope("Commit 2/3", sha=SHA_B), pass_scope("Commit 3/3")]
+        )
+        self.assertIn("```bash\ngit rebase -i 5584f46~1   # change", body)
+
+    def test_a_commit_without_a_hash_gets_a_placeholder(self):
+        body = self._body([fail_scope("Commit 1/3"), fail_scope("Commit 2/3")])
+        self.assertIn("Reword them, then force-push:", body)
+        self.assertIn("git rebase -i <first failing commit>~1   # change", body)
+
+    def test_each_kind_of_failure_gets_its_own_paragraph(self):
+        body = self._body(
+            [
+                fail_scope("PR title"),
+                fail_scope("PR description"),
+                fail_scope("Author email", sha=SHA_A),
+                fail_scope("Branch"),
+            ]
+        )
+        self.assertNotIn("**Commit messages.**", body)
+        self.assertIn("**Author.** Set your git identity", body)
+        self.assertIn(
+            "**Branch name.** Rename the branch and push it. A pull request cannot "
+            "change its branch, so open a new one from the renamed branch:\n\n"
+            "```bash\ngit branch -m <type>/<description>\ngit push -u origin HEAD\n```",
+            body,
+        )
+        self.assertIn(
+            "**Pull request title and description.** Edit them on the pull "
+            "request page.",
+            body,
+        )
+        self.assertTrue(body.endswith(f"{HOOK_HELP}\n\n</details>"))
+
+    def test_the_branch_command_uses_the_corrected_name_when_there_is_one(self):
+        scope = fail_scope("Branch")
+        scope.checks[0].update(value="Feature/Add-Login", fix="feature/Add-Login")
+        self.assertIn(
+            "```bash\ngit branch -m feature/Add-Login\ngit push -u origin HEAD\n```",
+            self._body([scope]),
+        )
+
+    def test_one_pull_request_field_is_it_not_them(self):
+        body = self._body([fail_scope("PR title")])
+        self.assertIn("**Pull request title.** Edit it on the pull request page.", body)
+        self.assertNotIn("**Branch name.**", body)
+        self.assertNotIn("**Author.**", body)
 
 
 class TestRenderPrComment(unittest.TestCase):
@@ -2172,34 +2694,41 @@ class TestRenderPrComment(unittest.TestCase):
         summary = main.render_job_summary([pass_scope("Branch")])
         self.assertEqual(comment, summary)
         self.assertTrue(comment.startswith(main.COMMENT_MARKER))
-        self.assertIn("✅ **All 1 check passed**", comment)
+        self.assertIn("Commit Check passed\n", comment)
 
     def test_failure_matches_job_summary(self):
         comment = main.render_pr_comment([fail_scope("Commit 1/1")])
         summary = main.render_job_summary([fail_scope("Commit 1/1")])
         self.assertEqual(comment, summary)
         self.assertTrue(comment.startswith(main.COMMENT_MARKER))
-        self.assertIn("❌ **1 of 1 check failed**", comment)
-        self.assertIn("| Scope | Checked value | Failed checks |", comment)
+        self.assertIn("Commit Check failed\n", comment)
+        self.assertIn("```diff\n@@ Commit 1/1 @@\n", comment)
 
 
 class TestUnparsableScopeInTheReport(unittest.TestCase):
     """A CLI response that is not JSON is a failure with no rule to link."""
 
-    def test_the_table_row_points_at_the_details(self):
+    def test_the_diff_points_at_the_step_log(self):
         scope = main.ScopeResult(label="Branch", raw_text="Error: cchk.toml: oops")
         body = main.render_report([scope])
-        self.assertIn("❌ **1 of 1 check failed**", body)
+        self.assertIn("Commit Check failed\n", body)
         self.assertIn(
-            "| Branch | — | _output could not be parsed — see details_ |", body
+            "```diff\n"
+            "@@ Branch @@\n"
+            "# the output could not be parsed, see the step log\n"
+            "```\n",
+            body,
         )
-        # The details block is where the raw output went.
-        self.assertIn("  ✖ Branch\n      Error: cchk.toml: oops\n", body)
+        # No rule spoke, so there is none to link and nothing to instruct.
+        self.assertNotIn("<sub>Rules", body)
+        self.assertNotIn("How to fix", body)
+        # The listing is where the raw output went.
+        self.assertIn("  ✖ branch\n      Error: cchk.toml: oops\n", body)
 
-    def test_it_never_reaches_the_warnings_table(self):
+    def test_it_never_reaches_the_warnings(self):
         scope = main.ScopeResult(label="Branch", raw_text="garbage")
-        table = main._markdown_table([scope], "warn", "Warnings")
-        self.assertEqual(table.splitlines()[2:], [])
+        self.assertNotIn("**Warnings**", main.render_report([scope]))
+        self.assertEqual(main._diff_block([scope], "warn")[:2], ["```diff", "```"])
 
 
 class TestReportFooter(unittest.TestCase):
@@ -2208,8 +2737,9 @@ class TestReportFooter(unittest.TestCase):
             self.assertEqual(main._commit_check_version(), "9.8.7")
             self.assertEqual(
                 main._report_footer(),
-                "_commit-check 9.8.7 · "
-                "[Rules reference](https://commit-check.com/rules/)_",
+                "<sub>Checked by [Commit Check](https://commit-check.com) 9.8.7 · "
+                "[Rules](https://commit-check.com/rules/) · "
+                f"[Check before you push]({HOOK_GUIDE})</sub>",
             )
         version.assert_called_with("commit-check")
 
@@ -2220,7 +2750,9 @@ class TestReportFooter(unittest.TestCase):
             self.assertEqual(main._commit_check_version(), "")
             self.assertEqual(
                 main._report_footer(),
-                "_[Rules reference](https://commit-check.com/rules/)_",
+                "<sub>Checked by [Commit Check](https://commit-check.com) · "
+                "[Rules](https://commit-check.com/rules/) · "
+                f"[Check before you push]({HOOK_GUIDE})</sub>",
             )
 
 
@@ -2240,7 +2772,7 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("✅ **All 1 check passed**", content)
+        self.assertIn("Commit Check passed\n", content)
 
     def test_failure_returns_nonzero(self):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
@@ -2252,8 +2784,8 @@ class TestAddJobSummary(unittest.TestCase):
         self.assertEqual(rc, 1)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        self.assertIn("| Scope | Checked value | Failed checks |", content)
-        self.assertIn("❌", content)
+        self.assertIn("Commit Check failed\n", content)
+        self.assertIn("```diff\n@@ Commit 1/1 @@\n- bad message\n", content)
 
 
 def read_github_output(path: str) -> dict[str, str]:
@@ -2443,7 +2975,7 @@ class TestAddPrComments(unittest.TestCase):
             rc = main.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
         printed = mock_print.call_args[0][0]
-        self.assertIn("annotations on the Files changed tab", printed)
+        self.assertIn("annotations on the run page", printed)
         self.assertNotIn("job's summary", printed)
         self.assertFalse(os.path.exists(summary_path))
 
@@ -2505,7 +3037,7 @@ class TestAddPrComments(unittest.TestCase):
         self.assertEqual(mock_pull_request.create_comment.call_count, 1)
         body = mock_pull_request.create_comment.call_args[1]["body"]
         self.assertTrue(body.startswith(main.COMMENT_MARKER))
-        self.assertIn("| Scope | Checked value | Failed checks |", body)
+        self.assertIn("```diff\n@@ Commit 1/1 @@\n- bad message\n", body)
 
     def test_updates_existing_comment_when_changed(self):
         # A report from an earlier version: no marker, and posted by the bot,
@@ -2951,7 +3483,9 @@ class TestMain(unittest.TestCase):
         mock_run.assert_not_called()
         self.assertIn("::debug::MESSAGE=false\n", out.getvalue())
         self.assertTrue(
-            out.getvalue().endswith("✔ commit-check: all checks passed\n"),
+            ANSI_CODES.sub("", out.getvalue()).endswith(
+                "✔ Commit Check: all checks passed\n"
+            ),
             out.getvalue(),
         )
 
@@ -3053,18 +3587,21 @@ class TestSkippedScopes(unittest.TestCase):
         self.assertEqual(
             body,
             f"{main.COMMENT_MARKER}\n"
-            f"{main.REPORT_TITLE}\n"
+            f"{heading('⊘', 'skipped', 'skipped')}\n"
             "\n"
-            "⊘ **All 2 checks skipped** — nothing was validated\n"
+            "Nothing was validated.\n"
+            "\n"
+            f"{group_line('⊘', 'skipped', 'Pull request: skipped')}<br>\n"
+            f"{group_line('⊘', 'skipped', 'Commits: skipped')}\n"
             "\n"
             "<details>\n"
-            "<summary>Show all 2 checks</summary>\n"
+            "<summary>All 2 checks</summary>\n"
             "\n"
             "```text\n"
             "Pull request\n"
-            "  ⊘ PR title (skipped)\n"
-            "Commit message\n"
-            "  ⊘ Commit 1/1 (skipped)\n"
+            "  ⊘ title        skipped\n"
+            "Commits\n"
+            "  ⊘ 1/1          skipped\n"
             "```\n"
             "\n"
             "</details>\n"
@@ -3074,19 +3611,24 @@ class TestSkippedScopes(unittest.TestCase):
 
     def test_partial_skip_does_not_claim_all_passed(self):
         results = [pass_scope("Branch", value="main"), skip_scope("PR title")]
+        results.append(pass_scope("PR description"))
         body = main.render_report(results)
-        self.assertIn("✅ **1 of 2 checks passed**, 1 skipped", body)
-        self.assertNotIn("All 2 checks passed", body)
+        self.assertIn("Commit Check passed\n", body)
+        self.assertIn("> Branch: passed<br>\n", body)
+        # Two scopes in the group, one of which ran: never "2 passed".
+        self.assertIn("> Pull request: 1 passed, 1 skipped\n", body)
 
     def test_failure_still_wins_over_skips(self):
         results = [fail_scope("Commit 1/1"), skip_scope("PR title")]
         body = main.render_report(results)
-        self.assertIn("❌ **1 of 2 checks failed**", body)
+        self.assertIn("Commit Check failed\n", body)
+        self.assertIn("> Commits: failed<br>\n", body)
+        self.assertIn("> Pull request: skipped\n", body)
 
     def test_skipped_scope_reports_no_checked_value(self):
         """The ⊘ line carries no value, because nothing was examined."""
         body = main.render_report([skip_scope("PR title")])
-        self.assertIn("  ⊘ PR title (skipped)", body)
+        self.assertIn("  ⊘ title        skipped\n", body)
 
     def test_skip_reason_is_shown_on_the_scope_and_under_the_verdict(self):
         """A skip says why, so a deliberate bypass reads as one."""
@@ -3098,20 +3640,21 @@ class TestSkippedScopes(unittest.TestCase):
             skip_scope("Branch", reason=branch),
         ]
         body = main.render_report(results)
+        self.assertIn("Commit Check skipped\n\nNothing was validated.\n", body)
         self.assertIn(
-            "⊘ **All 3 checks skipped** — nothing was validated\n\n"
+            "> Branch: skipped\n\n"
             "Skipped because author dependabot[bot] is in ignore_authors.\n",
             body,
         )
-        self.assertIn(f"  ⊘ PR title (skipped: {commit})", body)
-        self.assertIn(f"  ⊘ Branch (skipped: {branch})", body)
+        self.assertIn(f"  ⊘ title        skipped: {commit}\n", body)
+        self.assertIn(f"  ⊘ branch       skipped: {branch}\n", body)
 
     def test_skip_reason_follows_a_partial_skip_verdict(self):
         reason = "author dependabot[bot] is in [branch].ignore_authors"
         results = [pass_scope("PR title"), skip_scope("Branch", reason=reason)]
         body = main.render_report(results)
         self.assertIn(
-            "✅ **1 of 2 checks passed**, 1 skipped\n\n"
+            "> Branch: skipped\n\n"
             "Skipped because author dependabot[bot] is in ignore_authors.\n",
             body,
         )
@@ -3120,7 +3663,10 @@ class TestSkippedScopes(unittest.TestCase):
         reason = "author dependabot[bot] is in [commit].ignore_authors"
         with patch("sys.stdout", new_callable=io.StringIO) as out:
             main.render_step_log([skip_scope("PR title", reason=reason)])
-        self.assertIn(f"  ⊘ PR title (skipped: {reason})", out.getvalue())
+        self.assertIn("::group::⊘ Pull request: skipped\n", out.getvalue())
+        self.assertIn(
+            f"  ⊘ title        skipped: {reason}\n", ANSI_CODES.sub("", out.getvalue())
+        )
         self.assertIn(
             "Skipped because author dependabot[bot] is in ignore_authors.",
             out.getvalue(),
@@ -3142,7 +3688,7 @@ class TestSkippedScopes(unittest.TestCase):
     def test_older_engine_without_skip_is_unaffected(self):
         """Back-compat: engines that only emit pass/fail render as before."""
         results = [pass_scope("Branch", value="main")]
-        self.assertIn("✅ **All 1 check passed**", main.render_report(results))
+        self.assertIn("Commit Check passed\n", main.render_report(results))
 
 
 def warn_scope(label: str = "Branch", value: str = "jsmith/fix-x") -> main.ScopeResult:
@@ -3183,9 +3729,9 @@ class TestWarnedScopes(unittest.TestCase):
 
     def test_a_warning_survives_reporting_on_a_scope_that_also_fails(self):
         """The scope's status names its worst outcome, but both findings
-        still belong on every surface: the count, both tables, and the
-        details block. Filtering any of those on ``scope.status == "warn"``
-        drops this scope's warning the moment its sibling rule fails.
+        still belong on every surface: the count, both diffs, and the
+        listing. Filtering any of those on ``scope.status == "warn"`` drops
+        this scope's warning the moment its sibling rule fails.
         """
         mixed = main.ScopeResult(
             label="Branch",
@@ -3212,15 +3758,33 @@ class TestWarnedScopes(unittest.TestCase):
         self.assertEqual(main._warn_count([mixed]), 1)
 
         body = main.render_report([mixed])
-        self.assertIn("❌ **1 of 1 check failed**, 1 warning", body)
-        self.assertIn("| Scope | Checked value | Failed checks |", body)
-        self.assertIn("[CC202 merge-base](https://commit-check.com/rules/#cc202)", body)
-        self.assertIn("| Scope | Checked value | Warnings |", body)
-        self.assertIn("[CC201 branch](https://commit-check.com/rules/#cc201)", body)
-        self.assertIn("  ✖ Branch (1 failure)", body)
-        self.assertIn("      CC202 merge-base", body)
-        self.assertIn("  ⚠ Branch (1 warning)", body)
-        self.assertIn("      CC201 branch", body)
+        self.assertIn("Commit Check failed\n", body)
+        failed, warned = body.split("**Warnings**")
+        self.assertIn(
+            "```diff\n"
+            "@@ Branch @@\n"
+            "- jsmith/fix-x\n"
+            "# Current branch is not rebased onto main.\n"
+            "```\n"
+            "\n"
+            "<sub>Rules: [CC202](https://commit-check.com/rules/#cc202)</sub>\n",
+            failed,
+        )
+        self.assertIn(
+            "```diff\n"
+            "@@ Branch @@\n"
+            "- jsmith/fix-x\n"
+            "# Use <type>/<description>\n"
+            "```\n"
+            "\n"
+            "<sub>Rules: [CC201](https://commit-check.com/rules/#cc201)</sub>\n",
+            warned,
+        )
+        # One row, marked with the worse of the two, and both findings under
+        # it; the warning says that it is one.
+        self.assertIn("  ✖ branch       jsmith/fix-x\n      CC202 merge-base\n", body)
+        self.assertIn("\n      CC201 branch (warning)\n", body)
+        self.assertNotIn("⚠ branch", body)
 
     def test_step_log_and_report_agree_on_a_mixed_scope(self):
         """The step log's ::warning annotation must not be the only surface
@@ -3297,24 +3861,30 @@ class TestWarnedScopes(unittest.TestCase):
         self.assertEqual(
             body,
             f"{main.COMMENT_MARKER}\n"
-            f"{main.REPORT_TITLE}\n"
+            f"{heading('⚠', 'warned', 'passed with warnings')}\n"
             "\n"
-            "✅ **1 of 2 checks passed**, 1 warning\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
+            f"{group_line('⚠', 'warned', 'Branch: 1 warning')}\n"
             "\n"
-            "| Scope | Checked value | Warnings |\n"
-            "|---|---|---|\n"
-            "| Branch | `jsmith/fix-x` | "
-            "[CC201 branch](https://commit-check.com/rules/#cc201) |\n"
+            "**Warnings**\n"
+            "\n"
+            "```diff\n"
+            "@@ Branch @@\n"
+            "- jsmith/fix-x\n"
+            "# Use <type>/<description>\n"
+            "```\n"
+            "\n"
+            "<sub>Rules: [CC201](https://commit-check.com/rules/#cc201)</sub>\n"
             "\n"
             "<details>\n"
-            "<summary>Show all 2 checks</summary>\n"
+            "<summary>All 2 checks</summary>\n"
             "\n"
             "```text\n"
             "Pull request\n"
-            "  ✔ PR title (feat: add login page)\n"
+            "  ✔ title        feat: add login page\n"
             "Branch\n"
-            "  ⚠ Branch (1 warning)\n"
-            "      CC201 branch\n"
+            "  ⚠ branch       jsmith/fix-x\n"
+            "      CC201 branch (warning)\n"
             "        value: jsmith/fix-x\n"
             "        The branch should follow Conventional Branch.\n"
             "        Suggest: Use <type>/<description>\n"
@@ -3325,30 +3895,43 @@ class TestWarnedScopes(unittest.TestCase):
             f"{FOOTER}",
         )
 
-    def test_warning_and_skip_both_fold_into_the_title_in_order(self):
-        results = [pass_scope("PR title"), warn_scope(), skip_scope("Author")]
+    def test_warning_and_skip_each_get_their_own_group_line(self):
+        results = [pass_scope("PR title"), warn_scope(), skip_scope("Author name")]
         body = main.render_report(results)
-        self.assertIn("✅ **1 of 3 checks passed**, 1 warning, 1 skipped", body)
+        self.assertIn("Commit Check passed with warnings\n", body)
+        self.assertIn(
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
+            f"{group_line('⚠', 'warned', 'Branch: 1 warning')}<br>\n"
+            f"{group_line('⊘', 'skipped', 'Author: skipped')}\n",
+            body,
+        )
 
     def test_a_failure_still_fails_and_names_the_warning_too(self):
         results = [fail_scope("Commit 1/1"), warn_scope()]
         body = main.render_report(results)
-        self.assertIn("❌ **1 of 2 checks failed**, 1 warning", body)
-        self.assertIn("| Scope | Checked value | Failed checks |", body)
-        self.assertIn("| Scope | Checked value | Warnings |", body)
-        self.assertLess(
-            body.index("Failed checks"),
-            body.index("| Scope | Checked value | Warnings |"),
-        )
+        self.assertIn("Commit Check failed\n", body)
+        self.assertEqual(body.count("```diff\n"), 2)
+        # The failures come first, the warnings under their own heading, and
+        # only the failures get instructions.
+        self.assertLess(body.index("@@ Commit 1/1 @@"), body.index("**Warnings**"))
+        self.assertLess(body.index("**Warnings**"), body.index("@@ Branch @@"))
+        self.assertLess(body.index("@@ Branch @@"), body.index("How to fix"))
+        self.assertNotIn("Branch name.", body)
 
     def test_step_log_prints_a_warning_annotation_not_an_error(self):
         buf = io.StringIO()
         with patch("sys.stdout", buf):
             main.render_step_log([warn_scope()])
         out = buf.getvalue()
-        self.assertIn("::warning title=CC201 branch::Branch: The branch should ", out)
+        self.assertIn(
+            '::warning title=CC201 branch::Branch "jsmith/fix-x": '
+            "Use <type>/<description>%0AThe branch should ",
+            out,
+        )
         self.assertNotIn("::error", out)
-        self.assertIn("  ⚠ Branch (1 warning)", out)
+        self.assertIn("::group::⚠ Branch: 1 warning\n", out)
+        self.assertIn("  \x1b[33m⚠\x1b[0m branch       jsmith/fix-x\n", out)
+        self.assertNotIn("How to fix", out)
 
     def test_step_log_friendly_line_mentions_the_warning(self):
         buf = io.StringIO()
@@ -3415,15 +3998,11 @@ class TestMarkdownEscaping(unittest.TestCase):
     """User text in the report must not break the Markdown that carries it.
 
     Commit subjects quote code, branch names and author names may contain
-    pipes; the table cell and the fenced details block have to survive both.
-    The checks below come from a real ``commit-check --format json`` run on
-    the subject ``fix: handle `None` | retry`` (all rules pass on it, so the
-    CC001 outcome is flipped to make a table row).
+    pipes; every value lands in a fenced block, and the fence has to survive
+    both. The checks below come from a real ``commit-check --format json``
+    run on the subject ``fix: handle `None` | retry`` (all rules pass on it,
+    so the CC001 outcome is flipped to make it a finding).
     """
-
-    #: Splits a table row on the pipes that are cell separators, not on the
-    #: escaped ones inside a cell.
-    CELL_SEPARATOR = re.compile(r"(?<!\\)\|")
 
     def _scope(self, value: str) -> main.ScopeResult:
         return main.ScopeResult(
@@ -3442,71 +4021,71 @@ class TestMarkdownEscaping(unittest.TestCase):
             ],
         )
 
-    def test_markdown_code_wraps_backticks_and_escapes_pipes(self):
-        cases = {
-            "plain": "`plain`",
-            "a|b": "`a\\|b`",
-            "fix: handle `None` | retry": "``fix: handle `None` \\| retry``",
-            "`x`": "`` `x` ``",
-            "``x``": "``` ``x`` ```",
-            "x`": "`` x` ``",
-        }
-        for value, expected in cases.items():
-            with self.subTest(value=value):
-                self.assertEqual(main._markdown_code(value), expected)
+    def test_diff_fence_outgrows_a_triple_backtick_in_the_subject(self):
+        diff = main._diff_block([self._scope("docs: show ``` usage")])
+        self.assertEqual(diff[0], "````diff")
+        self.assertEqual(diff[2], "- docs: show ``` usage")
+        self.assertEqual(diff[4], "````")
 
-    def test_table_row_with_backticks_and_a_pipe_keeps_three_cells(self):
-        table = main._markdown_table([self._scope("fix: handle `None` | retry")])
-        row = table.splitlines()[2]
-        # Strip the outer pipes before counting: "| a | b | c |" -> 3 cells.
-        cells = self.CELL_SEPARATOR.split(row.strip().strip("|"))
-        self.assertEqual(len(cells), 3, row)
-        self.assertEqual(cells[1].strip(), "``fix: handle `None` \\| retry``")
-        self.assertEqual(
-            cells[2].strip(), "[CC001 message](https://commit-check.com/rules/#cc001)"
-        )
+    def test_prompt_fence_outgrows_a_triple_backtick_in_the_subject(self):
+        how = main._how_to_fix([self._scope("docs: show ``` usage")])
+        self.assertIn("````text", how)
+        self.assertEqual(how.count("````"), 1)
+        # The commands quote nothing of the user's, so their fence stays.
+        self.assertIn("```bash", how)
 
-    def test_truncated_value_with_an_unbalanced_backtick_still_closes(self):
-        """The 60-char cap can cut inside a backtick run; the fence is chosen
-        after truncation, so the span still closes at the right place."""
+    def test_a_subject_with_a_pipe_or_backticks_is_shown_as_it_is(self):
+        """Every place a value lands is a code block, so nothing is escaped."""
+        subject = "fix: handle `None` | retry"
+        body = main.render_report([self._scope(subject)])
+        self.assertIn(f"- {subject}\n", body)
+        self.assertIn(f"  ✖ 5584f46      {subject}\n", body)
+
+    def test_capped_value_with_an_unbalanced_backtick_stays_in_its_block(self):
+        """The 60-char cap can cut inside a backtick run."""
         value = "fix: " + "`x`, " * 20
-        truncated = main._scope_value(self._scope(value))
-        self.assertTrue(truncated.endswith("`x..."), truncated)  # cut mid-span
-        cell = main._markdown_code(truncated)
-        self.assertEqual(cell, f"``{truncated}``")
+        scope = pass_scope("Commit 1/1", value=value)
+        capped = main._scope_value(scope)
+        self.assertTrue(capped.endswith("`x..."), capped)  # cut mid-span
+        listing = main._all_checks([scope])
+        self.assertEqual(listing[3], "```text")
+        self.assertEqual(listing[-3], "```")
 
     def test_details_fence_outgrows_a_triple_backtick_in_the_value(self):
-        details = main._markdown_details([self._scope("docs: show ``` usage")])
+        details = "\n".join(main._all_checks([self._scope("docs: show ``` usage")]))
         lines = details.splitlines()
         self.assertEqual(lines[3], "````text")
         self.assertEqual(lines[-3], "````")
         self.assertIn("value: docs: show ``` usage", details)
 
     def test_details_fence_stays_three_backticks_for_ordinary_values(self):
-        details = main._markdown_details([pass_scope(value="feat: add `login`")])
-        lines = details.splitlines()
+        lines = main._all_checks([pass_scope(value="feat: add `login`")])
         self.assertEqual(lines[3], "```text")
         self.assertEqual(lines[-3], "```")
 
 
 class TestSkipRenderingEdgeCases(unittest.TestCase):
-    def test_failure_table_omits_skipped_scopes(self):
-        """A skipped scope has no failed checks, so it must not get a row.
-
-        It previously contributed a row with an empty value and an empty
-        rule list — a blank accusation under "Failed checks".
-        """
-        table = main._markdown_table([fail_scope("Commit 1/1"), skip_scope("PR title")])
-        self.assertIn("| Commit 1/1 |", table)
-        self.assertNotIn("PR title", table)
-        # header + separator + exactly one data row
-        self.assertEqual(len(table.splitlines()), 3)
+    def test_the_diff_omits_skipped_scopes(self):
+        """A skipped scope has no failed checks, so it must not get a hunk:
+        a blank accusation among what failed otherwise."""
+        diff = main._diff_block([fail_scope("Commit 1/1"), skip_scope("PR title")])
+        self.assertEqual(
+            diff[:5],
+            [
+                "```diff",
+                "@@ Commit 1/1 @@",
+                "- bad message",
+                "# Use <type>(<scope>): <description>",
+                "```",
+            ],
+        )
 
     def test_empty_result_set_is_not_reported_as_all_skipped(self):
         """`skipped == total` is trivially true for no scopes at all."""
         body = main.render_report([])
         self.assertNotIn("skipped", body)
-        self.assertIn("✅ **All 0 checks passed**", body)
+        self.assertIn("Commit Check passed\n\n<details>\n", body)
+        self.assertIn("<summary>Details</summary>", body)
 
     def test_step_log_partial_skip_does_not_claim_all_passed(self):
         buf = io.StringIO()
@@ -3521,9 +4100,9 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
         with patch("sys.stdout", buf):
             main.render_step_log([skip_scope(), skip_scope("Branch")])
         out = buf.getvalue()
-        self.assertIn("  ⊘ PR title (skipped)\n", out)
+        self.assertIn("  \x1b[90m⊘\x1b[0m title        skipped\n", out)
         self.assertTrue(
-            out.endswith("⊘ commit-check: all checks skipped, nothing was validated\n"),
+            out.endswith("⊘ Commit Check: all checks skipped, nothing was validated\n"),
             out,
         )
         self.assertNotIn("passed", out)
@@ -3639,7 +4218,7 @@ class TestRealCommitCheckBinary(unittest.TestCase):
         self.assertEqual(main.overall_status([scope]), "fail")
         # The rendered report must carry the rule link the CLI supplied.
         self.assertIn(
-            "[CC001 message](https://commit-check.com/rules/#cc001)",
+            "<sub>Rules: [CC001](https://commit-check.com/rules/#cc001)</sub>",
             main.render_report([scope]),
         )
 
@@ -3887,6 +4466,11 @@ class TestDescriptionLineChanges(unittest.TestCase):
             'In the description, remove "Link to Devin run: https://app.devin.ai/sessions/1"',
         )
         self.assertEqual(scope.checks[0]["fix"], "")
+        # The fix is gone from the check, so the lines are kept for the diff.
+        self.assertEqual(
+            scope.edits,
+            {"CC013": (["Link to Devin run: https://app.devin.ai/sessions/1"], [])},
+        )
 
     def test_disclose_names_the_line_to_add_and_the_one_it_replaces(self):
         body = "Adds a parser.\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
