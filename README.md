@@ -25,7 +25,7 @@ The GitHub Action for [Commit Check](https://github.com/commit-check/commit-chec
 commit policy as code for teams and AI agents. It checks every commit of a pull
 request — message, branch, author, and optionally the PR title and the AI
 attribution in its description — against your `cchk.toml`, and reports the
-result in the job summary, as annotations on the diff and, if you want, as a PR
+result in the job summary, as annotations on the run and, if you want, as a PR
 comment. It can also label the pull requests that AI tools wrote.
 
 ## Usage
@@ -113,34 +113,72 @@ the run. Every key: [configuration reference](https://commit-check.com/configura
 
 ## What it looks like
 
-A failing run opens with a count and a table of only what failed — each rule ID
-links to its documentation, each commit to itself — with the full tree one
-click away:
+A failing run says so in its heading, gives each group one line, and shows what
+failed as a diff: red is what was found, green is what to write instead. Each
+commit and rule is linked under it, and two folds hold the rest: how to fix it
+(a prompt for an AI coding agent, and the git commands) and the full list.
 
-> **Commit Check**
+> <img alt="✖" width="24" height="24" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/failed.png"> **Commit Check failed**
 >
-> ❌ **2 of 4 checks failed**
+> <img alt="✔" width="16" height="16" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-passed.png"> Pull request: passed<br>
+> <img alt="✖" width="16" height="16" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-failed.png"> Commits: 1 of 2 failed<br>
+> <img alt="✖" width="16" height="16" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-failed.png"> Branch: failed
 >
-> | Scope | Checked value | Failed checks |
-> |---|---|---|
-> | [Commit 2/2 (5584f46)](https://github.com/acme/widgets/commit/5584f462cc3c947b2ba8d3d1a5735571803ee159) | `bad msg` | [CC001 message](https://commit-check.com/rules/#cc001) |
-> | Branch | `Feature/Add-Login` | [CC201 branch](https://commit-check.com/rules/#cc201) |
+> ```diff
+> @@ 5584f46 @@
+> - bad msg
+> # Use <type>(<scope>): <description>
+> @@ Branch @@
+> - Feature/Add-Login
+> + feature/Add-Login
+> ```
+>
+> <sub>Commits: [`5584f46`](https://github.com/acme/widgets/commit/5584f462cc3c947b2ba8d3d1a5735571803ee159) &nbsp;|&nbsp; Rules: [CC001](https://commit-check.com/rules/#cc001) · [CC201](https://commit-check.com/rules/#cc201)</sub>
 >
 > <details>
-> <summary>Show all 4 checks</summary>
+> <summary><b>How to fix</b></summary>
+>
+> **With an AI coding agent.** Paste this prompt:
+>
+> ```text
+> Fix these Commit Check findings without changing any code:
+> - Commit 5584f46 "bad msg": Use <type>(<scope>): <description>
+> - Branch: change "Feature/Add-Login" to "feature/Add-Login"
+> ```
+>
+> **Commit messages.** Reword it, then force-push:
+>
+> ```bash
+> git commit --amend
+> git push --force-with-lease
+> ```
+>
+> **Branch name.** Rename the branch and push it. A pull request cannot change its branch, so open a new one from the renamed branch:
+>
+> ```bash
+> git branch -m feature/Add-Login
+> git push -u origin HEAD
+> ```
+>
+> **Next time.** The [pre-commit hook](https://commit-check.com/guides/integrations/#as-a-pre-commit-hook) runs the same rules before you push.
+>
+> </details>
+>
+> <details>
+> <summary>All 4 checks</summary>
 >
 > ```text
 > Pull request
->   ✔ PR title (feat: add login page)
-> Commit message
->   ✔ Commit 1/2 (d87faca) (feat: add login page)
->   ✖ Commit 2/2 (5584f46) (1 failure)
+>   ✔ title        feat: add login page
+> Commits
+>   ✔ d87faca      feat: add login page
+>   ✖ 5584f46      bad msg
 >       CC001 message
 >         value: bad msg
 >         The commit message should follow Conventional Commits.
 >         Suggest: Use <type>(<scope>): <description>
 > Branch
->   ✖ Branch (1 failure)
+>   ✖ branch       Feature/Add-Login
 >       CC201 branch
 >         value: Feature/Add-Login
 >         The branch should follow Conventional Branch.
@@ -150,36 +188,28 @@ click away:
 >
 > </details>
 >
-> _commit-check &lt;version&gt; · [Rules reference](https://commit-check.com/rules/)_
+> <sub>Checked by [Commit Check](https://commit-check.com) &lt;version&gt; · [Rules](https://commit-check.com/rules/) · [Check before you push](https://commit-check.com/guides/integrations/#as-a-pre-commit-hook)</sub>
 
 The rest follow the same layout:
 
-- **Passed:** one line, `✅ All 3 checks passed`, with the tree folded away.
-- **Warned:** a rule under `warn` gets its own ⚠ row and counts as passed.
+- **Passed:** the heading reads "Commit Check passed", with the list folded away.
+- **Warned:** a rule under `warn` gets its own diff under "Warnings", a ⚠ in
+  the list, and counts as passed.
 - **Skipped:** a run where nothing was validated — typically a bot listed in
-  `ignore_authors` — reads `⊘`, never `✔`.
+  `ignore_authors` — reads "Commit Check skipped", never passed.
 
-The step log prints the same tree, plus one annotation per finding on the
-Files changed tab. With `pr-comments: true` the same report is posted to the
-pull request, and later runs edit that one comment instead of adding more.
+The step log prints the same list, each group folded under its own result, plus
+one annotation per finding on the run page. With `pr-comments: true` the same
+report is posted to the pull request, and later runs edit that one comment
+instead of adding more.
 
 With `pr-body-ai-attribution: true` and `ai_attribution = "forbid"`, a
-description that credits an AI co-author fails the same way, and the report
-names the line to remove:
+description that credits an AI co-author fails the same way, and the diff is
+the line to remove:
 
-> ❌ **1 of 2 checks failed**
->
-> | Scope | Checked value | Failed checks |
-> |---|---|---|
-> | PR description | `Claude Code` | [CC013 ai-attribution](https://commit-check.com/rules/#cc013) |
->
-> ```text
-> Pull request
->   ✖ PR description (1 failure)
->       CC013 ai-attribution
->         value: Claude Code
->         AI attribution is forbidden in this project — detected: Claude Code
->         Suggest: In the description, remove "Co-Authored-By: Claude <noreply@anthropic.com>"
+> ```diff
+> @@ PR description @@
+> - Co-Authored-By: Claude <noreply@anthropic.com>
 > ```
 
 With `ai-label: true`, a pull request an AI tool wrote also gets the
