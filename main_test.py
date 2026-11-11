@@ -2559,6 +2559,45 @@ class TestDiffBlock(unittest.TestCase):
             ],
         )
 
+    def test_an_ai_author_leaves_the_subject_as_context(self):
+        # CC017 is about who made the commit, not what its subject says.
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            sha=SHA_A,
+            text="fix: handle the empty case\n",
+            checks=[
+                make_check(
+                    "message", "pass", "CC001", value="fix: handle the empty case"
+                ),
+                make_check(
+                    "ai_author",
+                    "fail",
+                    "CC017",
+                    value="Claude <noreply@anthropic.com>",
+                    suggest="Commit as yourself",
+                ),
+            ],
+        )
+        self.assertEqual(
+            self._hunks([scope]),
+            ["@@ d87faca @@", "  fix: handle the empty case", "# Commit as yourself"],
+        )
+
+    def test_an_ai_rules_value_never_stands_in_for_the_subject(self):
+        # An empty message has no subject; the author CC017 reports is not one.
+        scope = main.ScopeResult(
+            label="Commit 1/1",
+            sha=SHA_A,
+            checks=[
+                make_check("message", "pass", "CC001"),
+                make_check(
+                    "ai_author", "pass", "CC017", value="Jane <jane@example.com>"
+                ),
+            ],
+        )
+        self.assertEqual(main._first_value(scope), "")
+        self.assertEqual(main._render_scopes([scope], False), ["  ✔ d87faca"])
+
     def test_two_rules_that_ask_for_the_same_line_show_it_once(self):
         scope = ai_scope()
         scope.checks.append({**scope.checks[0], "rule_id": "CC015"})
