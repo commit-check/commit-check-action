@@ -1955,6 +1955,10 @@ def _diff_block(results: list[ScopeResult], status: str = "fail") -> list[str]:
 
 #: First line of the prompt "How to fix" offers for an AI coding agent.
 AGENT_PROMPT = "Fix these Commit Check findings without changing any code:"
+#: The same line when a finding is about a file, which then has to change.
+AGENT_PROMPT_FILES = (
+    "Fix these Commit Check findings, changing only the files they name:"
+)
 BRANCH_HELP = (
     "**Branch name.** Rename the branch and push it. A pull request cannot "
     "change its branch, so open a new one from the renamed branch:"
@@ -1980,7 +1984,8 @@ def _agent_prompt(failing: list[ScopeResult]) -> list[str]:
 
     A files scope gets a line per finding: each is about a path of its own.
     """
-    lines = [AGENT_PROMPT]
+    about_files = any(scope.label == FILES_LABEL for scope in failing)
+    lines = [AGENT_PROMPT_FILES if about_files else AGENT_PROMPT]
     for scope in failing:
         if scope.label == FILES_LABEL:
             label = f"Files of commit {scope.sha[:7]}" if scope.sha else scope.label
@@ -2215,7 +2220,9 @@ def _all_checks(results: list[ScopeResult]) -> list[str]:
 #   ("Commit 1/11") stays bare in the `result` output.
 # - With `files: true` each commit also gets a row in a "Files" group, for the
 #   files it changes. Its hunk reads `@@ 5584f46 files @@`, with a red line per
-#   path a rule found and the rule's advice under it.
+#   path a rule found and the rule's advice under it. The agent prompt then
+#   opens with "changing only the files they name" in place of "without
+#   changing any code".
 # - One check is one thing that was checked — a commit message, the branch, the
 #   author — not one rule evaluation. The totals therefore match the number of
 #   ✔/✖ rows the reader can count in the listing, and do not grow with the

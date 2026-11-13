@@ -5533,6 +5533,15 @@ class TestFilesInTheReport(unittest.TestCase):
         self.assertNotIn("Reword", how)
         self.assertNotIn(main.FILES_HELP, "\n".join(main._how_to_fix([fail_scope()])))
 
+    def test_the_prompt_lets_the_named_files_change(self):
+        """Taking a file out of a commit cannot be done "without changing any code"."""
+        self.assertEqual(main._agent_prompt([fail_scope()])[0], AGENT_PROMPT)
+        for failing in ([files_scope()], [fail_scope(), files_scope()]):
+            self.assertEqual(
+                main._agent_prompt(failing)[0],
+                "Fix these Commit Check findings, changing only the files they name:",
+            )
+
     def test_each_finding_is_an_annotation_about_its_own_path(self):
         out = io.StringIO()
         with patch("sys.stdout", out), patch("main.DRY_RUN_ENABLED", False):
