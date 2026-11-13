@@ -5,6 +5,7 @@ import importlib.metadata
 import io
 import json
 import os
+import pathlib
 import re
 import runpy
 import shutil
@@ -172,6 +173,7 @@ class TestLogEnvVars(unittest.TestCase):
                 "::debug::BRANCH=false",
                 "::debug::AUTHOR_NAME=false",
                 "::debug::AUTHOR_EMAIL=false",
+                "::debug::FILES=false",
                 "::debug::DRY_RUN=false",
                 "::debug::JOB_SUMMARY=false",
                 "::debug::PR_COMMENTS=false",
@@ -5160,3 +5162,531 @@ class TestEmptyCommitMessage(unittest.TestCase):
             [(s.label, s.sha, s.status) for s in results],
             [("Commit 1/1", "a1", "fail")],
         )
+
+
+def files_scope(sha: str = SHA_B, *checks) -> main.ScopeResult:
+    """One commit's files scope; by default the two findings of a bad commit."""
+    return main.ScopeResult(
+        label="Files",
+        sha=sha,
+        checks=list(checks)
+        or [
+            make_check(
+                "file_size",
+                status="fail",
+                rule_id="CC302",
+                value="big.bin (4 KB)",
+                error="File exceeds the maximum size of 1 KB",
+                suggest="Keep files under 1 KB, or raise max_size in the [files] config",
+                docs_url="https://commit-check.com/rules/#cc302",
+            ),
+            make_check(
+                "file_pattern",
+                status="fail",
+                rule_id="CC303",
+                value="key.pem (pattern *.pem)",
+                error="File path matches a prohibited pattern",
+                suggest="Remove the file from the commit",
+                docs_url="https://commit-check.com/rules/#cc303",
+            ),
+        ],
+    )
+
+
+def files_pass(value: str = "2 file(s)", status: str = "pass") -> dict[str, str]:
+    return make_check("file_pattern", status=status, rule_id="CC303", value=value)
+
+
+class TestShallowBoundary(unittest.TestCase):
+    """The commits a shallow clone holds without their parents."""
+
+    def test_a_shallow_clone_lists_them_in_its_shallow_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "shallow")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"{SHA_A}\n{SHA_B}\n")
+            located = MagicMock(returncode=0, stdout=f"{path}\n")
+            with patch("main.subprocess.run", return_value=located) as run:
+                self.assertEqual(main._shallow_boundary(), {SHA_A, SHA_B})
+        self.assertEqual(
+            run.call_args.args[0], ["git", "rev-parse", "--git-path", "shallow"]
+        )
+
+    def test_a_complete_clone_has_no_such_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            located = MagicMock(returncode=0, stdout=os.path.join(tmp, "shallow"))
+            with patch("main.subprocess.run", return_value=located):
+                self.assertEqual(main._shallow_boundary(), set())
+
+    def test_outside_a_repository_there_is_none(self):
+        with patch("main.subprocess.run", return_value=MagicMock(returncode=128)):
+            self.assertEqual(main._shallow_boundary(), set())
+
+    def test_without_git_there_is_none(self):
+        with patch("main.subprocess.run", side_effect=OSError("no git")):
+            self.assertEqual(main._shallow_boundary(), set())
+
+
+class TestRunFilesChecks(unittest.TestCase):
+    """``files: true`` checks the files of each commit, one scope per commit."""
+
+    def _run(self, shas, answers, boundary=(), missing=()):
+        """Run the files checks; ``answers`` maps a rev to the CLI's checks."""
+        calls: list[list[str]] = []
+
+        def check_scope(label, args, sha=""):
+            calls.append(args)
+            answer = answers.get(args[-1], [])
+            if isinstance(answer, str):
+                return main.ScopeResult(label=label, raw_text=answer, sha=sha)
+            return main.ScopeResult(label=label, checks=list(answer), sha=sha)
+
+        out = io.StringIO()
+        with (
+            patch("main._shallow_boundary", return_value=set(boundary)),
+            patch("main._rev_resolves", side_effect=lambda sha: sha not in missing),
+            patch("main.check_scope", side_effect=check_scope),
+            patch("sys.stdout", out),
+        ):
+            results = main.run_files_checks(shas)
+        return results, calls, out.getvalue()
+
+    def test_every_commit_is_checked_at_its_own_revision(self):
+        results, calls, out = self._run(
+            ["a1", "b2"], {"a1": [files_pass()], "b2": files_scope().checks}
+        )
+        self.assertEqual(
+            calls, [["--files", "--rev", "a1"], ["--files", "--rev", "b2"]]
+        )
+        self.assertEqual(
+            [(s.label, s.sha, s.status) for s in results],
+            [("Files", "a1", "pass"), ("Files", "b2", "fail")],
+        )
+        self.assertEqual(out, "")
+
+    def test_a_commit_without_its_parent_is_skipped_not_guessed_at(self):
+        """At the edge of a shallow clone every file would look newly added."""
+        results, calls, out = self._run(
+            ["a1", "b2", "c3"],
+            {"c3": [files_pass()]},
+            boundary=["b2"],
+            missing=["a1"],
+        )
+        self.assertEqual(calls, [["--files", "--rev", "c3"]])
+        self.assertEqual(
+            [(s.sha, s.status, s.skip_reason) for s in results],
+            [
+                ("a1", "skip", main.FILES_NOT_IN_CLONE),
+                ("b2", "skip", main.FILES_NOT_IN_CLONE),
+                ("c3", "pass", ""),
+            ],
+        )
+        self.assertIn(
+            "::warning title=commit-check::2 of 3 commits are not in the checkout "
+            "together with their parent (is actions/checkout using fetch-depth: 0?); "
+            "their files were not checked",
+            out,
+        )
+
+    def test_a_checkout_with_none_of_them_gets_one_skipped_scope(self):
+        results, calls, out = self._run(
+            ["a1", "b2"], {"--files": [files_pass()]}, missing=["a1", "b2"]
+        )
+        # HEAD is only asked whether any rule is set; its verdict is not used.
+        self.assertEqual(calls, [["--files"]])
+        self.assertEqual(
+            [(s.label, s.sha, s.status, s.skip_reason) for s in results],
+            [("Files", "", "skip", main.FILES_NOT_IN_CLONE)],
+        )
+        self.assertIn("the files check was skipped", out)
+
+    def test_an_unknown_head_is_not_checked(self):
+        """Outside a PR the one commit is HEAD; git may fail to name it."""
+        results, calls, _out = self._run([""], {"--files": "boom"})
+        self.assertEqual(calls, [["--files"]])
+        self.assertEqual(results[0].skip_reason, main.FILES_NOT_IN_CLONE)
+
+    def test_no_rule_set_is_one_skipped_scope_and_no_shallow_warning(self):
+        for missing in ([], ["a1", "b2"]):
+            results, _calls, out = self._run(["a1", "b2"], {}, missing=missing)
+            self.assertEqual(
+                [(s.label, s.sha, s.status, s.skip_reason) for s in results],
+                [("Files", "", "skip", main.FILES_UNCONFIGURED)],
+            )
+            self.assertEqual(out, "")
+
+    def test_a_commit_that_changes_no_file_says_so(self):
+        skipped = files_pass(value="", status="skip")
+        skipped["reason"] = ""
+        results, _calls, _out = self._run(["a1"], {"a1": [skipped]})
+        self.assertEqual(results[0].status, "skip")
+        self.assertEqual(results[0].skip_reason, main.FILES_NOTHING_CHANGED)
+
+    def test_the_clis_own_skip_reason_is_kept(self):
+        skipped = files_pass(value="", status="skip")
+        skipped["reason"] = "what the commit changed could not be read"
+        results, _calls, _out = self._run(["a1"], {"a1": [skipped]})
+        self.assertEqual(
+            results[0].skip_reason, "what the commit changed could not be read"
+        )
+
+    def test_unparsable_output_is_a_failure_of_that_commit(self):
+        results, _calls, _out = self._run(["a1"], {"a1": "Traceback ..."})
+        self.assertEqual([(s.sha, s.status) for s in results], [("a1", "fail")])
+
+    def test_a_pull_request_whose_commits_cannot_be_listed_is_skipped(self):
+        out = io.StringIO()
+        with patch("sys.stdout", out), patch("main.check_scope") as check:
+            results = main.run_pr_files_checks([])
+        check.assert_not_called()
+        self.assertEqual(
+            [(s.label, s.status, s.skip_reason) for s in results],
+            [("Files", "skip", main.FILES_UNLISTED)],
+        )
+        self.assertIn("Could not list the pull request's commits", out.getvalue())
+
+    def test_a_pull_request_hands_over_its_commits(self):
+        with patch("main.run_files_checks", return_value=[]) as run:
+            main.run_pr_files_checks([("a1", "feat: one"), ("b2", "feat: two")])
+        run.assert_called_once_with(["a1", "b2"])
+
+
+class TestRunCommitCheckFiles(unittest.TestCase):
+    def _run(self, event="pull_request", message=True, files=True):
+        # Only a pull request has commits to list.
+        listable = event == "pull_request"
+        commits = [("a1", "feat: one"), ("b2", "feat: two")] if listable else []
+
+        def check_scope(label, args, **kwargs):
+            return main.ScopeResult(
+                label=label, checks=[files_pass()], sha=kwargs.get("sha", "")
+            )
+
+        with (
+            patch("main.MESSAGE_ENABLED", message),
+            patch("main.BRANCH_ENABLED", True),
+            patch("main.AUTHOR_NAME_ENABLED", False),
+            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("main.FILES_ENABLED", files),
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}),
+            patch("main.get_pr_commit_messages", return_value=commits) as listed,
+            patch("main._local_author", return_value=None),
+            patch("main._shallow_boundary", return_value=set()),
+            patch("main._rev_resolves", return_value=True),
+            patch("main.head_sha", return_value="h0"),
+            patch("main.check_scope", side_effect=check_scope),
+        ):
+            _rc, results = main.run_commit_check()
+        self.listed_calls = listed.call_count
+        return [(s.label, s.sha) for s in results]
+
+    def test_off_by_default(self):
+        self.assertFalse(main.FILES_ENABLED)
+        self.assertNotIn("Files", [label for label, _ in self._run(files=False)])
+
+    def test_a_pull_request_gets_one_scope_per_commit_after_the_messages(self):
+        self.assertEqual(
+            self._run(),
+            [
+                ("Commit 1/2", "a1"),
+                ("Commit 2/2", "b2"),
+                ("Files", "a1"),
+                ("Files", "b2"),
+                ("Branch", ""),
+            ],
+        )
+        self.assertEqual(self.listed_calls, 1)
+
+    def test_the_commits_are_listed_for_the_files_alone(self):
+        self.assertEqual(
+            self._run(message=False),
+            [("Files", "a1"), ("Files", "b2"), ("Branch", "")],
+        )
+        self.assertEqual(self.listed_calls, 1)
+
+    def test_outside_a_pull_request_the_head_commit_is_checked(self):
+        self.assertEqual(
+            self._run(event="push"),
+            [("Commit message", "h0"), ("Files", "h0"), ("Branch", "")],
+        )
+
+
+class TestFilesInTheReport(unittest.TestCase):
+    """A files scope holds one finding per rule, each about its own path."""
+
+    def test_the_first_finding_stands_for_the_scope(self):
+        scope = files_scope(SHA_B, files_pass("3 file(s)"), *files_scope().checks)
+        self.assertEqual(main._first_value(scope), "big.bin (4 KB)")
+        self.assertEqual(
+            main._first_value(files_scope(SHA_A, files_pass())), "2 file(s)"
+        )
+        warned = files_scope(
+            SHA_A, files_pass("3 file(s)"), files_pass("a.pem (pattern *.pem)", "warn")
+        )
+        self.assertEqual(main._first_value(warned), "a.pem (pattern *.pem)")
+        self.assertEqual(main._first_value(main.skipped_files_scope("why")), "")
+
+    def test_the_listing_names_each_commit_by_its_hash(self):
+        results = [files_scope(SHA_A, files_pass()), files_scope()]
+        self.assertEqual(
+            main._render_tree(results, include_docs=False),
+            [
+                "Files",
+                "  ✔ d87faca      2 file(s)",
+                "  ✖ 5584f46      big.bin (4 KB)",
+                "      CC302 file-size",
+                "        value: big.bin (4 KB)",
+                "        File exceeds the maximum size of 1 KB",
+                (
+                    "        Suggest: Keep files under 1 KB, or raise max_size in "
+                    "the [files] config"
+                ),
+                "      CC303 file-pattern",
+                "        value: key.pem (pattern *.pem)",
+                "        File path matches a prohibited pattern",
+                "        Suggest: Remove the file from the commit",
+            ],
+        )
+        self.assertEqual(
+            main._render_tree([main.skipped_files_scope("why")], include_docs=False),
+            ["Files", "  ⊘ files        skipped: why"],
+        )
+
+    def test_the_diff_shows_each_path_with_its_advice(self):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r"}):
+            lines = main._diff_block(
+                [fail_scope("Commit 1/1", sha=SHA_B), files_scope()]
+            )
+        self.assertEqual(
+            lines[: lines.index("```") + 1],
+            [
+                "```diff",
+                "@@ 5584f46 @@",
+                "- bad message",
+                "# Use <type>(<scope>): <description>",
+                "@@ 5584f46 files @@",
+                "- big.bin (4 KB)",
+                "# Keep files under 1 KB, or raise max_size in the [files] config",
+                "- key.pem (pattern *.pem)",
+                "# Remove the file from the commit",
+                "```",
+            ],
+        )
+        # One link for the commit, though its message and its files both failed.
+        self.assertEqual(
+            lines[-1],
+            f"<sub>Commits: [`5584f46`](https://github.com/o/r/commit/{SHA_B})"
+            " &nbsp;|&nbsp; Rules: [CC001](https://commit-check.com/rules/#cc001)"
+            " · [CC302](https://commit-check.com/rules/#cc302)"
+            " · [CC303](https://commit-check.com/rules/#cc303)</sub>",
+        )
+
+    def test_a_warned_finding_goes_in_the_warning_diff(self):
+        warned = files_scope(SHA_A, files_pass("a.pem (pattern *.pem)", "warn"))
+        warned.checks[0]["suggest"] = "Remove the file from the commit"
+        lines = main._diff_block([warned], "warn")
+        self.assertEqual(
+            lines[1:4],
+            [
+                "@@ d87faca files @@",
+                "- a.pem (pattern *.pem)",
+                "# Remove the file from the commit",
+            ],
+        )
+
+    def test_a_finding_that_names_nothing_still_gives_its_advice(self):
+        scope = files_scope(SHA_A, make_check("file_size", "fail", "CC302"))
+        self.assertEqual(
+            main._hunk(scope, "fail"), ["@@ d87faca files @@", "# check failed"]
+        )
+
+    def test_without_a_commit_the_scope_goes_by_its_label(self):
+        scope = files_scope("")
+        self.assertEqual(main._hunk(scope, "fail")[0], "@@ Files @@")
+        self.assertEqual(
+            main._agent_prompt([scope])[1],
+            '- Files "big.bin (4 KB)": Keep files under 1 KB, or raise max_size '
+            "in the [files] config",
+        )
+        self.assertEqual(main._row_label(scope), "files")
+
+    def test_unparsable_output_points_to_the_step_log(self):
+        scope = main.ScopeResult(label="Files", sha=SHA_A, raw_text="Traceback ...")
+        self.assertEqual(
+            main._hunk(scope, "fail"),
+            [
+                "@@ d87faca files @@",
+                "# the output could not be parsed, see the step log",
+            ],
+        )
+
+    def test_how_to_fix_gives_each_finding_a_line_and_no_reword_commands(self):
+        how = "\n".join(main._how_to_fix([files_scope()]))
+        self.assertIn(
+            '- Files of commit 5584f46 "big.bin (4 KB)": Keep files under 1 KB, '
+            "or raise max_size in the [files] config\n"
+            '- Files of commit 5584f46 "key.pem (pattern *.pem)": Remove the file '
+            "from the commit",
+            how,
+        )
+        self.assertIn(main.FILES_HELP, how)
+        self.assertNotIn("Reword", how)
+        self.assertNotIn(main.FILES_HELP, "\n".join(main._how_to_fix([fail_scope()])))
+
+    def test_each_finding_is_an_annotation_about_its_own_path(self):
+        out = io.StringIO()
+        with patch("sys.stdout", out), patch("main.DRY_RUN_ENABLED", False):
+            main.render_step_log([files_scope()])
+        log = ANSI_CODES.sub("", out.getvalue())
+        self.assertIn("::group::✖ Files: failed", log)
+        self.assertIn(
+            '::error title=CC302 file-size::Files (5584f46) "big.bin (4 KB)": Keep '
+            "files under 1 KB, or raise max_size in the [files] config"
+            "%0AFile exceeds the maximum size of 1 KB",
+            log,
+        )
+        self.assertIn(
+            '::error title=CC303 file-pattern::Files (5584f46) "key.pem (pattern '
+            '*.pem)": Remove the file from the commit'
+            "%0AFile path matches a prohibited pattern",
+            log,
+        )
+
+    def test_the_result_output_carries_the_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "output")
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": path}):
+                main.set_result_output([files_scope()])
+            with open(path, encoding="utf-8") as f:
+                payload = json.loads(f.read().split("\n", 1)[1].rsplit("\n", 2)[0])
+        self.assertEqual(
+            [(s["label"], s["sha"], s["status"]) for s in payload["scopes"]],
+            [("Files", SHA_B, "fail")],
+        )
+
+
+class TestFilesInputIsWired(unittest.TestCase):
+    """The input reaches the script, and the README lists it."""
+
+    def _read(self, name: str) -> str:
+        here = os.path.dirname(os.path.abspath(main.__file__))
+        with open(os.path.join(here, name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_action_yml_declares_it_off_and_passes_it_on(self):
+        action = self._read("action.yml")
+        declared = re.search(
+            r"^  files:\n    description: .+\n    required: false\n    default: false$",
+            action,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(declared)
+        self.assertIn("        FILES: ${{ inputs.files }}\n", action)
+
+    def test_the_readme_lists_it(self):
+        self.assertIn("| `files` | `false` |", self._read("README.md"))
+
+
+@unittest.skipUnless(
+    shutil.which("commit-check") and shutil.which("git"), "needs commit-check and git"
+)
+class TestFilesAgainstRealCommits(unittest.TestCase):
+    """The pinned commit-check and git, unmocked, on a small repository."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = os.path.join(tmp.name, "repo")
+        os.mkdir(self.repo)
+        gitconfig = os.path.join(tmp.name, "gitconfig")
+        with open(gitconfig, "w", encoding="utf-8") as f:
+            f.write(
+                "[user]\n\tname = test-author\n\temail = test@example.com\n"
+                "[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n"
+            )
+        env = {k: v for k, v in os.environ.items() if not k.startswith("CCHK_")}
+        env["GIT_CONFIG_GLOBAL"] = gitconfig
+        env["GIT_CONFIG_SYSTEM"] = gitconfig
+        env_patch = patch.dict(os.environ, env, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.repo)
+        self._git("init", "-q")
+        self._commit(
+            "chore: init", {"cchk.toml": '[files]\nprohibited_patterns = ["*.pem"]\n'}
+        )
+
+    def _git(self, *args: str, cwd: str | None = None) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd or self.repo,
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def _commit(self, subject: str, files: dict[str, str | None]) -> str:
+        for name, content in files.items():
+            if content is None:
+                self._git("rm", "-q", name)
+                continue
+            with open(os.path.join(self.repo, name), "w", encoding="utf-8") as f:
+                f.write(content)
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", subject)
+        return self._git("rev-parse", "HEAD")
+
+    def test_each_commit_answers_for_the_files_it_changes(self):
+        good = self._commit("feat: app", {"app.py": "x = 1\n"})
+        bad = self._commit("feat: key", {"key.pem": "k\n"})
+        gone = self._commit("fix: drop key", {"key.pem": None})
+        with patch("sys.stdout", io.StringIO()):
+            results = main.run_files_checks([good, bad, gone])
+        self.assertEqual(
+            [(s.sha, s.status) for s in results],
+            [(good, "pass"), (bad, "fail"), (gone, "skip")],
+        )
+        self.assertEqual(
+            [(c["rule_id"], c["value"]) for c in results[1].failures],
+            [("CC303", "key.pem (pattern *.pem)")],
+        )
+        self.assertEqual(results[2].skip_reason, main.FILES_NOTHING_CHANGED)
+
+    def test_no_rule_set_is_reported_as_skipped(self):
+        sha = self._commit("chore: no rules", {"cchk.toml": ""})
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
+            results = main.run_files_checks([sha])
+        self.assertEqual(
+            [(s.status, s.skip_reason) for s in results],
+            [("skip", main.FILES_UNCONFIGURED)],
+        )
+
+    def test_a_shallow_clone_skips_the_commit_at_its_edge(self):
+        """Without the guard it would answer for every file in the repository."""
+        self._commit("feat: key", {"key.pem": "k\n"})
+        tip = self._commit("feat: app", {"app.py": "x = 1\n"})
+        shallow = os.path.join(os.path.dirname(self.repo), "shallow")
+        # A URL, not a path: git ignores --depth when cloning a local path.
+        origin = pathlib.Path(self.repo).as_uri()
+        self._git(
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            origin,
+            shallow,
+            cwd=os.path.dirname(self.repo),
+        )
+        os.chdir(shallow)
+        self.assertEqual(main._shallow_boundary(), {tip})
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            results = main.run_files_checks([tip])
+        self.assertEqual(
+            [(s.status, s.skip_reason) for s in results],
+            [("skip", main.FILES_NOT_IN_CLONE)],
+        )
+        self.assertIn("fetch-depth: 0", out.getvalue())
