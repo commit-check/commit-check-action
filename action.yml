@@ -21,6 +21,10 @@ inputs:
     description: check committer author email
     required: false
     default: false
+  files:
+    description: check the files each commit changes against the [files] rules in cchk.toml (size, prohibited paths, path length); needs fetch-depth 0
+    required: false
+    default: false
   dry-run:
     description: report failures (summary, PR comment, annotations as warnings) but always exit 0
     required: false
@@ -122,6 +126,7 @@ runs:
         BRANCH: ${{ inputs.branch }}
         AUTHOR_NAME: ${{ inputs.author-name }}
         AUTHOR_EMAIL: ${{ inputs.author-email }}
+        FILES: ${{ inputs.files }}
         DRY_RUN: ${{ inputs.dry-run }}
         JOB_SUMMARY: ${{ inputs.job-summary }}
         PR_COMMENTS: ${{ inputs.pr-comments }}

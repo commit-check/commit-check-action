@@ -49,6 +49,10 @@ CHECK_LABELS = {
 }
 
 
+#: Label of the scopes that check the files a commit changes (``files: true``).
+FILES_LABEL = "Files"
+
+
 #: Boolean inputs whose value was neither true nor false, as ``(name, value)``.
 #: ``main`` fails the step on them before any check runs.
 INVALID_FLAGS: list[tuple[str, str]] = []
@@ -79,6 +83,7 @@ MESSAGE_ENABLED = env_flag("MESSAGE")
 BRANCH_ENABLED = env_flag("BRANCH")
 AUTHOR_NAME_ENABLED = env_flag("AUTHOR_NAME")
 AUTHOR_EMAIL_ENABLED = env_flag("AUTHOR_EMAIL")
+FILES_ENABLED = env_flag("FILES")
 DRY_RUN_ENABLED = env_flag("DRY_RUN")
 JOB_SUMMARY_ENABLED = env_flag("JOB_SUMMARY")
 PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
@@ -259,6 +264,7 @@ def log_env_vars():
         "BRANCH",
         "AUTHOR_NAME",
         "AUTHOR_EMAIL",
+        "FILES",
         "DRY_RUN",
         "JOB_SUMMARY",
         "PR_COMMENTS",
@@ -437,6 +443,36 @@ def skipped_author_scope(flag: str) -> ScopeResult:
                 "suggest": "",
                 "docs_url": "",
                 "reason": "the pull request's head commit could not be resolved",
+            }
+        ],
+    )
+
+
+#: Why a files scope checked nothing.
+FILES_UNCONFIGURED = "no rule is set in the [files] section of the config"
+FILES_NOT_IN_CLONE = "the checkout lacks the commit or its parent"
+FILES_UNLISTED = "the pull request's commits could not be listed"
+FILES_NOTHING_CHANGED = "the commit adds or changes no file"
+
+
+def skipped_files_scope(reason: str, sha: str = "") -> ScopeResult:
+    """A scope recording that the files of a commit, or of all, went unchecked.
+
+    Reported as ``skip``, never as a pass: nothing was validated.
+    """
+    return ScopeResult(
+        label=FILES_LABEL,
+        sha=sha,
+        checks=[
+            {
+                "rule_id": "",
+                "check": "files",
+                "status": "skip",
+                "value": "",
+                "error": "",
+                "suggest": "",
+                "docs_url": "",
+                "reason": reason,
             }
         ],
     )
@@ -919,6 +955,91 @@ def run_pr_author_checks(
     ]
 
 
+def _shallow_boundary() -> set[str]:
+    """The commits a shallow clone holds without their parents.
+
+    Git lists them, one hash per line, in the repository's ``shallow`` file;
+    a complete clone has none. Such a commit looks like a root commit, so a
+    diff of it names every file in the repository as changed.
+    """
+    try:
+        located = subprocess.run(
+            ["git", "rev-parse", "--git-path", "shallow"],
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if located.returncode != 0:
+            return set()
+        with open(located.stdout.strip(), encoding="utf-8") as f:
+            return set(f.read().split())
+    except OSError:
+        return set()
+
+
+def run_files_checks(shas: list[str]) -> list[ScopeResult]:
+    """Check the files each commit changes, via ``commit-check --files --rev``.
+
+    One scope per commit, so a finding names the commit that has to change:
+    a file added in one commit and removed in the next is still in the
+    history. A commit is only checked when the checkout holds it together
+    with its parent, since the files it changes are a diff against that
+    parent. The others are reported as skipped, never guessed at.
+
+    With no rule set in ``[files]`` the CLI runs none, for any commit, and
+    one skipped scope says so in place of a row of empty passes.
+    """
+    boundary = _shallow_boundary()
+    readable = {
+        sha for sha in shas if sha and sha not in boundary and _rev_resolves(sha)
+    }
+    if not readable:
+        # Whether a rule is set at all, asked of HEAD: only the list of
+        # checks is read, never a verdict on HEAD itself.
+        probe = check_scope(FILES_LABEL, ["--files"])
+        if not (probe.checks or probe.raw_text):
+            return [skipped_files_scope(FILES_UNCONFIGURED)]
+        warn_shallow_checkout(
+            "The checkout holds no commit to check together with its parent",
+            "the files check was skipped",
+        )
+        return [skipped_files_scope(FILES_NOT_IN_CLONE)]
+
+    results: list[ScopeResult] = []
+    for sha in shas:
+        if sha not in readable:
+            results.append(skipped_files_scope(FILES_NOT_IN_CLONE, sha))
+            continue
+        scope = check_scope(FILES_LABEL, ["--files", "--rev", sha], sha=sha)
+        if not (scope.checks or scope.raw_text):
+            return [skipped_files_scope(FILES_UNCONFIGURED)]
+        if scope.status == "skip" and not scope.skip_reason:
+            # The file rules skip a commit that only deletes, or merges
+            # without bringing a file along, and do not say why.
+            for check in scope.checks:
+                check["reason"] = FILES_NOTHING_CHANGED
+        results.append(scope)
+    missing = sum(1 for sha in shas if sha not in readable)
+    if missing:
+        warn_shallow_checkout(
+            f"{missing} of {len(shas)} commits are not in the checkout "
+            "together with their parent",
+            "their files were not checked",
+        )
+    return results
+
+
+def run_pr_files_checks(pr_commits: list[Commit]) -> list[ScopeResult]:
+    """Check the files of every commit of the pull request."""
+    if not pr_commits:
+        warn_shallow_checkout(
+            "Could not list the pull request's commits",
+            "the files check was skipped",
+        )
+        return [skipped_files_scope(FILES_UNLISTED)]
+    return run_files_checks([sha for sha, _msg in pr_commits])
+
+
 def check_empty_message(
     label: str, sha: str, env: dict[str, str] | None
 ) -> ScopeResult:
@@ -976,7 +1097,9 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
          scope is reported)
       3. Individual PR commit messages (when ``message: true`` and in a PR event;
          AI rules only with ``message-ai-attribution: true``)
-      4. Author checks on every PR commit's author, then the remaining checks
+      4. The files each PR commit changes (when ``files: true``; outside a PR,
+         the files of the HEAD commit)
+      5. Author checks on every PR commit's author, then the remaining checks
          (branch; outside a PR, the HEAD commit and its author)
 
     Outside of a PR event all enabled checks are handed to the CLI at once.
@@ -1021,13 +1144,23 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
                 "Could not list the pull request's commits", "only HEAD was checked"
             )
 
-    # ---- 4. Remaining checks (branch, author, etc.) -----------------------
     # Outside a PR, check the HEAD commit message directly.
     if "--message" in args:
         results.append(
             keep_ai_rules(check_scope("Commit message", ["--message"], sha=head_sha()))
         )
         args = [a for a in args if a != "--message"]
+
+    # ---- 4. Files of each commit ------------------------------------------
+    if FILES_ENABLED:
+        if is_pr_event():
+            if pr_commits is None:
+                pr_commits = get_pr_commit_messages()
+            results.extend(run_pr_files_checks(pr_commits))
+        else:
+            results.extend(run_files_checks([head_sha()]))
+
+    # ---- 5. Remaining checks (branch, author, etc.) -----------------------
     rev = None
     author_flags = [flag for flag in args if flag in AUTHOR_FLAGS]
     if is_pr_event() and author_flags:
@@ -1106,6 +1239,19 @@ def _rule_ref(check: dict[str, str]) -> str:
     return f"[{label}]({docs_url})" if docs_url else label
 
 
+def _names_a_commit(scope: ScopeResult) -> bool:
+    """Whether the scope is one commit's: its message, or the files it changes."""
+    return bool(scope.sha) and (
+        scope.label.startswith("Commit") or scope.label == FILES_LABEL
+    )
+
+
+def _found(check: dict[str, str]) -> str:
+    """First line of what a rule reports it found."""
+    value = str(check.get("value") or "").strip()
+    return value.splitlines()[0].strip() if value else ""
+
+
 def _scope_group(label: str) -> str:
     """Group name for a scope label, used to fold the step log output."""
     if label in ("PR title", "PR description"):
@@ -1167,6 +1313,12 @@ def _first_value(scope: ScopeResult) -> str:
     """
     if scope.label == "PR description":
         return ""
+    if scope.label == FILES_LABEL:
+        # Each file rule names its own finding, a path and what is wrong
+        # with it. The first finding stands for the scope; with none, the
+        # count of files a passing rule reports.
+        checks = [*scope.failures, *scope.warnings] or scope.checks
+        return next((_found(check) for check in checks if _found(check)), "")
     values = [scope.text, _message_value(scope)]
     values.extend(
         str(check.get("value") or "")
@@ -1265,12 +1417,17 @@ def _instruction(scope: ScopeResult, check: dict[str, str]) -> str:
     return ", and ".join(parts) or _advice(check)
 
 
-def _target(scope: ScopeResult, instructions: list[str], label: str) -> str:
+def _target(
+    scope: ScopeResult, instructions: list[str], label: str, value: str | None = None
+) -> str:
     """Name what an instruction is about: ``Commit 2/3 (5584f46) "bad msg"``.
 
-    The quoted value is left out when an instruction already quotes it.
+    The quoted value is left out when an instruction already quotes it. It
+    is the scope's own unless ``value`` names another: a files scope holds
+    one finding per rule, each about a path of its own.
     """
-    value = _first_value(scope)
+    if value is None:
+        value = _first_value(scope)
     if value and not any(f'"{value}"' in text for text in instructions):
         return f'{label} "{value}"'
     return label
@@ -1340,7 +1497,7 @@ def _row_label(scope: ScopeResult) -> str:
     The group header already says "Commits" or "Author", so the row only
     needs what tells it apart from its neighbours.
     """
-    if scope.sha and scope.label.startswith("Commit"):
+    if _names_a_commit(scope):
         return scope.sha[:7]
     _group, _, name = scope.label.partition(" ")
     return name or scope.label.lower()
@@ -1468,7 +1625,9 @@ def _annotation_body(scope: ScopeResult, check: dict[str, str]) -> str:
     for whoever expands it.
     """
     instruction = _instruction(scope, check)
-    headline = f"{_target(scope, [instruction], scope.display_label)}: {instruction}"
+    found = _found(check) if scope.label == FILES_LABEL else None
+    target = _target(scope, [instruction], scope.display_label, found)
+    headline = f"{target}: {instruction}"
     error = _plain_error(check)
     return headline if error == instruction else f"{headline}\n{error}"
 
@@ -1701,8 +1860,21 @@ def _hunk(scope: ScopeResult, status: str) -> list[str]:
     literal text to offer. GitHub colours all three in a ``diff`` block,
     which is the only colour a comment or a job summary can carry.
     """
-    is_commit = bool(scope.sha) and scope.label.startswith("Commit")
-    lines = [f"@@ {scope.sha[:7] if is_commit else scope.label} @@"]
+    if scope.sha and scope.label.startswith("Commit"):
+        where = scope.sha[:7]
+    elif scope.sha and scope.label == FILES_LABEL:
+        where = f"{scope.sha[:7]} files"
+    else:
+        where = scope.label
+    lines = [f"@@ {where} @@"]
+    if scope.label == FILES_LABEL and scope.checks:
+        # One finding per rule, each about a path of its own: the path it
+        # found, then what to do about it.
+        for check in _findings(scope, status):
+            if _found(check):
+                lines.append(f"- {_found(check)}")
+            lines.append(f"# {_advice(check)}")
+        return lines
     value = _first_value(scope)
     removed: list[str] = []
     added: list[str] = []
@@ -1759,11 +1931,13 @@ def _diff_block(results: list[ScopeResult], status: str = "fail") -> list[str]:
         rest = [line for hunk in hunks[shown:] for line in hunk]
         lines += ["", "<details>", f"<summary>and {len(hunks) - shown} more</summary>"]
         lines += ["", *_fenced("diff", rest), "", "</details>"]
-    commits = [
-        f"[`{scope.sha[:7]}`]({_commit_url(scope.sha)})"
-        for scope in scopes[:shown]
-        if scope.label.startswith("Commit") and _commit_url(scope.sha)
-    ]
+    commits = list(
+        dict.fromkeys(
+            f"[`{scope.sha[:7]}`]({_commit_url(scope.sha)})"
+            for scope in scopes[:shown]
+            if _names_a_commit(scope) and _commit_url(scope.sha)
+        )
+    )
     rules = list(
         dict.fromkeys(
             _rule_ref(check) for scope in scopes for check in _findings(scope, status)
@@ -1781,6 +1955,10 @@ def _diff_block(results: list[ScopeResult], status: str = "fail") -> list[str]:
 
 #: First line of the prompt "How to fix" offers for an AI coding agent.
 AGENT_PROMPT = "Fix these Commit Check findings without changing any code:"
+#: The same line when a finding is about a file, which then has to change.
+AGENT_PROMPT_FILES = (
+    "Fix these Commit Check findings, changing only the files they name:"
+)
 BRANCH_HELP = (
     "**Branch name.** Rename the branch and push it. A pull request cannot "
     "change its branch, so open a new one from the renamed branch:"
@@ -1790,6 +1968,11 @@ AUTHOR_HELP = (
     "`git config user.email`), then `git commit --amend --reset-author` "
     "and force-push."
 )
+FILES_HELP = (
+    "**Files.** Amend the commit that changed the file (`git rebase -i`, or "
+    "`git commit --amend` for the last one), then force-push. A later commit "
+    "that removes the file leaves it in the history."
+)
 HOOK_HELP = (
     f"**Next time.** The [pre-commit hook]({LOCAL_HOOK_URL}) runs the same "
     "rules before you push."
@@ -1797,9 +1980,21 @@ HOOK_HELP = (
 
 
 def _agent_prompt(failing: list[ScopeResult]) -> list[str]:
-    """A prompt to paste into an AI coding agent, one line per failing scope."""
-    lines = [AGENT_PROMPT]
+    """A prompt to paste into an AI coding agent, one line per failing scope.
+
+    A files scope gets a line per finding: each is about a path of its own.
+    """
+    about_files = any(scope.label == FILES_LABEL for scope in failing)
+    lines = [AGENT_PROMPT_FILES if about_files else AGENT_PROMPT]
     for scope in failing:
+        if scope.label == FILES_LABEL:
+            label = f"Files of commit {scope.sha[:7]}" if scope.sha else scope.label
+            for check in scope.failures:
+                todo = [_advice(check)]
+                lines.append(
+                    f"- {_target(scope, todo, label, _found(check))}: {todo[0]}"
+                )
+            continue
         todo = list(dict.fromkeys(_instruction(scope, c) for c in scope.failures))
         is_commit = bool(scope.sha) and scope.label.startswith("Commit")
         label = f"Commit {scope.sha[:7]}" if is_commit else scope.label
@@ -1845,6 +2040,8 @@ def _how_to_fix(results: list[ScopeResult]) -> list[str]:
         many = "it" if len(commits) == 1 else "them"
         parts.append([f"**Commit messages.** Reword {many}, then force-push:"])
         parts.append(_fenced("bash", _reword_commands(commits)))
+    if FILES_LABEL in labels:
+        parts.append([FILES_HELP])
     if any(label.startswith("Author") for label in labels):
         parts.append([AUTHOR_HELP])
     if "Branch" in labels:
@@ -2021,6 +2218,11 @@ def _all_checks(results: list[ScopeResult]) -> list[str]:
 #   folded; passing scopes live in the listing.
 # - A commit is named by its short hash on every surface; the label
 #   ("Commit 1/11") stays bare in the `result` output.
+# - With `files: true` each commit also gets a row in a "Files" group, for the
+#   files it changes. Its hunk reads `@@ 5584f46 files @@`, with a red line per
+#   path a rule found and the rule's advice under it. The agent prompt then
+#   opens with "changing only the files they name" in place of "without
+#   changing any code".
 # - One check is one thing that was checked — a commit message, the branch, the
 #   author — not one rule evaluation. The totals therefore match the number of
 #   ✔/✖ rows the reader can count in the listing, and do not grow with the

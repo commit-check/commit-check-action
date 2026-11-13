@@ -79,6 +79,7 @@ runners need a few tools — see [Good to know](#good-to-know).
 | `branch` | `true` | Check the branch name against [Conventional Branch](https://conventionalbranch.org/) |
 | `author-name` | `false` | Check each commit's author name |
 | `author-email` | `false` | Check each commit's author email |
+| `files` | `false` | Check the files each commit changes against the `[files]` rules of `cchk.toml` (size, prohibited paths, path length). Needs `fetch-depth: 0`: a commit the clone holds without its parent is skipped |
 | `pr-title` | `false` | Check the pull request title against Conventional Commits — the one that matters for squash merges. Pull request events only |
 | `message-ai-attribution` | `false` | Check every commit against the AI rules of `cchk.toml` (`ai_attribution`) only, author included, without the format rules. Takes the place of `message` |
 | `pr-body-ai-attribution` | `false` | Check the pull request description against the AI rules of `cchk.toml` (`ai_attribution`) only. Pull request events only |
