@@ -994,15 +994,20 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
     # ---- 2. PR description ------------------------------------------------
     if (PR_BODY_AI_ATTRIBUTION_ENABLED or ai_label_name()) and is_pr_event():
         pr_body = get_pr_body()
-        if pr_body:
+        if PR_BODY_AI_ATTRIBUTION_ENABLED:
+            # An empty description is checked too: it has no AI declaration,
+            # which CC501 fails when [pull_request] ai_declaration_options
+            # names the boxes. The attribution rules pass empty text.
+            scope = check_scope(
+                "PR description", ["--ai-attribution-only"], input_text=pr_body or ""
+            )
+            name_the_line_changes(scope, pr_body or "")
+            results.append(skip_when_no_ai_rule_ran(scope))
+        elif pr_body:
             scope = check_scope(
                 "PR description", ["--ai-attribution-only"], input_text=pr_body
             )
-            if PR_BODY_AI_ATTRIBUTION_ENABLED:
-                name_the_line_changes(scope, pr_body)
-                results.append(skip_when_no_ai_rule_ran(scope))
-            else:
-                PR_BODY_AI_TOOLS[:] = scope.ai_tools
+            PR_BODY_AI_TOOLS[:] = scope.ai_tools
 
     # ---- 3. Commit message checks -----------------------------------------
     pr_commits: list[Commit] | None = None
