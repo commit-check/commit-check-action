@@ -4604,8 +4604,16 @@ class TestRunCommitCheckPrBody(unittest.TestCase):
         mock_scope.assert_not_called()
         self.assertEqual(results, [])
 
-    def test_no_description_nothing_to_check(self):
+    def test_no_description_is_checked_as_empty_text(self):
+        """A description left empty has no AI declaration for CC501 to find."""
         results, mock_scope = self._run(True, "true", body=None)
+        mock_scope.assert_called_once_with(
+            "PR description", ["--ai-attribution-only"], input_text=""
+        )
+        self.assertEqual([r.label for r in results], ["PR description"])
+
+    def test_no_description_nothing_to_label(self):
+        results, mock_scope = self._run(False, "true", body=None)
         mock_scope.assert_not_called()
         self.assertEqual(results, [])
 
