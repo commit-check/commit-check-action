@@ -81,7 +81,7 @@ runners need a few tools — see [Good to know](#good-to-know).
 | `author-email` | `false` | Check each commit's author email |
 | `pr-title` | `false` | Check the pull request title against Conventional Commits — the one that matters for squash merges. Pull request events only |
 | `message-ai-attribution` | `false` | Check every commit against the AI rules of `cchk.toml` (`ai_attribution`) only, author included, without the format rules. Takes the place of `message` |
-| `pr-body-ai-attribution` | `false` | Check the pull request description against the AI rules of `cchk.toml` (`ai_attribution`, and the AI declaration boxes of `[pull_request] ai_declaration_options`) only. Pull request events only |
+| `pr-body-ai-attribution` | `false` | Check the pull request description against the AI rules of `cchk.toml` (`ai_attribution`, and the AI declaration boxes of `[pull_request] ai_declaration_checkboxes`) only. Pull request events only |
 | `ai-label` | `false` | Label the pull request when an AI tool wrote any of it (a commit, the description, or an agent's app that opened it): `true` for `ai-assisted`, or the label's name. Labels are only added, never removed. Needs `pull-requests: write`; skipped on fork pull requests under `pull_request` |
 | `pr-comments` | `false` | Post the report as a pull request comment, edited in place on later runs. Needs `pull-requests: write`; skipped on fork pull requests |
 | `job-summary` | `true` | Write the report to the job summary |
@@ -218,7 +218,7 @@ one of them (CC501). An empty description fails too:
 
 ```toml
 [pull_request]
-ai_declaration_options = ["No AI tools were used", "AI tools were used"]
+ai_declaration_checkboxes = ["No AI tools were used", "AI tools were used"]
 ```
 
 > ```diff

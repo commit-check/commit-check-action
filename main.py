@@ -996,7 +996,7 @@ def run_commit_check() -> tuple[int, list[ScopeResult]]:
         pr_body = get_pr_body()
         if PR_BODY_AI_ATTRIBUTION_ENABLED:
             # An empty description is checked too: it has no AI declaration,
-            # which CC501 fails when [pull_request] ai_declaration_options
+            # which CC501 fails when [pull_request] ai_declaration_checkboxes
             # names the boxes. The attribution rules pass empty text.
             scope = check_scope(
                 "PR description", ["--ai-attribution-only"], input_text=pr_body or ""
