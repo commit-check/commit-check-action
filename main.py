@@ -1976,7 +1976,7 @@ def _all_checks(results: list[ScopeResult]) -> list[str]:
 #
 #   </details>
 #
-#   <sub>Checked by [Commit Check](https://commit-check.com) 2.20.5 · [Rules](…) · [Check before you push](…)</sub>
+#   <sub>Checked by [Commit Check](https://commit-check.com) 2.21.0 · [Rules](…) · [Check before you push](…)</sub>
 #
 # Success: the heading reads "<mark:passed> Commit Check passed", then the
 # group lines, the folded listing and the footer. No diff, no "How to fix".
