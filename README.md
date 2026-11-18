@@ -80,7 +80,7 @@ runners need a few tools — see [Good to know](#good-to-know).
 | `author-name` | `false` | Check each commit's author name |
 | `author-email` | `false` | Check each commit's author email |
 | `files` | `false` | Check the files each commit changes against the `[files]` rules of `cchk.toml` (size, prohibited paths, path length). Needs `fetch-depth: 0`: a commit the clone holds without its parent is skipped |
-| `pr-title` | `false` | Check the pull request title against Conventional Commits — the one that matters for squash merges. Pull request events only |
+| `pr-title` | `false` | Check the pull request title, the one that matters for squash merges, against the message rules a one-line title can meet: every `message` rule except a body (CC011), a sign-off (CC012) and an AI author (CC017). Pull request events only |
 | `message-ai-attribution` | `false` | Check every commit against the AI rules of `cchk.toml` (`ai_attribution`) only, author included, without the format rules. Takes the place of `message` |
 | `pr-body-ai-attribution` | `false` | Check the pull request description against the AI rules of `cchk.toml` (`ai_attribution`, and the AI declaration boxes of `[pull_request] ai_declaration_checkboxes`) only. Pull request events only |
 | `ai-label` | `false` | Label the pull request when an AI tool wrote any of it (a commit, the description, or an agent's app that opened it): `true` for `ai-assisted`, or the label's name. Labels are only added, never removed. Needs `pull-requests: write`; skipped on fork pull requests under `pull_request` |
