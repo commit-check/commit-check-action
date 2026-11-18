@@ -38,7 +38,7 @@ inputs:
     required: false
     default: false
   pr-title:
-    description: check pull request title following conventional commits
+    description: check the pull request title against the commit message rules a one-line title can meet (all but a body, a sign-off and an AI author)
     required: false
     default: false
   message-ai-attribution:
