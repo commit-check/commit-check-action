@@ -43,7 +43,7 @@ def heading(glyph: str, word: str, verdict: str) -> str:
 def group_line(glyph: str, word: str, text: str) -> str:
     """One group's line of the report: its line mark, name and result."""
     return (
-        f'<img alt="{glyph}" width="16" height="16" align="top" '
+        f'<img alt="{glyph}" width="16" height="16" align="absmiddle" '
         f'src="{MARKS}/line-{word}.png"> {text}'
     )
 
@@ -2005,8 +2005,8 @@ class TestRenderJobSummary(unittest.TestCase):
             f"{main.COMMENT_MARKER}\n"
             f"{heading('✔', 'passed', 'passed')}\n"
             "\n"
-            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
-            f"{group_line('✔', 'passed', 'Commits: 2 passed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
+            f"{group_line('✔', 'passed', 'Commits: 2 passed')}<br>"
             f"{group_line('✔', 'passed', 'Branch: passed')}\n"
             "\n"
             "<details>\n"
@@ -2042,8 +2042,8 @@ class TestRenderJobSummary(unittest.TestCase):
             f"{main.COMMENT_MARKER}\n"
             f"{heading('✖', 'failed', 'failed')}\n"
             "\n"
-            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
-            f"{group_line('✖', 'failed', 'Commits: failed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
+            f"{group_line('✖', 'failed', 'Commits: failed')}<br>"
             f"{group_line('✔', 'passed', 'Branch: passed')}\n"
             "\n"
             "```diff\n"
@@ -2118,8 +2118,8 @@ class TestRenderJobSummary(unittest.TestCase):
             f"{main.COMMENT_MARKER}\n"
             f"{heading('✖', 'failed', 'failed')}\n"
             "\n"
-            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
-            f"{group_line('✖', 'failed', 'Commits: 2 of 3 failed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
+            f"{group_line('✖', 'failed', 'Commits: 2 of 3 failed')}<br>"
             f"{group_line('✔', 'passed', 'Branch: passed')}\n"
             "\n"
             "```diff\n"
@@ -3721,7 +3721,7 @@ class TestSkippedScopes(unittest.TestCase):
             "\n"
             "Nothing was validated.\n"
             "\n"
-            f"{group_line('⊘', 'skipped', 'Pull request: skipped')}<br>\n"
+            f"{group_line('⊘', 'skipped', 'Pull request: skipped')}<br>"
             f"{group_line('⊘', 'skipped', 'Commits: skipped')}\n"
             "\n"
             "<details>\n"
@@ -3744,7 +3744,7 @@ class TestSkippedScopes(unittest.TestCase):
         results.append(pass_scope("PR description"))
         body = main.render_report(results)
         self.assertIn("Commit Check passed\n", body)
-        self.assertIn("> Branch: passed<br>\n", body)
+        self.assertIn("> Branch: passed<br>", body)
         # Two scopes in the group, one of which ran: never "2 passed".
         self.assertIn("> Pull request: 1 passed, 1 skipped\n", body)
 
@@ -3752,7 +3752,7 @@ class TestSkippedScopes(unittest.TestCase):
         results = [fail_scope("Commit 1/1"), skip_scope("PR title")]
         body = main.render_report(results)
         self.assertIn("Commit Check failed\n", body)
-        self.assertIn("> Commits: failed<br>\n", body)
+        self.assertIn("> Commits: failed<br>", body)
         self.assertIn("> Pull request: skipped\n", body)
 
     def test_skipped_scope_reports_no_checked_value(self):
@@ -3993,7 +3993,7 @@ class TestWarnedScopes(unittest.TestCase):
             f"{main.COMMENT_MARKER}\n"
             f"{heading('⚠', 'warned', 'passed with warnings')}\n"
             "\n"
-            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
             f"{group_line('⚠', 'warned', 'Branch: 1 warning')}\n"
             "\n"
             "**Warnings**\n"
@@ -4030,8 +4030,8 @@ class TestWarnedScopes(unittest.TestCase):
         body = main.render_report(results)
         self.assertIn("Commit Check passed with warnings\n", body)
         self.assertIn(
-            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>\n"
-            f"{group_line('⚠', 'warned', 'Branch: 1 warning')}<br>\n"
+            f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
+            f"{group_line('⚠', 'warned', 'Branch: 1 warning')}<br>"
             f"{group_line('⊘', 'skipped', 'Author: skipped')}\n",
             body,
         )
