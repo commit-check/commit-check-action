@@ -121,9 +121,9 @@ commit and rule is linked under it, and two folds hold the rest: how to fix it
 
 > <img alt="✖" width="24" height="24" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/failed.png"> **Commit Check failed**
 >
-> <img alt="✔" width="16" height="16" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-passed.png"> Pull request: passed<br>
-> <img alt="✖" width="16" height="16" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-failed.png"> Commits: 1 of 2 failed<br>
-> <img alt="✖" width="16" height="16" align="top" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-failed.png"> Branch: failed
+> <img alt="✔" width="16" height="16" align="absmiddle" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-passed.png"> Pull request: passed<br>
+> <img alt="✖" width="16" height="16" align="absmiddle" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-failed.png"> Commits: 1 of 2 failed<br>
+> <img alt="✖" width="16" height="16" align="absmiddle" src="https://raw.githubusercontent.com/commit-check/.github/main/branding/status/line-failed.png"> Branch: failed
 >
 > ```diff
 > @@ 5584f46 @@

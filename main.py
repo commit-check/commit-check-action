@@ -1826,17 +1826,28 @@ def _fenced(language: str, body: list[str]) -> list[str]:
 
 
 def _status_mark(status: str, size: int, line: bool = False) -> str:
-    """The ``<img>`` of a status mark: the tile at 24 px, the line mark at 16."""
+    """The ``<img>`` of a status mark: the tile at 24 px, the line mark at 16.
+
+    The tile sits at the top of the heading. A line mark is centred on its
+    line of text (``absmiddle``): aligned to the top it rode about two pixels
+    above the words beside it.
+    """
     name = f"{'line-' if line else ''}{STATUS_WORDS[status]}"
+    align = "absmiddle" if line else "top"
     return (
         f'<img alt="{STATUS_GLYPHS[status]}" width="{size}" height="{size}" '
-        f'align="top" src="{STATUS_MARK_URL}/{name}.png">'
+        f'align="{align}" src="{STATUS_MARK_URL}/{name}.png">'
     )
 
 
 def _group_lines(results: list[ScopeResult]) -> str:
-    """One line per group, its status mark in front: the overview."""
-    return "<br>\n".join(
+    """One line per group, its status mark in front: the overview.
+
+    The lines are joined by ``<br>`` alone, on one source line. A pull request
+    comment turns every newline into a line break of its own, so ``<br>``
+    followed by a newline left an empty line between the groups there.
+    """
+    return "<br>".join(
         f"{_status_mark(status, 16, line=True)} {group_name}: {text}"
         for group_name, scopes in _grouped(results)
         for status, text in [_group_status(scopes)]
@@ -2087,9 +2098,8 @@ def _all_checks(results: list[ScopeResult]) -> list[str]:
 #   <!-- commit-check-action -->
 #   ## <mark:failed> Commit Check failed
 #
-#   <mark:line-passed> Pull request: passed<br>
-#   <mark:line-failed> Commits: 2 of 3 failed<br>
-#   <mark:line-failed> Branch: failed
+#   <mark:line-passed> Pull request: passed<br><mark:line-failed> Commits: 2 of 3 failed<br><mark:line-failed> Branch: failed
+#   (one source line: see _group_lines)
 #
 #   ```diff
 #   @@ 5584f46 @@
