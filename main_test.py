@@ -5941,15 +5941,98 @@ class TestConfigSource(unittest.TestCase):
             self.assertTrue(main.use_base_config())
         self.assertEqual(self._read(self._config_file()), "")
 
-    def test_git_missing_reads_as_no_file(self):
-        with patch("main.subprocess.run", side_effect=OSError("no git")):
-            self.assertIsNone(main._base_blob("a" * 40, "cchk.toml"))
+    def test_git_missing_fails_closed(self):
+        with (
+            patch("main.subprocess.run", side_effect=OSError("no git")),
+            self.assertRaisesRegex(main.BaseConfigError, "git could not run"),
+        ):
+            main._base_blob("a" * 40, "cchk.toml")
 
-    def test_only_a_relative_local_parent_is_copied(self):
+    def test_a_commit_git_cannot_list_fails_closed(self):
+        with self.assertRaisesRegex(main.BaseConfigError, "could not list cchk.toml"):
+            main._base_blob("a" * 40, "cchk.toml")
+
+    def test_a_file_git_cannot_read_is_not_taken_for_no_config(self):
+        """A partial clone that cannot fetch the blob must not read as absent."""
+        listed = MagicMock(returncode=0, stdout=b"100644 blob abc\tcchk.toml\n")
+        unread = MagicMock(returncode=128, stdout=b"")
+        with (
+            patch("main.subprocess.run", side_effect=[listed, unread]),
+            self.assertRaisesRegex(
+                main.BaseConfigError, "cchk.toml could not be read from the base"
+            ),
+        ):
+            main._base_blob("a" * 40, "cchk.toml")
+        base = self._commit({"cchk.toml": "[commit]\n"})
+        self._base(base)
+        real_run = subprocess.run
+
+        def no_blobs(cmd, *args, **kwargs):
+            if cmd[:2] == ["git", "cat-file"]:
+                return unread
+            return real_run(cmd, *args, **kwargs)
+
+        with patch("main.subprocess.run", side_effect=no_blobs):
+            ok, out = self._use_base()
+        self.assertFalse(ok)
+        self.assertEqual(main.CONFIG_ARGS, [])
+        self.assertIn(
+            "::error title=commit-check::config-source is base, but cchk.toml "
+            "could not be read from the base commit; nothing was checked",
+            out,
+        )
+
+    @unittest.skipIf(sys.platform == "win32", "symbolic links need privileges")
+    def test_a_symbolic_link_is_refused(self):
+        self._commit({"policy.toml": "[commit]\n"})
+        os.symlink("policy.toml", os.path.join(self.repo, "cchk.toml"))
+        base = self._commit({})
+        self._base(base)
+        ok, out = self._use_base()
+        self.assertFalse(ok)
+        self.assertIn(
+            "cchk.toml is a symbolic link on the base branch, which "
+            "config-source: base does not follow; nothing was checked",
+            out,
+        )
+
+    def test_a_folder_named_like_a_config_is_no_config(self):
+        base = self._commit({"cchk.toml/README.md": "hi\n"})
+        self.assertIsNone(main._base_blob(base, "cchk.toml"))
+
+    def test_an_absolute_parent_fails_closed(self):
+        for parent in ("/etc/cchk.toml", "\\\\server\\cchk.toml"):
+            main.CONFIG_ARGS.clear()
+            base = self._commit({"cchk.toml": f"inherit_from = {json.dumps(parent)}\n"})
+            self._base(base)
+            ok, out = self._use_base()
+            self.assertFalse(ok, parent)
+            self.assertEqual(main.CONFIG_ARGS, [])
+            self.assertIn("an absolute path the base branch cannot vouch for", out)
+
+    def test_a_parent_path_through_a_folder_resolves_to_the_base_copy(self):
+        """``policies/../shared.toml`` needs ``policies`` to exist to resolve;
+        without it commit-check would fall back to the checkout's file."""
+        base = self._commit(
+            {
+                "cchk.toml": 'inherit_from = "policies/../shared.toml"\n',
+                "shared.toml": "[commit]\nsubject_max_length = 20\n",
+            }
+        )
+        self._commit({"shared.toml": "[commit]\nsubject_max_length = 200\n"})
+        self._base(base)
+        self.assertTrue(self._use_base()[0])
+        config_dir = os.path.dirname(self._config_file())
+        self.assertEqual(
+            self._read(os.path.join(config_dir, "policies", "..", "shared.toml")),
+            "[commit]\nsubject_max_length = 20\n",
+        )
+
+    def test_only_a_local_parent_is_copied(self):
         for data in (
             b'inherit_from = "https://example.com/cchk.toml"\n',
             b'inherit_from = "http://example.com/cchk.toml"\n',
-            b'inherit_from = "/etc/cchk.toml"\n',
+            b'inherit_from = "github:org/policy:cchk.toml"\n',
             b'inherit_from = ""\n',
             b"inherit_from = 3\n",
             b"[commit\n",
@@ -5958,6 +6041,9 @@ class TestConfigSource(unittest.TestCase):
         ):
             self.assertIsNone(main._local_parent(data), data)
         self.assertEqual(main._local_parent(b'inherit_from = "a/b.toml"\n'), "a/b.toml")
+        self.assertEqual(
+            main._local_parent(b'inherit_from = "/etc/c.toml"\n'), "/etc/c.toml"
+        )
 
     @unittest.skipUnless(shutil.which("commit-check"), "needs commit-check")
     def test_commit_check_runs_on_the_base_rules(self):

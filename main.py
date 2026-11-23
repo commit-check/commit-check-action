@@ -14,15 +14,15 @@ and exposes the check data as JSON in the ``result`` action output.
 
 import json
 import os
-import posixpath
 import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+import tomllib
 
 COMMIT_MESSAGE_DELIMITER = "\x00"
 RULES_URL = "https://commit-check.com/rules/"
@@ -415,17 +415,48 @@ def _fetch_commit(sha: str) -> bool:
     return result.returncode == 0 and _rev_resolves(sha)
 
 
+class BaseConfigError(Exception):
+    """The base branch's config is there but cannot be used as it is."""
+
+
 def _base_blob(sha: str, path: str) -> bytes | None:
-    """The file at ``path`` in commit ``sha``, or ``None`` when it has none."""
+    """The file at ``path`` in commit ``sha``, or ``None`` when it has none.
+
+    Absence is read from the commit's tree, so a file that is there but
+    cannot be read -- a blob a partial clone could not fetch -- is an error,
+    never taken for no config. A symbolic link is refused: its blob is the
+    target's path, not the config.
+
+    :raises BaseConfigError: If the file is there but cannot be read.
+    """
     try:
+        listed = subprocess.run(
+            ["git", "ls-tree", "--full-tree", sha, "--", path],
+            capture_output=True,
+            check=False,
+        )
+        if listed.returncode != 0:
+            raise BaseConfigError(f"git could not list {path} in the base commit")
+        if not listed.stdout:
+            return None
+        mode, kind, _rest = listed.stdout.split(b" ", 2)
+        if kind != b"blob":
+            return None  # a folder of that name is no config file
+        if mode == b"120000":
+            raise BaseConfigError(
+                f"{path} is a symbolic link on the base branch, which "
+                "config-source: base does not follow"
+            )
         result = subprocess.run(
             ["git", "cat-file", "blob", f"{sha}:{path}"],
             capture_output=True,
             check=False,
         )
-    except OSError:
-        return None
-    return result.stdout if result.returncode == 0 else None
+    except OSError as e:
+        raise BaseConfigError(f"git could not run: {e}") from e
+    if result.returncode != 0:
+        raise BaseConfigError(f"{path} could not be read from the base commit")
+    return result.stdout
 
 
 def _checked_out_config() -> tuple[str, bytes] | None:
@@ -438,11 +469,11 @@ def _checked_out_config() -> tuple[str, bytes] | None:
 
 
 def _local_parent(data: bytes) -> str | None:
-    """A config's ``inherit_from`` when it names a file by relative path.
+    """A config's ``inherit_from`` when it names a local file.
 
     A ``github:`` or HTTPS parent is fetched from where it names, whichever
-    branch the config came from, and an absolute path is outside the
-    checkout; only a relative path could be read from the pull request.
+    branch the config came from; only a local file could be read from the
+    pull request.
     """
     try:
         parent = tomllib.loads(data.decode("utf-8")).get("inherit_from")
@@ -452,14 +483,15 @@ def _local_parent(data: bytes) -> str | None:
         return None
     if parent.startswith(("github:", "https://", "http://")):
         return None
-    if posixpath.isabs(parent) or os.path.isabs(parent):
-        return None
     return parent
 
 
-def _outside(path: str) -> bool:
-    """Whether a normalised repository path climbs out of the repository."""
-    return path == ".." or path.startswith("../")
+def _repo_path(work: str, path: str) -> str | None:
+    """``path`` under ``work`` as a repository path, or ``None`` outside it."""
+    path = os.path.normpath(path)
+    if os.path.commonpath([work, path]) != work:
+        return None
+    return os.path.relpath(path, work).replace(os.sep, "/")
 
 
 def _config_error(text: str) -> bool:
@@ -472,10 +504,10 @@ def use_base_config() -> bool:
 
     The base branch's config file is written under ``RUNNER_TEMP`` at its
     path in the repository, and ``CONFIG_ARGS`` names it. A parent it names
-    by relative path (``inherit_from``) is copied from the base branch too,
-    next to it, where commit-check looks first; otherwise commit-check would
-    go on to find the pull request's copy. Without a config on the base
-    branch the checks run on the defaults.
+    by local path (``inherit_from``) is copied from the base branch too, to
+    the path commit-check tries first, next to the config; otherwise
+    commit-check would go on to find the pull request's copy. Without a
+    config on the base branch the checks run on the defaults.
 
     Fails closed: if the base branch cannot be read, the step fails rather
     than check against a config the pull request may have changed.
@@ -497,17 +529,24 @@ def use_base_config() -> bool:
             f"read ({checkout_hint()}); nothing was checked, so that a config "
             "the pull request changes cannot apply"
         )
+    try:
+        return _stage_base_config(sha)
+    except BaseConfigError as e:
+        return _config_error(f"config-source is base, but {e}; nothing was checked")
 
-    found = next(
-        (
-            (path, data)
-            for path in CONFIG_PATHS
-            if (data := _base_blob(sha, path)) is not None
-        ),
-        None,
-    )
+
+def _stage_base_config(sha: str) -> bool:
+    """Write the base commit's config under ``RUNNER_TEMP``; see above."""
+    found = None
+    for path in CONFIG_PATHS:
+        data = _base_blob(sha, path)
+        if data is not None:
+            found = (path, data)
+            break
     path, data = found or ("cchk.toml", b"")
-    work = tempfile.mkdtemp(prefix="commit-check-config-", dir=os.getenv("RUNNER_TEMP"))
+    work = os.path.realpath(
+        tempfile.mkdtemp(prefix="commit-check-config-", dir=os.getenv("RUNNER_TEMP"))
+    )
     target = os.path.join(work, *path.split("/"))
     os.makedirs(os.path.dirname(target), exist_ok=True)
     with open(target, "wb") as f:
@@ -515,26 +554,32 @@ def use_base_config() -> bool:
 
     parent = _local_parent(data)
     if parent is not None:
-        config_dir = posixpath.dirname(path)
-        # commit-check looks next to the config first, then from the top of
-        # the repository; the copy goes where it looks first.
-        beside = posixpath.normpath(posixpath.join(config_dir, parent))
-        if _outside(beside):
+        if os.path.isabs(parent) or parent.startswith(("/", "\\")):
+            return _config_error(
+                f"config-source is base, but the base branch config {path} "
+                f'inherits from "{parent}", an absolute path the base branch '
+                "cannot vouch for; nothing was checked"
+            )
+        # The path as commit-check builds it, next to the config. Checked
+        # with this platform's separators, so "..\\x" cannot climb out on
+        # Windows.
+        dest = os.path.join(os.path.dirname(target), parent)
+        beside = _repo_path(work, dest)
+        if beside is None:
             return _config_error(
                 f"config-source is base, but the base branch config {path} "
                 f'inherits from "{parent}", outside the repository; nothing '
                 "was checked"
             )
-        top = posixpath.normpath(parent)
-        candidates = [beside] + ([] if _outside(top) else [top])
-        parent_data = next(
-            (
-                blob
-                for candidate in candidates
-                if (blob := _base_blob(sha, candidate)) is not None
-            ),
-            None,
-        )
+        # commit-check looks next to the config first, then from the top of
+        # the repository; whichever the base branch holds is copied to the
+        # first place, so the second is never reached.
+        top = _repo_path(work, os.path.join(work, parent))
+        parent_data = None
+        for candidate in [beside] + ([top] if top else []):
+            parent_data = _base_blob(sha, candidate)
+            if parent_data is not None:
+                break
         if parent_data is None:
             # As on the base branch itself, a parent that is missing leaves
             # the config in force; the empty copy keeps the pull request's
@@ -547,13 +592,14 @@ def use_base_config() -> bool:
                 )
             )
             parent_data = b""
-        dest = os.path.join(work, *beside.split("/"))
-        # A parent that names a directory ("." or the config's own folder)
-        # is no file: commit-check says so and keeps the config, as it would
-        # on the base branch.
-        if not os.path.isdir(dest):
+        # A parent that names a folder ("." or the config's own folder) is
+        # no file: commit-check says so and keeps the config, as it would on
+        # the base branch.
+        if not os.path.isdir(os.path.normpath(dest)):
+            # The folders of the path as written, so that "policies/../x"
+            # resolves here too, not from the checkout.
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(dest, "wb") as f:
+            with open(os.path.normpath(dest), "wb") as f:
                 f.write(parent_data)
 
     CONFIG_ARGS[:] = ["--config", target]
