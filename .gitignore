@@ -1,7 +1,9 @@
 venv/
 .venv/
 __pycache__/
-result.txt
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # pytest-cov
 .coverage
