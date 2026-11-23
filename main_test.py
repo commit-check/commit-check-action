@@ -2318,7 +2318,7 @@ class TestRenderJobSummary(unittest.TestCase):
     def test_all_pass_truncates_long_values(self):
         long_value = "x" * 200
         body = main.render_job_summary([pass_scope("Commit 1/1", value=long_value)])
-        self.assertIn(f"  ✔ 1/1          {'x' * 57}...\n", body)
+        self.assertIn(f"  ✔ 1/1          {'x' * 79}…\n", body)
 
     def test_all_pass_without_value_shows_plain_label(self):
         body = main.render_job_summary([pass_scope("Branch")])
@@ -4172,11 +4172,11 @@ class TestMarkdownEscaping(unittest.TestCase):
         self.assertIn(f"  ✖ 5584f46      {subject}\n", body)
 
     def test_capped_value_with_an_unbalanced_backtick_stays_in_its_block(self):
-        """The 60-char cap can cut inside a backtick run."""
-        value = "fix: " + "`x`, " * 20
+        """The cap can cut inside a backtick run."""
+        value = "fix: `" + "x " * 60 + "`"
         scope = pass_scope("Commit 1/1", value=value)
         capped = main._scope_value(scope)
-        self.assertTrue(capped.endswith("`x..."), capped)  # cut mid-span
+        self.assertTrue(capped.endswith("x…"), capped)  # cut mid-span
         listing = main._all_checks([scope])
         self.assertEqual(listing[3], "```text")
         self.assertEqual(listing[-3], "```")
@@ -5690,3 +5690,98 @@ class TestFilesAgainstRealCommits(unittest.TestCase):
             [("skip", main.FILES_NOT_IN_CLONE)],
         )
         self.assertIn("fetch-depth: 0", out.getvalue())
+
+
+class TestListingRows(unittest.TestCase):
+    """What each row of the listing shows: a value a reader recognises."""
+
+    REASON = "author pre-commit-ci[bot] is in [commit].ignore_authors"
+
+    def _skipped_commit(self, reason: str = REASON) -> main.ScopeResult:
+        scope = skip_scope("Commit 2/2", reason=reason)
+        scope.sha = SHA_B
+        scope.text = "chore: auto fixes from pre-commit.com hooks\n"
+        return scope
+
+    def _skipped_author(self, label: str, subject: str) -> main.ScopeResult:
+        scope = skip_scope(label, reason=self.REASON)
+        scope.sha = SHA_B
+        scope.subject = subject
+        return scope
+
+    def test_one_reason_is_said_once_and_rows_show_what_was_skipped(self):
+        results = [
+            pass_scope("Commit 1/2", value="feat: add a thing"),
+            self._skipped_commit(),
+            self._skipped_author("Author name", "pre-commit-ci[bot]"),
+            self._skipped_author("Author email", "bot@users.noreply.github.com"),
+        ]
+        body = main.render_report(results)
+        self.assertEqual(body.count("ignore_authors"), 1, body)
+        self.assertIn(
+            "Skipped because author pre-commit-ci[bot] is in ignore_authors.", body
+        )
+        self.assertIn(
+            f"  ⊘ {SHA_B[:7]}      chore: auto fixes from pre-commit.com hooks\n",
+            body,
+        )
+        self.assertIn("  ⊘ name         pre-commit-ci[bot]\n", body)
+        self.assertIn("  ⊘ email        bot@users.noreply.github.com\n", body)
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            main.render_step_log(results)
+        self.assertIn(
+            "  ⊘ name         pre-commit-ci[bot]\n", ANSI_CODES.sub("", out.getvalue())
+        )
+
+    def test_rows_keep_their_reason_when_the_reasons_differ(self):
+        other = "author dependabot[bot] is in [commit].ignore_authors"
+        results = [self._skipped_commit(), self._skipped_commit(other)]
+        body = main.render_report(results)
+        self.assertIn(f"skipped: {self.REASON}\n", body)
+        self.assertIn(f"skipped: {other}\n", body)
+
+    def test_a_skip_nobody_explained_still_says_skipped(self):
+        scope = self._skipped_commit(reason="")
+        self.assertFalse(main._one_skip_reason([scope]))
+        self.assertIn("  ⊘ ", main.render_report([scope]))
+        self.assertIn("skipped\n", main.render_report([scope]))
+
+    def test_a_long_subject_is_cut_at_a_word(self):
+        subject = (
+            "feat: add a config-source input that reads the config from the base branch"
+        )
+        scope = pass_scope("Commit 1/1", value=subject)
+        self.assertEqual(main._scope_value(scope), subject)  # 75 characters fit
+        scope = pass_scope("Commit 1/1", value=subject + " for every run")
+        self.assertEqual(
+            main._scope_value(scope),
+            "feat: add a config-source input that reads the config from the base "
+            "branch for…",
+        )
+
+    def test_a_passing_description_says_what_was_found(self):
+        scope = main.ScopeResult(
+            label="PR description", checks=[make_check("ai_attribution", value="")]
+        )
+        self.assertEqual(main._scope_value(scope), "no AI attribution")
+        scope.ai_tools = ["Claude Code"]
+        self.assertEqual(main._scope_value(scope), "AI attribution: Claude Code")
+
+    def test_each_author_scope_carries_the_author_it_checked(self):
+        with (
+            patch("main._local_author", return_value=("Dev", "dev@example.org")),
+            patch("main._rev_resolves", return_value=True),
+            patch(
+                "main.check_scope",
+                side_effect=lambda label, args, sha: main.ScopeResult(
+                    label=label, sha=sha
+                ),
+            ),
+        ):
+            results = main.run_pr_author_checks(
+                ["--author-name", "--author-email"], [("a1", "feat: one")]
+            )
+        self.assertEqual(
+            [(s.label, s.subject) for s in results],
+            [("Author name", "Dev"), ("Author email", "dev@example.org")],
+        )
