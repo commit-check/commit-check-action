@@ -176,6 +176,9 @@ class ScopeResult:
     #: ``(removed, added)`` lines per rule, for a text too long to carry as a
     #: ``fix`` (the PR description). Keyed by ``_rule_key``.
     edits: dict[str, tuple[list[str], list[str]]] = field(default_factory=dict)
+    #: What an author check looked at (the name or the email), which the CLI
+    #: does not report for a skipped one; the listing shows it in that row.
+    subject: str = ""
 
     @property
     def display_label(self) -> str:
@@ -1157,11 +1160,15 @@ def run_pr_author_checks(
     revs = [sha for sha in newest.values() if _rev_resolves(sha) or _fetch_commit(sha)]
     if len(revs) != len(newest):
         return []
-    return [
-        check_scope(CHECK_LABELS[flag], [flag, "--rev", sha], sha=sha)
-        for flag in flags
-        for sha in revs
-    ]
+    authors = {sha: author for author, sha in newest.items()}
+    scopes: list[ScopeResult] = []
+    for flag in flags:
+        for sha in revs:
+            scope = check_scope(CHECK_LABELS[flag], [flag, "--rev", sha], sha=sha)
+            name, email = authors[sha]
+            scope.subject = name if flag == "--author-name" else email
+            scopes.append(scope)
+    return scopes
 
 
 def _shallow_boundary() -> set[str]:
@@ -1541,20 +1548,34 @@ def _first_value(scope: ScopeResult) -> str:
         for check in scope.checks
         if check.get("rule_id") not in AI_RULE_IDS
     )
+    values.append(scope.subject)
     for value in values:
         if value.strip():
             return value.strip().splitlines()[0].strip()
     return ""
 
 
-def _scope_value(scope: ScopeResult, max_len: int = 60) -> str:
+def _scope_value(scope: ScopeResult, max_len: int = 80) -> str:
     """``_first_value`` capped for a row of the listing.
 
     The value reads naturally next to the scope's label, and the cap keeps a
-    passing row on one line of the fenced block.
+    passing row on one line of the fenced block. 80 holds a subject written
+    to the usual 72-column limit; a longer one is cut at a word, with an
+    ellipsis, rather than mid-word.
     """
+    if scope.label == "PR description" and scope.status == "pass":
+        # Its first line does not identify it; what was found does.
+        if scope.ai_tools:
+            return f"AI attribution: {', '.join(scope.ai_tools)}"
+        return "no AI attribution"
     value = _first_value(scope)
-    return value[: max_len - 3] + "..." if len(value) > max_len else value
+    if len(value) <= max_len:
+        return value
+    cut = value[: max_len - 1]
+    space = cut.rfind(" ")
+    if space > max_len // 2:
+        cut = cut[:space]
+    return cut.rstrip() + "…"
 
 
 def _line_edits(
@@ -1724,7 +1745,20 @@ def _row(mark: str, scope: ScopeResult, value: str) -> str:
     return f"  {mark} {_row_label(scope):<12} {value}".rstrip()
 
 
-def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
+def _one_skip_reason(results: list[ScopeResult]) -> bool:
+    """Whether every skipped scope was skipped for the same, named reason.
+
+    Then the one sentence under the verdict (``_skip_reasons``) explains
+    them all, and each skipped row can show what it skipped instead of
+    repeating why.
+    """
+    reasons = {s.skip_reason for s in results if s.status == "skip"}
+    return len(reasons) == 1 and "" not in reasons
+
+
+def _render_scopes(
+    scopes: list[ScopeResult], include_docs: bool, reason_said: bool = False
+) -> list[str]:
     """Render the indented listing for one group of scopes, without its header.
 
     Shared by both output surfaces so they cannot drift: the step log and the
@@ -1732,14 +1766,22 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
     link, which the Markdown report already carries under the diff.
 
     A failing or warned scope shows its value in full rather than capped. It
-    is the one value the reader has to act on, and the 60-character cap can
-    cut off the part that explains it.
+    is the one value the reader has to act on, and the cap can cut off the
+    part that explains it.
+
+    ``reason_said`` is for a report whose skipped scopes share one reason,
+    stated once under the verdict: a skipped row then shows what it skipped
+    (a commit's subject, an author) rather than that reason again.
     """
     lines: list[str] = []
     for scope in scopes:
         if scope.status == "skip":
             # Deliberately not a ✔. Nothing was validated here, and a tick
             # claiming otherwise is what made a bypassed policy look enforced.
+            value = _scope_value(scope) if reason_said else ""
+            if value:
+                lines.append(_row("⊘", scope, value))
+                continue
             reason = scope.skip_reason
             lines.append(_row("⊘", scope, f"skipped{f': {reason}' if reason else ''}"))
             continue
@@ -1765,9 +1807,10 @@ def _render_scopes(scopes: list[ScopeResult], include_docs: bool) -> list[str]:
 def _render_tree(results: list[ScopeResult], include_docs: bool) -> list[str]:
     """Render the full grouped listing: a header line per group, then its scopes."""
     lines: list[str] = []
+    reason_said = _one_skip_reason(results)
     for group_name, scopes in _grouped(results):
         lines.append(group_name)
-        lines.extend(_render_scopes(scopes, include_docs))
+        lines.extend(_render_scopes(scopes, include_docs, reason_said))
     return lines
 
 
@@ -1875,10 +1918,11 @@ def render_step_log(results: list[ScopeResult]) -> None:
     """
     # The tree is grouped, so it is printed group by group rather than in one
     # block: ::group:: and ::endgroup:: have to bracket each section's lines.
+    reason_said = _one_skip_reason(results)
     for group_name, scopes in _grouped(results):
         status, text = _group_status(scopes)
         print(f"::group::{STATUS_GLYPHS[status]} {group_name}: {text}")
-        for line in _render_scopes(scopes, include_docs=True):
+        for line in _render_scopes(scopes, include_docs=True, reason_said=reason_said):
             print(_coloured(_log_safe(line)))
         print("::endgroup::")
 
