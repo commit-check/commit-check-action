@@ -4,7 +4,6 @@ permissions:
 
 on:
   release:
-    branches: [main]
     types: [released]
   workflow_dispatch:
     inputs:
@@ -29,19 +28,12 @@ jobs:
       run: |
         git config user.name 'github-actions'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-    - name: Update tag with parameter
-      if: github.event.inputs.tag != ''
+    - name: Move the tag
       env:
-        TAG: ${{ inputs.tag }}
+        # A release moves v2; a manual run moves the tag it names.
+        TAG: ${{ inputs.tag || 'v2' }}
       run: |
         git tag --delete "$TAG" || true
         git push --delete origin "$TAG" || true
         git tag -a "$TAG" -m "Retag $TAG"
         git push origin "$TAG"
-    - name: Update tag to v2
-      if: github.event.inputs.tag == ''
-      run: |
-        git tag --delete v2 || true
-        git push --delete origin v2 || true
-        git tag -a v2 -m 'Retag v2'
-        git push origin v2
