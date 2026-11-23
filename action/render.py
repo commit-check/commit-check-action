@@ -452,12 +452,17 @@ def _finding_lines(check: dict[str, str]) -> list[str]:
     message; a multi-line value (a whole commit message on a failing rule)
     or suggestion is split the same way, so every line of user text sits
     inside the tree rather than at column 0.
+
+    The rest of a multi-line value (a commit body, the second declaration
+    box CC501 found) is aligned under its first line, so the value reads as
+    one block and the error after it is not mistaken for part of it. A blank
+    line stays empty, with no trailing spaces.
     """
     lines: list[str] = []
     if check.get("value"):
         first, *rest = str(check["value"]).splitlines()
         lines.append(f"value: {first}")
-        lines.extend(rest)
+        lines.extend(f"{'':7}{line}" if line else "" for line in rest)
     lines.extend(check.get("error", "").splitlines())
     fix = check.get("fix", "")
     suggest = check.get("suggest", "")
@@ -485,7 +490,9 @@ def _render_findings(checks: list[dict[str, str]], include_docs: bool) -> list[s
         # warning says so on its own line rather than borrow the row's mark.
         kind = " (warning)" if check.get("status") == "warn" else ""
         lines.append(f"      {_rule_label(check)}{kind}")
-        lines.extend(f"        {line}" for line in _finding_lines(check))
+        lines.extend(
+            f"        {line}" if line else "" for line in _finding_lines(check)
+        )
         if include_docs and check.get("docs_url"):
             lines.append(f"        Docs: {check['docs_url']}")
     return lines
@@ -1072,8 +1079,10 @@ def _all_checks(results: list[model.ScopeResult]) -> list[str]:
     and why". The same block is used whether or not anything failed.
     """
     _failed, total = _check_counts(results)
-    unit = "check" if total == 1 else "checks"
-    label = f"All {total} {unit}" if total else "Details"
+    if total > 1:
+        label = f"All {total} checks"
+    else:
+        label = "1 check" if total else "Details"
     body = _fenced("text", _render_tree(results, include_docs=False))
     return ["<details>", f"<summary>{label}</summary>", "", *body, "", "</details>"]
 
