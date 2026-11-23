@@ -6,19 +6,19 @@ branding:
   color: "blue"
 inputs:
   message:
-    description: check git commit message following conventional commits
+    description: check every commit message against Conventional Commits
     required: false
     default: true
   branch:
-    description: check git branch name following conventional branch
+    description: check the branch name against Conventional Branch
     required: false
     default: true
   author-name:
-    description: check committer author name
+    description: check each commit's author name
     required: false
     default: false
   author-email:
-    description: check committer author email
+    description: check each commit's author email
     required: false
     default: false
   files:
@@ -30,11 +30,11 @@ inputs:
     required: false
     default: false
   job-summary:
-    description: display job summary to the workflow run
+    description: write the report to the job summary
     required: false
     default: true
   pr-comments:
-    description: post results to the pull request comments
+    description: post the report as a pull request comment, edited in place on later runs; needs pull-requests write
     required: false
     default: false
   pr-title:
