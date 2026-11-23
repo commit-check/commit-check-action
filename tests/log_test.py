@@ -149,6 +149,44 @@ class TestRenderStepLog(unittest.TestCase):
             ],
         )
 
+    def test_a_list_value_lines_up_under_its_first_item(self):
+        """The second declaration box would otherwise sit at the column of
+        ``value:`` and read as a line of its own."""
+        check = make_check(
+            "ai_declaration",
+            status="fail",
+            rule_id="CC501",
+            value="- [ ] No AI tools were used\n- [ ] AI tools were used",
+            error="No AI declaration box is ticked",
+        )
+        self.assertEqual(
+            render._finding_lines(check),
+            [
+                "value: - [ ] No AI tools were used",
+                "       - [ ] AI tools were used",
+                "No AI declaration box is ticked",
+            ],
+        )
+
+    def test_a_commit_body_in_the_value_stays_flush(self):
+        """A commit message is prose: its body is not indented."""
+        check = make_check(
+            "message",
+            status="fail",
+            rule_id="CC001",
+            value="added login page\n\nIt also fixes the redirect.",
+            error="The commit message should follow Conventional Commits.",
+        )
+        self.assertEqual(
+            render._finding_lines(check),
+            [
+                "value: added login page",
+                "",
+                "It also fixes the redirect.",
+                "The commit message should follow Conventional Commits.",
+            ],
+        )
+
     def test_annotation_without_an_error_still_names_the_kind_of_finding(self):
         scope = model.ScopeResult(
             label="Branch",

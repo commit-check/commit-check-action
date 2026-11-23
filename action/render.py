@@ -452,12 +452,20 @@ def _finding_lines(check: dict[str, str]) -> list[str]:
     message; a multi-line value (a whole commit message on a failing rule)
     or suggestion is split the same way, so every line of user text sits
     inside the tree rather than at column 0.
+
+    A value that is a list (the declaration boxes CC501 found in a PR
+    description) is aligned under its first item instead, so the second box
+    does not read as a line of its own. A commit message stays flush: its
+    body is prose, and the blank line already sets it apart.
     """
     lines: list[str] = []
     if check.get("value"):
         first, *rest = str(check["value"]).splitlines()
         lines.append(f"value: {first}")
-        lines.extend(rest)
+        if _is_list([first, *rest]):
+            lines.extend(f"{'':7}{line}" for line in rest)
+        else:
+            lines.extend(rest)
     lines.extend(check.get("error", "").splitlines())
     fix = check.get("fix", "")
     suggest = check.get("suggest", "")
@@ -470,6 +478,11 @@ def _finding_lines(check: dict[str, str]) -> list[str]:
         lines.append(f"Fix: {first}")
         lines.extend(rest)
     return lines
+
+
+def _is_list(lines: list[str]) -> bool:
+    """Whether every line is a Markdown list item (``- [ ] ...``, ``* ...``)."""
+    return all(line.lstrip().startswith(("- ", "* ", "+ ")) for line in lines)
 
 
 def _render_findings(checks: list[dict[str, str]], include_docs: bool) -> list[str]:
@@ -1072,8 +1085,10 @@ def _all_checks(results: list[model.ScopeResult]) -> list[str]:
     and why". The same block is used whether or not anything failed.
     """
     _failed, total = _check_counts(results)
-    unit = "check" if total == 1 else "checks"
-    label = f"All {total} {unit}" if total else "Details"
+    if total > 1:
+        label = f"All {total} checks"
+    else:
+        label = "1 check" if total else "Details"
     body = _fenced("text", _render_tree(results, include_docs=False))
     return ["<details>", f"<summary>{label}</summary>", "", *body, "", "</details>"]
 

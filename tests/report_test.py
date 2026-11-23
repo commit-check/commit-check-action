@@ -346,7 +346,7 @@ class TestRenderJobSummary(unittest.TestCase):
         for results in (one_rule, many_rules):
             body = render.render_report(results)
             self.assertIn("> Branch: passed\n", body)
-            self.assertIn("<summary>All 1 check</summary>", body)
+            self.assertIn("<summary>1 check</summary>", body)
 
     def test_body_opens_with_hidden_marker(self):
         body = render.render_job_summary([pass_scope("Branch")])
@@ -369,7 +369,7 @@ class TestRenderJobSummary(unittest.TestCase):
         body = render.render_job_summary([pass_scope("Branch", value="main")])
         self.assertIn("Commit Check passed\n", body)
         self.assertIn("<details>", body)
-        self.assertIn("<summary>All 1 check</summary>", body)
+        self.assertIn("<summary>1 check</summary>", body)
         self.assertIn("```text", body)
         self.assertIn("\nBranch\n  ✔ branch       main\n", body)
         self.assertNotIn("```diff", body)
@@ -418,7 +418,7 @@ class TestRenderJobSummary(unittest.TestCase):
         self.assertIn(
             "<sub>Rules: [CC001](https://commit-check.com/rules/#cc001)", body
         )
-        self.assertIn("<summary>All 1 check</summary>", body)
+        self.assertIn("<summary>1 check</summary>", body)
         self.assertIn("  ✖ 1/1          bad message\n", body)
         self.assertIn("      CC001 message", body)
         self.assertIn("        value: bad message", body)
