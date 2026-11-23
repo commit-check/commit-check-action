@@ -264,9 +264,9 @@ class TestAddPrComments(unittest.TestCase):
         self.assertIn("```diff\n@@ Commit 1/1 @@\n- bad message\n", body)
 
     def test_updates_existing_comment_when_changed(self):
-        # A report from an earlier version: no marker, and posted by the bot,
-        # which is what makes it safe to adopt.
-        old_comment = MagicMock(body="# Commit-Check ❌ 0 failures")
+        # The report an earlier run posted: the marker, and posted by the bot,
+        # which is what makes it safe to edit.
+        old_comment = MagicMock(body=f"{render.COMMENT_MARKER}\nold report")
         old_comment.user.type = "Bot"
         mock_pull_request = MagicMock()
         mock_pull_request.get_comments.return_value = [old_comment]
@@ -664,10 +664,12 @@ class TestFindOwnComments(unittest.TestCase):
         self.assertIsNone(target)
         self.assertEqual(stale, [])
 
-    def test_bot_comment_from_an_older_version_is_adopted(self):
+    def test_bot_comment_without_the_marker_is_left_alone(self):
+        """A report from before v2.13.0 has no marker: it is neither edited
+        nor deleted, and the run posts a new comment."""
         legacy = self._comment("# Commit-Check\nold report")
         target, stale = publish._find_own_comments([legacy])
-        self.assertIs(target, legacy)
+        self.assertIsNone(target)
         self.assertEqual(stale, [])
 
     def test_human_comment_with_the_marker_is_never_touched(self):
@@ -685,8 +687,8 @@ class TestFindOwnComments(unittest.TestCase):
 
     def test_a_comment_without_an_author_is_not_a_bot(self):
         """A deleted account can leave ``user`` empty; that is not a crash,
-        and not a licence to adopt the comment either."""
-        orphan = self._comment("# Commit Check\nold report")
+        and not a licence to edit the comment either."""
+        orphan = self._comment(f"{render.COMMENT_MARKER}\nold report")
         orphan.user = None
         self.assertFalse(publish._is_bot(orphan))
         self.assertEqual(publish._find_own_comments([orphan]), (None, []))
