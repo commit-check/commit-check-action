@@ -3,6 +3,7 @@
 import io
 import os
 import runpy
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -14,13 +15,13 @@ import main
 class TestMain(unittest.TestCase):
     def test_success_path(self):
         with (
-            patch("main.log_env_vars"),
-            patch("main.run_commit_check", return_value=(0, [pass_scope()])),
-            patch("main.render_step_log"),
-            patch("main.set_result_output"),
-            patch("main.add_job_summary", return_value=0),
-            patch("main.add_pr_comments", return_value=0),
-            patch("main.DRY_RUN_ENABLED", False),
+            patch("action.inputs.log_env_vars"),
+            patch("action.cli.run_commit_check", return_value=(0, [pass_scope()])),
+            patch("action.render.render_step_log"),
+            patch("action.publish.set_result_output"),
+            patch("action.publish.add_job_summary", return_value=0),
+            patch("action.publish.add_pr_comments", return_value=0),
+            patch("action.inputs.DRY_RUN_ENABLED", False),
             self.assertRaises(SystemExit) as ctx,
         ):
             main.main()
@@ -28,13 +29,13 @@ class TestMain(unittest.TestCase):
 
     def test_failure_path_exits_nonzero(self):
         with (
-            patch("main.log_env_vars"),
-            patch("main.run_commit_check", return_value=(1, [fail_scope()])),
-            patch("main.render_step_log"),
-            patch("main.set_result_output"),
-            patch("main.add_job_summary", return_value=1),
-            patch("main.add_pr_comments", return_value=1),
-            patch("main.DRY_RUN_ENABLED", False),
+            patch("action.inputs.log_env_vars"),
+            patch("action.cli.run_commit_check", return_value=(1, [fail_scope()])),
+            patch("action.render.render_step_log"),
+            patch("action.publish.set_result_output"),
+            patch("action.publish.add_job_summary", return_value=1),
+            patch("action.publish.add_pr_comments", return_value=1),
+            patch("action.inputs.DRY_RUN_ENABLED", False),
             self.assertRaises(SystemExit) as ctx,
         ):
             main.main()
@@ -42,13 +43,13 @@ class TestMain(unittest.TestCase):
 
     def test_dry_run_forces_zero(self):
         with (
-            patch("main.log_env_vars"),
-            patch("main.run_commit_check", return_value=(1, [fail_scope()])),
-            patch("main.render_step_log"),
-            patch("main.set_result_output"),
-            patch("main.add_job_summary", return_value=1),
-            patch("main.add_pr_comments", return_value=0),
-            patch("main.DRY_RUN_ENABLED", True),
+            patch("action.inputs.log_env_vars"),
+            patch("action.cli.run_commit_check", return_value=(1, [fail_scope()])),
+            patch("action.render.render_step_log"),
+            patch("action.publish.set_result_output"),
+            patch("action.publish.add_job_summary", return_value=1),
+            patch("action.publish.add_pr_comments", return_value=0),
+            patch("action.inputs.DRY_RUN_ENABLED", True),
             self.assertRaises(SystemExit) as ctx,
         ):
             main.main()
@@ -75,3 +76,55 @@ class TestMain(unittest.TestCase):
             ),
             out.getvalue(),
         )
+
+
+class TestReconfigureIo(unittest.TestCase):
+    def test_reconfigures_streams_to_utf8(self):
+        class FakeStream:
+            def __init__(self):
+                self.reconfigured = None
+
+            def reconfigure(self, **kwargs):
+                self.reconfigured = kwargs
+
+        fake_out = FakeStream()
+        fake_err = FakeStream()
+        with (
+            patch.object(sys, "stdout", fake_out),
+            patch.object(sys, "stderr", fake_err),
+        ):
+            main._reconfigure_io()
+        self.assertEqual(
+            fake_out.reconfigured, {"encoding": "utf-8", "errors": "replace"}
+        )
+        self.assertEqual(
+            fake_err.reconfigured, {"encoding": "utf-8", "errors": "replace"}
+        )
+
+    def test_streams_without_reconfigure_are_ignored(self):
+        class NoopStream:
+            pass
+
+        with (
+            patch.object(sys, "stdout", NoopStream()),
+            patch.object(sys, "stderr", NoopStream()),
+        ):
+            main._reconfigure_io()  # should not raise
+
+
+class TestLogErrorAndExit(unittest.TestCase):
+    def test_exits_with_specified_code(self):
+        with self.assertRaises(SystemExit) as ctx:
+            main.log_error_and_exit(0)
+        self.assertEqual(ctx.exception.code, 0)
+
+    def test_failure_exits_without_a_second_annotation(self):
+        """The findings are already one ::error each; a summary ::error on
+        top made GitHub count one more error than there were findings."""
+        with (
+            patch("builtins.print") as mock_print,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            main.log_error_and_exit(1)
+        self.assertEqual(ctx.exception.code, 1)
+        mock_print.assert_not_called()

@@ -12,14 +12,15 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import main
+from action import base_config, cli
 
 
 class TestConfigSource(unittest.TestCase):
     """config-source: base checks a pull request against its base branch's config."""
 
     def setUp(self):
-        main.CONFIG_ARGS.clear()
-        self.addCleanup(main.CONFIG_ARGS.clear)
+        base_config.CONFIG_ARGS.clear()
+        self.addCleanup(base_config.CONFIG_ARGS.clear)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = tmp.name
@@ -44,7 +45,7 @@ class TestConfigSource(unittest.TestCase):
         )
         for target in (
             patch.dict(os.environ, env, clear=True),
-            patch("main.CONFIG_SOURCE", "base"),
+            patch("action.inputs.CONFIG_SOURCE", "base"),
         ):
             target.start()
             self.addCleanup(target.stop)
@@ -83,7 +84,7 @@ class TestConfigSource(unittest.TestCase):
     def _use_base(self) -> tuple[bool, str]:
         out = io.StringIO()
         with patch("sys.stdout", out):
-            ok = main.use_base_config()
+            ok = base_config.use_base_config()
         return ok, out.getvalue()
 
     def _read(self, path: str) -> str:
@@ -91,24 +92,24 @@ class TestConfigSource(unittest.TestCase):
             return f.read()
 
     def _config_file(self) -> str:
-        self.assertEqual(main.CONFIG_ARGS[0], "--config")
-        return main.CONFIG_ARGS[1]
+        self.assertEqual(base_config.CONFIG_ARGS[0], "--config")
+        return base_config.CONFIG_ARGS[1]
 
     def test_head_reads_the_checkout_and_runs_nothing(self):
         with (
-            patch("main.CONFIG_SOURCE", "head"),
-            patch("main.subprocess.run") as run,
+            patch("action.inputs.CONFIG_SOURCE", "head"),
+            patch("subprocess.run") as run,
         ):
             ok, out = self._use_base()
         self.assertTrue(ok)
-        self.assertEqual((main.CONFIG_ARGS, out), ([], ""))
+        self.assertEqual((base_config.CONFIG_ARGS, out), ([], ""))
         run.assert_not_called()
 
     def test_outside_a_pull_request_the_checkout_is_read(self):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
             ok, out = self._use_base()
         self.assertTrue(ok)
-        self.assertEqual(main.CONFIG_ARGS, [])
+        self.assertEqual(base_config.CONFIG_ARGS, [])
         self.assertIn("config-source: base applies to pull requests", out)
 
     def test_the_pull_request_cannot_loosen_its_own_rules(self):
@@ -189,7 +190,7 @@ class TestConfigSource(unittest.TestCase):
         self._base(base)
         ok, out = self._use_base()
         self.assertFalse(ok)
-        self.assertEqual(main.CONFIG_ARGS, [])
+        self.assertEqual(base_config.CONFIG_ARGS, [])
         self.assertIn(
             "::error title=commit-check::config-source is base, but the base "
             'branch config cchk.toml inherits from "../org.toml", outside the '
@@ -236,7 +237,7 @@ class TestConfigSource(unittest.TestCase):
         self._base(None)
         ok, out = self._use_base()
         self.assertFalse(ok)
-        self.assertEqual(main.CONFIG_ARGS, [])
+        self.assertEqual(base_config.CONFIG_ARGS, [])
         self.assertIn(
             "::error title=commit-check::config-source is base, but the base "
             "branch commit could not be read (is actions/checkout using "
@@ -248,42 +249,44 @@ class TestConfigSource(unittest.TestCase):
     def test_a_base_commit_the_clone_lacks_is_fetched(self):
         self._base("a" * 40)
         with (
-            patch("main._fetch_commit", return_value=False) as fetch,
+            patch("action.context._fetch_commit", return_value=False) as fetch,
             patch("sys.stdout", io.StringIO()),
         ):
-            self.assertFalse(main.use_base_config())
+            self.assertFalse(base_config.use_base_config())
         fetch.assert_called_once_with("a" * 40)
         with (
-            patch("main._rev_resolves", return_value=False),
-            patch("main._fetch_commit", return_value=True),
-            patch("main._base_blob", return_value=None),
+            patch("action.context._rev_resolves", return_value=False),
+            patch("action.context._fetch_commit", return_value=True),
+            patch("action.base_config._base_blob", return_value=None),
             patch("sys.stdout", io.StringIO()),
         ):
-            self.assertTrue(main.use_base_config())
+            self.assertTrue(base_config.use_base_config())
         self.assertEqual(self._read(self._config_file()), "")
 
     def test_git_missing_fails_closed(self):
         with (
-            patch("main.subprocess.run", side_effect=OSError("no git")),
-            self.assertRaisesRegex(main.BaseConfigError, "git could not run"),
+            patch("subprocess.run", side_effect=OSError("no git")),
+            self.assertRaisesRegex(base_config.BaseConfigError, "git could not run"),
         ):
-            main._base_blob("a" * 40, "cchk.toml")
+            base_config._base_blob("a" * 40, "cchk.toml")
 
     def test_a_commit_git_cannot_list_fails_closed(self):
-        with self.assertRaisesRegex(main.BaseConfigError, "could not list cchk.toml"):
-            main._base_blob("a" * 40, "cchk.toml")
+        with self.assertRaisesRegex(
+            base_config.BaseConfigError, "could not list cchk.toml"
+        ):
+            base_config._base_blob("a" * 40, "cchk.toml")
 
     def test_a_file_git_cannot_read_is_not_taken_for_no_config(self):
         """A partial clone that cannot fetch the blob must not read as absent."""
         listed = MagicMock(returncode=0, stdout=b"100644 blob abc\tcchk.toml\n")
         unread = MagicMock(returncode=128, stdout=b"")
         with (
-            patch("main.subprocess.run", side_effect=[listed, unread]),
+            patch("subprocess.run", side_effect=[listed, unread]),
             self.assertRaisesRegex(
-                main.BaseConfigError, "cchk.toml could not be read from the base"
+                base_config.BaseConfigError, "cchk.toml could not be read from the base"
             ),
         ):
-            main._base_blob("a" * 40, "cchk.toml")
+            base_config._base_blob("a" * 40, "cchk.toml")
         base = self._commit({"cchk.toml": "[commit]\n"})
         self._base(base)
         real_run = subprocess.run
@@ -293,10 +296,10 @@ class TestConfigSource(unittest.TestCase):
                 return unread
             return real_run(cmd, *args, **kwargs)
 
-        with patch("main.subprocess.run", side_effect=no_blobs):
+        with patch("subprocess.run", side_effect=no_blobs):
             ok, out = self._use_base()
         self.assertFalse(ok)
-        self.assertEqual(main.CONFIG_ARGS, [])
+        self.assertEqual(base_config.CONFIG_ARGS, [])
         self.assertIn(
             "::error title=commit-check::config-source is base, but cchk.toml "
             "could not be read from the base commit; nothing was checked",
@@ -319,16 +322,16 @@ class TestConfigSource(unittest.TestCase):
 
     def test_a_folder_named_like_a_config_is_no_config(self):
         base = self._commit({"cchk.toml/README.md": "hi\n"})
-        self.assertIsNone(main._base_blob(base, "cchk.toml"))
+        self.assertIsNone(base_config._base_blob(base, "cchk.toml"))
 
     def test_an_absolute_parent_fails_closed(self):
         for parent in ("/etc/cchk.toml", "\\\\server\\cchk.toml"):
-            main.CONFIG_ARGS.clear()
+            base_config.CONFIG_ARGS.clear()
             base = self._commit({"cchk.toml": f"inherit_from = {json.dumps(parent)}\n"})
             self._base(base)
             ok, out = self._use_base()
             self.assertFalse(ok, parent)
-            self.assertEqual(main.CONFIG_ARGS, [])
+            self.assertEqual(base_config.CONFIG_ARGS, [])
             self.assertIn("an absolute path the base branch cannot vouch for", out)
 
     def test_a_parent_path_through_a_folder_resolves_to_the_base_copy(self):
@@ -360,10 +363,12 @@ class TestConfigSource(unittest.TestCase):
             b"\xff\xfe",
             b"",
         ):
-            self.assertIsNone(main._local_parent(data), data)
-        self.assertEqual(main._local_parent(b'inherit_from = "a/b.toml"\n'), "a/b.toml")
+            self.assertIsNone(base_config._local_parent(data), data)
         self.assertEqual(
-            main._local_parent(b'inherit_from = "/etc/c.toml"\n'), "/etc/c.toml"
+            base_config._local_parent(b'inherit_from = "a/b.toml"\n'), "a/b.toml"
+        )
+        self.assertEqual(
+            base_config._local_parent(b'inherit_from = "/etc/c.toml"\n'), "/etc/c.toml"
         )
 
     @unittest.skipUnless(shutil.which("commit-check"), "needs commit-check")
@@ -373,17 +378,17 @@ class TestConfigSource(unittest.TestCase):
         self._base(base)
         self.assertTrue(self._use_base()[0])
         with patch("sys.stderr", io.StringIO()):
-            rc, data, _raw = main.run_check_json(
+            rc, data, _raw = cli.run_check_json(
                 ["--message"], input_text="chore: tidy up\n"
             )
         self.assertEqual(rc, 1)
         self.assertEqual(data["status"], "fail")
 
     def test_every_check_gets_the_config(self):
-        main.CONFIG_ARGS[:] = ["--config", "/tmp/x/cchk.toml"]
+        base_config.CONFIG_ARGS[:] = ["--config", "/tmp/x/cchk.toml"]
         mock_result = MagicMock(returncode=0, stdout="{}", stderr="")
-        with patch("main.subprocess.run", return_value=mock_result) as run:
-            main.run_check_json(["--branch"])
+        with patch("subprocess.run", return_value=mock_result) as run:
+            cli.run_check_json(["--branch"])
         self.assertEqual(
             run.call_args[0][0],
             [
@@ -399,10 +404,10 @@ class TestConfigSource(unittest.TestCase):
     def test_an_unknown_value_fails_before_any_check(self):
         out = io.StringIO()
         with (
-            patch("main.CONFIG_SOURCE", "main"),
+            patch("action.inputs.CONFIG_SOURCE", "main"),
             patch.dict(os.environ, {"CONFIG_SOURCE": "main"}),
             patch("sys.stdout", out),
-            patch("main.run_commit_check") as run,
+            patch("action.cli.run_commit_check") as run,
             self.assertRaises(SystemExit) as cm,
         ):
             main.main()
@@ -415,9 +420,9 @@ class TestConfigSource(unittest.TestCase):
 
     def test_main_stops_when_the_base_config_cannot_be_read(self):
         with (
-            patch("main.log_env_vars"),
-            patch("main.use_base_config", return_value=False),
-            patch("main.run_commit_check") as run,
+            patch("action.inputs.log_env_vars"),
+            patch("action.base_config.use_base_config", return_value=False),
+            patch("action.cli.run_commit_check") as run,
             self.assertRaises(SystemExit) as cm,
         ):
             main.main()

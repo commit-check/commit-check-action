@@ -16,14 +16,14 @@ from helpers import (
     warn_scope,
 )
 
-import main
+from action import escape, model, render
 
 
 class TestRenderStepLog(unittest.TestCase):
     def _run(self, results, colours=False):
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
-            main.render_step_log(results)
+            render.render_step_log(results)
         output = buffer.getvalue()
         return output if colours else ANSI_CODES.sub("", output)
 
@@ -82,7 +82,7 @@ class TestRenderStepLog(unittest.TestCase):
         # A failing rule prints the whole message, one line of the log per
         # line of the message. The runner skips leading whitespace before
         # looking for "::", and reads "##[" anywhere in a line.
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             checks=[
                 make_check(
@@ -115,7 +115,7 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertIn('::Commit 1/1 "bad subject": The commit message', output)
 
     def test_a_subject_that_starts_like_a_command_stays_text_in_its_row(self):
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1", checks=[make_check("message", value="::error::x")]
         )
         output = self._run([scope])
@@ -128,7 +128,7 @@ class TestRenderStepLog(unittest.TestCase):
             "  ✔ branch       feature/x",
             "tab\there",
         ]:
-            self.assertEqual(main._log_safe(text), text)
+            self.assertEqual(escape._log_safe(text), text)
 
     def test_annotation_names_the_commit_and_carries_the_fix(self):
         output = self._run([fix_scope("Commit 2/3", sha=SHA_B)])
@@ -141,7 +141,7 @@ class TestRenderStepLog(unittest.TestCase):
 
     def test_finding_lines_are_the_value_the_error_and_the_fix(self):
         self.assertEqual(
-            main._finding_lines(fix_scope().checks[0]),
+            render._finding_lines(fix_scope().checks[0]),
             [
                 "value: feat: add login page",
                 "Subject must start with a capital letter",
@@ -150,7 +150,7 @@ class TestRenderStepLog(unittest.TestCase):
         )
 
     def test_annotation_without_an_error_still_names_the_kind_of_finding(self):
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Branch",
             checks=[
                 make_check("branch", status="fail", rule_id="CC201"),
@@ -171,7 +171,7 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertNotIn("Suggest:", output)
 
     def test_bespoke_suggest_and_fix_are_both_printed(self):
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             checks=[
                 make_check(
@@ -201,7 +201,7 @@ class TestRenderStepLog(unittest.TestCase):
 
     def test_a_multi_line_fix_takes_one_row_per_line(self):
         fix = "feat: add login page\n\nSigned-off-by: Jane Doe <jane@example.com>"
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             sha=SHA_A,
             checks=[
@@ -236,7 +236,7 @@ class TestRenderStepLog(unittest.TestCase):
         results = [
             pass_scope("Commit 1/3", value="fix: first"),
             fix_scope("Commit 2/3", sha=SHA_B),
-            main.ScopeResult(label="Commit 3/3", sha=SHA_A, raw_text="garbage"),
+            model.ScopeResult(label="Commit 3/3", sha=SHA_A, raw_text="garbage"),
         ]
         results[0].sha = "c" * 40
         output = self._run(results)
@@ -259,7 +259,7 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertNotIn("passed", output)
 
     def test_failure_verdict_says_where_the_fix_is(self):
-        with patch("main.JOB_SUMMARY_ENABLED", True):
+        with patch("action.inputs.JOB_SUMMARY_ENABLED", True):
             output = self._run([fail_scope("Commit 1/1")])
         self.assertTrue(
             output.endswith(
@@ -268,7 +268,7 @@ class TestRenderStepLog(unittest.TestCase):
             )
         )
         # With no summary to send the reader to, the log is the report.
-        with patch("main.JOB_SUMMARY_ENABLED", False):
+        with patch("action.inputs.JOB_SUMMARY_ENABLED", False):
             output = self._run([fail_scope("Commit 1/1")])
         self.assertIn("How to fix: see the findings above. ", output)
 
@@ -302,7 +302,7 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertLess(output.rindex("::endgroup::"), output.index("::error "))
 
     def test_annotation_payload_is_escaped(self):
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             checks=[
                 make_check(
@@ -342,11 +342,11 @@ class TestRenderStepLog(unittest.TestCase):
             pass_scope("PR description"),
             pass_scope("Commit 1/1"),
         ]
-        groups = [name for name, _ in main._grouped(results)]
+        groups = [name for name, _ in render._grouped(results)]
         self.assertEqual(groups, ["Pull request", "Commits"])
 
     def test_raw_text_fallback_is_printed(self):
-        scope = main.ScopeResult(label="Branch", raw_text="unexpected output")
+        scope = model.ScopeResult(label="Branch", raw_text="unexpected output")
         output = self._run([scope])
         self.assertIn("  ✖ branch\n", output)
         self.assertIn("unexpected output", output)
@@ -359,7 +359,7 @@ class TestRenderStepLog(unittest.TestCase):
         toward the run's error total on a green job, and log_error_and_exit
         prints nothing for a zero exit — leaving the log with no verdict.
         """
-        with patch("main.DRY_RUN_ENABLED", True):
+        with patch("action.inputs.DRY_RUN_ENABLED", True):
             output = self._run([fail_scope("Commit 1/1"), pass_scope("Branch")])
         self.assertNotIn("::error", output)
         self.assertIn(
@@ -375,7 +375,7 @@ class TestRenderStepLog(unittest.TestCase):
         self.assertNotIn("✖ Commit Check", output)
 
     def test_dry_run_without_failures_prints_the_usual_verdict(self):
-        with patch("main.DRY_RUN_ENABLED", True):
+        with patch("action.inputs.DRY_RUN_ENABLED", True):
             output = self._run([pass_scope("Branch")])
         self.assertIn("✔ Commit Check: all checks passed", output)
         self.assertNotIn("dry-run", output)

@@ -2,7 +2,7 @@
 
 import re
 
-import main
+from action import model
 
 HOOK_GUIDE = "https://commit-check.com/guides/integrations/#as-a-pre-commit-hook"
 
@@ -40,12 +40,12 @@ SHA_A = "d87faca811e7017bbaa82f5c53eade0a97c108d8"
 SHA_B = "5584f462cc3c947b2ba8d3d1a5735571803ee159"
 
 
-def pass_scope(label: str = "Branch", value: str = "") -> main.ScopeResult:
-    return main.ScopeResult(label=label, checks=[make_check("branch", value=value)])
+def pass_scope(label: str = "Branch", value: str = "") -> model.ScopeResult:
+    return model.ScopeResult(label=label, checks=[make_check("branch", value=value)])
 
 
-def fail_scope(label: str = "Commit 1/1", sha: str = "") -> main.ScopeResult:
-    return main.ScopeResult(
+def fail_scope(label: str = "Commit 1/1", sha: str = "") -> model.ScopeResult:
+    return model.ScopeResult(
         label=label,
         sha=sha,
         checks=[
@@ -62,10 +62,10 @@ def fail_scope(label: str = "Commit 1/1", sha: str = "") -> main.ScopeResult:
     )
 
 
-def fix_scope(label: str = "Commit 2/3", sha: str = SHA_B) -> main.ScopeResult:
+def fix_scope(label: str = "Commit 2/3", sha: str = SHA_B) -> model.ScopeResult:
     """A CC002 failure as commit-check 2.17 reports it: a mechanical fix, and
     a ``suggest`` the engine derived from that same fix."""
-    return main.ScopeResult(
+    return model.ScopeResult(
         label=label,
         sha=sha,
         checks=[
@@ -124,17 +124,17 @@ def read_github_output(path: str) -> dict[str, str]:
     return outputs
 
 
-def skip_scope(label: str = "PR title", reason: str = "") -> main.ScopeResult:
+def skip_scope(label: str = "PR title", reason: str = "") -> model.ScopeResult:
     """A scope whose every rule declined to run (e.g. author in ignore_authors)."""
     check = make_check("message", status="skip", rule_id="CC001", value="")
     if reason:
         check["reason"] = reason
-    return main.ScopeResult(label=label, checks=[check])
+    return model.ScopeResult(label=label, checks=[check])
 
 
-def warn_scope(label: str = "Branch", value: str = "jsmith/fix-x") -> main.ScopeResult:
+def warn_scope(label: str = "Branch", value: str = "jsmith/fix-x") -> model.ScopeResult:
     """A scope with one rule the config lists under the top-level ``warn``."""
-    return main.ScopeResult(
+    return model.ScopeResult(
         label=label,
         checks=[
             make_check(
@@ -150,9 +150,9 @@ def warn_scope(label: str = "Branch", value: str = "jsmith/fix-x") -> main.Scope
     )
 
 
-def files_scope(sha: str = SHA_B, *checks) -> main.ScopeResult:
+def files_scope(sha: str = SHA_B, *checks) -> model.ScopeResult:
     """One commit's files scope; by default the two findings of a bad commit."""
-    return main.ScopeResult(
+    return model.ScopeResult(
         label="Files",
         sha=sha,
         checks=list(checks)

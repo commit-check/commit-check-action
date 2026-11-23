@@ -18,7 +18,7 @@ from helpers import (
     pass_scope,
 )
 
-import main
+from action import cli, context, inputs, model, render
 
 
 def json_output(*checks) -> str:
@@ -30,8 +30,8 @@ def json_output(*checks) -> str:
 class TestRunCheckJson(unittest.TestCase):
     def test_parses_json_output(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("branch")))
-        with patch("main.subprocess.run", return_value=mock_result):
-            rc, data, raw = main.run_check_json(["--branch"])
+        with patch("subprocess.run", return_value=mock_result):
+            rc, data, raw = cli.run_check_json(["--branch"])
         self.assertEqual(rc, 0)
         self.assertEqual(data["status"], "pass")
         self.assertEqual(len(data["checks"]), 1)
@@ -39,8 +39,8 @@ class TestRunCheckJson(unittest.TestCase):
 
     def test_command_includes_format_json(self):
         mock_result = MagicMock(returncode=0, stdout="{}")
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_check_json(["--branch"])
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            cli.run_check_json(["--branch"])
         self.assertEqual(
             mock_run.call_args[0][0],
             ["commit-check", "--format", "json", "--branch"],
@@ -48,15 +48,15 @@ class TestRunCheckJson(unittest.TestCase):
 
     def test_input_text_is_passed_through(self):
         mock_result = MagicMock(returncode=0, stdout="{}")
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_check_json(["--message"], input_text="fix: demo")
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            cli.run_check_json(["--message"], input_text="fix: demo")
         self.assertEqual(mock_run.call_args[1]["input"], "fix: demo")
         self.assertTrue(mock_run.call_args[1]["text"])
 
     def test_invalid_json_returns_none_with_raw_output(self):
         mock_result = MagicMock(returncode=1, stdout="Commit rejected.\n", stderr="")
-        with patch("main.subprocess.run", return_value=mock_result):
-            rc, data, raw = main.run_check_json(["--branch"])
+        with patch("subprocess.run", return_value=mock_result):
+            rc, data, raw = cli.run_check_json(["--branch"])
         self.assertEqual(rc, 1)
         self.assertIsNone(data)
         self.assertEqual(raw, "Commit rejected.\n")
@@ -67,16 +67,16 @@ class TestCheckScope(unittest.TestCase):
         mock_result = MagicMock(
             returncode=1, stdout=json_output(make_check("branch", status="fail"))
         )
-        with patch("main.subprocess.run", return_value=mock_result):
-            scope = main.check_scope("Branch", ["--branch"])
+        with patch("subprocess.run", return_value=mock_result):
+            scope = cli.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.label, "Branch")
         self.assertEqual(scope.status, "fail")
         self.assertEqual(scope.failures[0]["rule_id"], "CC001")
 
     def test_invalid_json_falls_back_to_raw_text(self):
         mock_result = MagicMock(returncode=1, stdout="unexpected output", stderr="")
-        with patch("main.subprocess.run", return_value=mock_result):
-            scope = main.check_scope("Branch", ["--branch"])
+        with patch("subprocess.run", return_value=mock_result):
+            scope = cli.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.label, "Branch")
         self.assertEqual(scope.raw_text, "unexpected output")
         self.assertEqual(scope.status, "fail")
@@ -84,9 +84,9 @@ class TestCheckScope(unittest.TestCase):
     def test_keeps_the_text_it_piped_in(self):
         """The report compares it with a rule's fix to name the lines to change."""
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
-        with patch("main.subprocess.run", return_value=mock_result):
-            piped = main.check_scope("PR title", ["--message"], input_text="feat: x")
-            read_by_the_cli = main.check_scope("Branch", ["--branch"])
+        with patch("subprocess.run", return_value=mock_result):
+            piped = cli.check_scope("PR title", ["--message"], input_text="feat: x")
+            read_by_the_cli = cli.check_scope("Branch", ["--branch"])
         self.assertEqual(piped.text, "feat: x")
         self.assertEqual(read_by_the_cli.text, "")
 
@@ -95,18 +95,18 @@ class TestRunPrMessageChecks(unittest.TestCase):
     """Each commit's raw message is piped in, with that commit's own author."""
 
     def setUp(self):
-        local = patch("main._local_author", return_value=None)
+        local = patch("action.context._local_author", return_value=None)
         self.local_author = local.start()
         self.addCleanup(local.stop)
-        main.API_AUTHORS.clear()
-        self.addCleanup(main.API_AUTHORS.clear)
+        context.API_AUTHORS.clear()
+        self.addCleanup(context.API_AUTHORS.clear)
 
     def test_a_commit_in_the_clone_carries_its_own_author(self):
         """The raw message is still piped, so it reads as before (no --rev)."""
         self.local_author.return_value = ("Renovate Bot", "bot@renovateapp.com")
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            scopes = main.run_pr_message_checks([(SHA_A, "fix: something")])
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            scopes = cli.run_pr_message_checks([(SHA_A, "fix: something")])
         self.assertEqual(scopes[0].status, "pass")
         self.assertEqual(scopes[0].sha, SHA_A)
         self.local_author.assert_called_once_with(SHA_A)
@@ -130,10 +130,10 @@ class TestRunPrMessageChecks(unittest.TestCase):
         )
         mock_result = MagicMock(returncode=1, stdout=output)
         with (
-            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
-            patch("main.subprocess.run", return_value=mock_result) as mock_run,
+            patch("action.inputs.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
         ):
-            [scope] = main.run_pr_message_checks([(SHA_A, "WIP")])
+            [scope] = cli.run_pr_message_checks([(SHA_A, "WIP")])
         self.assertEqual(
             mock_run.call_args[0][0], ["commit-check", "--format", "json", "--message"]
         )
@@ -151,10 +151,10 @@ class TestRunPrMessageChecks(unittest.TestCase):
             ),
         )
         with (
-            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
-            patch("main.subprocess.run", return_value=mock_result),
+            patch("action.inputs.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("subprocess.run", return_value=mock_result),
         ):
-            [scope] = main.run_pr_message_checks([(SHA_A, "WIP")])
+            [scope] = cli.run_pr_message_checks([(SHA_A, "WIP")])
         self.assertEqual(scope.status, "pass")
         self.assertEqual(scope.text, "WIP")
 
@@ -162,7 +162,7 @@ class TestRunPrMessageChecks(unittest.TestCase):
         """Outside a PR nothing is piped in, and the message rule, whose
         value is the whole message, is one of the rules dropped."""
         message = "feat: x\n\nCo-authored-by: Claude <noreply@anthropic.com>"
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit message",
             checks=[
                 make_check("message", value=message),
@@ -175,12 +175,12 @@ class TestRunPrMessageChecks(unittest.TestCase):
                 ),
             ],
         )
-        with patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True):
-            main.keep_ai_rules(scope)
+        with patch("action.inputs.MESSAGE_AI_ATTRIBUTION_ENABLED", True):
+            cli.keep_ai_rules(scope)
         self.assertEqual([c["rule_id"] for c in scope.checks], ["CC013"])
         self.assertEqual(scope.text, message)
         self.assertEqual(
-            main._line_edits(scope, scope.checks[0]),
+            render._line_edits(scope, scope.checks[0]),
             (["Co-authored-by: Claude <noreply@anthropic.com>"], []),
         )
 
@@ -188,18 +188,18 @@ class TestRunPrMessageChecks(unittest.TestCase):
         """No AI rule ran: say so rather than report a pass."""
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
         with (
-            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
-            patch("main.subprocess.run", return_value=mock_result),
+            patch("action.inputs.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("subprocess.run", return_value=mock_result),
         ):
-            [scope] = main.run_pr_message_checks([(SHA_A, "feat: x")])
+            [scope] = cli.run_pr_message_checks([(SHA_A, "feat: x")])
         self.assertEqual(scope.status, "skip")
-        self.assertEqual(scope.checks[0]["reason"], main.AI_POLICY_IGNORED)
+        self.assertEqual(scope.checks[0]["reason"], cli.AI_POLICY_IGNORED)
 
     def test_a_blank_author_field_is_left_to_git(self):
         self.local_author.return_value = ("Renovate Bot", "")
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_pr_message_checks([(SHA_A, "fix: something")])
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            cli.run_pr_message_checks([(SHA_A, "fix: something")])
         env = mock_run.call_args[1]["env"]
         self.assertEqual(env["GIT_AUTHOR_NAME"], "Renovate Bot")
         self.assertNotEqual(env.get("GIT_AUTHOR_EMAIL"), "")
@@ -207,22 +207,22 @@ class TestRunPrMessageChecks(unittest.TestCase):
     def test_no_author_at_all_passes_no_environment(self):
         self.local_author.return_value = ("", "")
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_pr_message_checks([(SHA_A, "fix: something")])
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            cli.run_pr_message_checks([(SHA_A, "fix: something")])
         self.assertIsNone(mock_run.call_args[1]["env"])
 
     def test_a_commit_without_a_hash_is_not_looked_up(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
-        with patch("main.subprocess.run", return_value=mock_result):
-            main.run_pr_message_checks([("", "fix: something")])
+        with patch("subprocess.run", return_value=mock_result):
+            cli.run_pr_message_checks([("", "fix: something")])
         self.local_author.assert_not_called()
 
     def test_an_api_listed_commit_carries_its_author(self):
         """No commit to read, so the API's author goes in git's variables."""
-        main.API_AUTHORS[SHA_A] = ("google-labs-jules[bot]", "jules@example.com")
+        context.API_AUTHORS[SHA_A] = ("google-labs-jules[bot]", "jules@example.com")
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_pr_message_checks([(SHA_A, "fix: something")])
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            cli.run_pr_message_checks([(SHA_A, "fix: something")])
         self.assertEqual(mock_run.call_args[1]["input"], "fix: something")
         env = mock_run.call_args[1]["env"]
         self.assertEqual(env["GIT_AUTHOR_NAME"], "google-labs-jules[bot]")
@@ -232,8 +232,8 @@ class TestRunPrMessageChecks(unittest.TestCase):
 
     def test_single_message_pass(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(make_check("message")))
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            scopes = main.run_pr_message_checks([(SHA_A, "fix: something")])
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            scopes = cli.run_pr_message_checks([(SHA_A, "fix: something")])
         self.assertEqual(len(scopes), 1)
         self.assertEqual(scopes[0].status, "pass")
         self.assertEqual(scopes[0].label, "Commit 1/1")
@@ -250,16 +250,16 @@ class TestRunPrMessageChecks(unittest.TestCase):
             returncode=1,
             stdout=json_output(make_check("message", status="fail")),
         )
-        with patch("main.subprocess.run", return_value=mock_result):
-            scopes = main.run_pr_message_checks([(SHA_A, "bad commit")])
+        with patch("subprocess.run", return_value=mock_result):
+            scopes = cli.run_pr_message_checks([(SHA_A, "bad commit")])
         self.assertEqual(scopes[0].status, "fail")
         self.assertEqual(len(scopes[0].failures), 1)
         self.assertEqual(scopes[0].sha, SHA_A)
 
     def test_unparsable_output_still_names_the_commit(self):
         mock_result = MagicMock(returncode=1, stdout="unexpected output", stderr="")
-        with patch("main.subprocess.run", return_value=mock_result):
-            scopes = main.run_pr_message_checks([(SHA_A, "bad commit")])
+        with patch("subprocess.run", return_value=mock_result):
+            scopes = cli.run_pr_message_checks([(SHA_A, "bad commit")])
         self.assertEqual(scopes[0].raw_text, "unexpected output")
         self.assertEqual(scopes[0].sha, SHA_A)
 
@@ -272,8 +272,8 @@ class TestRunPrMessageChecks(unittest.TestCase):
             ),
             MagicMock(returncode=0, stdout=json_output(make_check("message"))),
         ]
-        with patch("main.subprocess.run", side_effect=results):
-            scopes = main.run_pr_message_checks(
+        with patch("subprocess.run", side_effect=results):
+            scopes = cli.run_pr_message_checks(
                 [("a" * 40, "ok"), ("b" * 40, "bad"), ("c" * 40, "ok")]
             )
         # The label stays the bare index for the ``result`` output; the hash
@@ -285,16 +285,16 @@ class TestRunPrMessageChecks(unittest.TestCase):
         self.assertEqual(scopes[1].status, "fail")
 
     def test_empty_list(self):
-        with patch("main.subprocess.run") as mock_run:
-            scopes = main.run_pr_message_checks([])
+        with patch("subprocess.run") as mock_run:
+            scopes = cli.run_pr_message_checks([])
         self.assertEqual(scopes, [])
         mock_run.assert_not_called()
 
 
 class TestRunOtherChecks(unittest.TestCase):
     def test_empty_args_returns_no_scopes(self):
-        with patch("main.subprocess.run") as mock_run:
-            scopes = main.run_other_checks([])
+        with patch("subprocess.run") as mock_run:
+            scopes = cli.run_other_checks([])
         self.assertEqual(scopes, [])
         mock_run.assert_not_called()
 
@@ -305,8 +305,8 @@ class TestRunOtherChecks(unittest.TestCase):
             ),
             MagicMock(returncode=0, stdout=json_output(make_check("author_name"))),
         ]
-        with patch("main.subprocess.run", side_effect=results) as mock_run:
-            scopes = main.run_other_checks(["--branch", "--author-name"])
+        with patch("subprocess.run", side_effect=results) as mock_run:
+            scopes = cli.run_other_checks(["--branch", "--author-name"])
         self.assertEqual([s.label for s in scopes], ["Branch", "Author name"])
         self.assertEqual(scopes[0].status, "fail")
         self.assertEqual(scopes[1].status, "pass")
@@ -320,8 +320,8 @@ class TestRunOtherChecks(unittest.TestCase):
         )
 
     def test_unknown_flag_is_skipped(self):
-        with patch("main.subprocess.run") as mock_run:
-            scopes = main.run_other_checks(["--unknown"])
+        with patch("subprocess.run") as mock_run:
+            scopes = cli.run_other_checks(["--unknown"])
         self.assertEqual(scopes, [])
         mock_run.assert_not_called()
 
@@ -329,48 +329,52 @@ class TestRunOtherChecks(unittest.TestCase):
 class TestRunCommitCheck(unittest.TestCase):
     def test_pr_path_checks_each_commit(self):
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.get_pr_commit_messages", return_value=["fix: something"]),
-            patch("main.run_pr_message_checks", return_value=[pass_scope()]) as mock_pr,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch(
+                "action.context.get_pr_commit_messages", return_value=["fix: something"]
+            ),
+            patch(
+                "action.cli.run_pr_message_checks", return_value=[pass_scope()]
+            ) as mock_pr,
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            rc, results = main.run_commit_check()
+            rc, results = cli.run_commit_check()
         self.assertEqual(rc, 0)
         mock_pr.assert_called_once_with(["fix: something"])
         self.assertEqual(len(results), 1)
 
     def test_pr_path_fails_when_any_scope_fails(self):
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.get_pr_commit_messages", return_value=["bad msg"]),
-            patch("main.run_pr_message_checks", return_value=[fail_scope()]),
-            patch("main.run_other_checks", return_value=[pass_scope()]),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", True),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.get_pr_commit_messages", return_value=["bad msg"]),
+            patch("action.cli.run_pr_message_checks", return_value=[fail_scope()]),
+            patch("action.cli.run_other_checks", return_value=[pass_scope()]),
         ):
-            rc, results = main.run_commit_check()
+            rc, results = cli.run_commit_check()
         self.assertEqual(rc, 1)
         self.assertEqual(len(results), 2)
 
     def test_pr_title_check_runs_when_enabled(self):
         with (
-            patch("main.PR_TITLE_ENABLED", True),
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_title", return_value="feat: a feature"),
+            patch("action.inputs.PR_TITLE_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=True),
+            patch("action.context.get_pr_title", return_value="feat: a feature"),
             patch(
-                "main.check_scope", return_value=pass_scope("PR title")
+                "action.cli.check_scope", return_value=pass_scope("PR title")
             ) as mock_scope,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            rc, _results = main.run_commit_check()
+            rc, _results = cli.run_commit_check()
         self.assertEqual(rc, 0)
         mock_scope.assert_called_once_with(
             "PR title", ["--pr-title"], input_text="feat: a feature"
@@ -378,31 +382,31 @@ class TestRunCommitCheck(unittest.TestCase):
 
     def test_pr_title_failure_propagates(self):
         with (
-            patch("main.PR_TITLE_ENABLED", True),
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_title", return_value="bad title"),
-            patch("main.check_scope", return_value=fail_scope("PR title")),
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.inputs.PR_TITLE_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=True),
+            patch("action.context.get_pr_title", return_value="bad title"),
+            patch("action.cli.check_scope", return_value=fail_scope("PR title")),
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            rc, _results = main.run_commit_check()
+            rc, _results = cli.run_commit_check()
         self.assertEqual(rc, 1)
 
     def test_pr_title_skipped_outside_pr_context(self):
         with (
-            patch("main.PR_TITLE_ENABLED", True),
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=False),
-            patch("main.get_pr_title") as mock_title,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.inputs.PR_TITLE_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=False),
+            patch("action.context.get_pr_title") as mock_title,
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            rc, _results = main.run_commit_check()
+            rc, _results = cli.run_commit_check()
         self.assertEqual(rc, 0)
         mock_title.assert_not_called()
 
@@ -410,35 +414,35 @@ class TestRunCommitCheck(unittest.TestCase):
         """An event that carries no title adds no scope, rather than checking
         an empty message."""
         with (
-            patch("main.PR_TITLE_ENABLED", True),
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_title", return_value=None),
-            patch("main.check_scope") as mock_scope,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.inputs.PR_TITLE_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=True),
+            patch("action.context.get_pr_title", return_value=None),
+            patch("action.cli.check_scope") as mock_scope,
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            rc, results = main.run_commit_check()
+            rc, results = cli.run_commit_check()
         self.assertEqual((rc, results), (0, []))
         mock_scope.assert_not_called()
 
     def test_non_pr_message_check_uses_commit_message_scope(self):
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.get_pr_commit_messages", return_value=[]),
-            patch("main.run_pr_message_checks") as mock_pr,
-            patch("main.head_sha", return_value=SHA_A),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.get_pr_commit_messages", return_value=[]),
+            patch("action.cli.run_pr_message_checks") as mock_pr,
+            patch("action.context.head_sha", return_value=SHA_A),
             patch(
-                "main.check_scope", return_value=pass_scope("Commit message")
+                "action.cli.check_scope", return_value=pass_scope("Commit message")
             ) as mock_scope,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            rc, _results = main.run_commit_check()
+            rc, _results = cli.run_commit_check()
         self.assertEqual(rc, 0)
         mock_pr.assert_not_called()
         # HEAD is the commit that was checked, so the scope names it too.
@@ -447,16 +451,20 @@ class TestRunCommitCheck(unittest.TestCase):
     def test_message_ai_attribution_alone_checks_each_commit(self):
         """With message: false the commits are still checked, for AI only."""
         with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.get_pr_commit_messages", return_value=[(SHA_A, "WIP")]),
-            patch("main.run_pr_message_checks", return_value=[pass_scope()]) as mock_pr,
-            patch("main.run_other_checks", return_value=[]) as mock_other,
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch(
+                "action.context.get_pr_commit_messages", return_value=[(SHA_A, "WIP")]
+            ),
+            patch(
+                "action.cli.run_pr_message_checks", return_value=[pass_scope()]
+            ) as mock_pr,
+            patch("action.cli.run_other_checks", return_value=[]) as mock_other,
         ):
-            rc, _results = main.run_commit_check()
+            rc, _results = cli.run_commit_check()
         self.assertEqual(rc, 0)
         mock_pr.assert_called_once_with([(SHA_A, "WIP")])
         mock_other.assert_called_once_with([], rev=None)
@@ -464,19 +472,19 @@ class TestRunCommitCheck(unittest.TestCase):
     def test_message_ai_attribution_narrows_the_head_check(self):
         """Outside a PR, HEAD is checked for AI only, even with message: true."""
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.get_pr_commit_messages", return_value=[]),
-            patch("main.head_sha", return_value=SHA_A),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.MESSAGE_AI_ATTRIBUTION_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.get_pr_commit_messages", return_value=[]),
+            patch("action.context.head_sha", return_value=SHA_A),
             patch(
-                "main.check_scope", return_value=pass_scope("Commit message")
+                "action.cli.check_scope", return_value=pass_scope("Commit message")
             ) as mock_scope,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            main.run_commit_check()
+            cli.run_commit_check()
         mock_scope.assert_called_once_with("Commit message", ["--message"], sha=SHA_A)
 
     def test_message_flag_removed_before_other_checks_in_pr(self):
@@ -487,15 +495,15 @@ class TestRunCommitCheck(unittest.TestCase):
             return []
 
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.get_pr_commit_messages", return_value=["fix: x"]),
-            patch("main.run_pr_message_checks", return_value=[pass_scope()]),
-            patch("main.run_other_checks", side_effect=fake_other_checks),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", True),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.get_pr_commit_messages", return_value=["fix: x"]),
+            patch("action.cli.run_pr_message_checks", return_value=[pass_scope()]),
+            patch("action.cli.run_other_checks", side_effect=fake_other_checks),
         ):
-            main.run_commit_check()
+            cli.run_commit_check()
         self.assertNotIn("--message", captured_args)
         self.assertIn("--branch", captured_args)
 
@@ -507,7 +515,7 @@ class TestRunCommitCheck(unittest.TestCase):
     def _run_capturing_stdout(self):
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
-            rc, results = main.run_commit_check()
+            rc, results = cli.run_commit_check()
         return rc, results, buffer.getvalue()
 
     def test_pr_without_enumerable_commits_warns_and_checks_head(self):
@@ -518,17 +526,17 @@ class TestRunCommitCheck(unittest.TestCase):
         "Merge X into Y" commit, which passes CC001 by default.
         """
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_commit_messages", return_value=[]),
-            patch("main.head_sha", return_value=""),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=True),
+            patch("action.context.get_pr_commit_messages", return_value=[]),
+            patch("action.context.head_sha", return_value=""),
             patch(
-                "main.check_scope", return_value=pass_scope("Commit message")
+                "action.cli.check_scope", return_value=pass_scope("Commit message")
             ) as mock_scope,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
             rc, _results, output = self._run_capturing_stdout()
         self.assertEqual(rc, 0)
@@ -537,14 +545,14 @@ class TestRunCommitCheck(unittest.TestCase):
 
     def test_push_without_pr_commits_does_not_warn(self):
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=False),
-            patch("main.get_pr_commit_messages", return_value=[]),
-            patch("main.check_scope", return_value=pass_scope("Commit message")),
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=False),
+            patch("action.context.get_pr_commit_messages", return_value=[]),
+            patch("action.cli.check_scope", return_value=pass_scope("Commit message")),
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
             _rc, _results, output = self._run_capturing_stdout()
         self.assertNotIn("::warning", output)
@@ -570,13 +578,13 @@ class TestRunCommitCheck(unittest.TestCase):
         """On refs/pull/N/merge HEAD's author is GitHub, not the contributor."""
         run, commands = self._fake_git_and_cli(resolves=True)
         with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", True),
-            patch("main.AUTHOR_EMAIL_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", True),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", True),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.get_pr_head_sha", return_value=None),
-            patch("main.subprocess.run", side_effect=run),
+            patch("action.context.get_pr_head_sha", return_value=None),
+            patch("subprocess.run", side_effect=run),
         ):
             rc, results, output = self._run_capturing_stdout()
         self.assertEqual(rc, 0)
@@ -602,13 +610,13 @@ class TestRunCommitCheck(unittest.TestCase):
         """pull_request.head.sha names the tip for either PR event type."""
         run, commands = self._fake_git_and_cli(resolves=True)
         with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", True),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", True),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target"}),
-            patch("main.get_pr_head_sha", return_value="deadbeefcafe"),
-            patch("main.subprocess.run", side_effect=run),
+            patch("action.context.get_pr_head_sha", return_value="deadbeefcafe"),
+            patch("subprocess.run", side_effect=run),
         ):
             rc, results, output = self._run_capturing_stdout()
         self.assertEqual(rc, 0)
@@ -634,13 +642,13 @@ class TestRunCommitCheck(unittest.TestCase):
         """HEAD's author is GitHub's merge commit: skip rather than grade it."""
         run, commands = self._fake_git_and_cli(resolves=False)
         with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", True),
-            patch("main.AUTHOR_EMAIL_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", True),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", True),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.get_pr_head_sha", return_value=None),
-            patch("main.subprocess.run", side_effect=run),
+            patch("action.context.get_pr_head_sha", return_value=None),
+            patch("subprocess.run", side_effect=run),
         ):
             rc, results, output = self._run_capturing_stdout()
         self.assertEqual(rc, 0)
@@ -678,13 +686,13 @@ class TestRunCommitCheck(unittest.TestCase):
         """On pull_request_target HEAD is the base branch; HEAD^2 is unrelated."""
         run, commands = self._fake_git_and_cli(resolves=True)
         with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", True),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", True),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target"}),
-            patch("main.get_pr_head_sha", return_value=None),
-            patch("main.subprocess.run", side_effect=run),
+            patch("action.context.get_pr_head_sha", return_value=None),
+            patch("subprocess.run", side_effect=run),
         ):
             rc, results, output = self._run_capturing_stdout()
         self.assertEqual(rc, 0)
@@ -698,12 +706,12 @@ class TestRunCommitCheck(unittest.TestCase):
     def test_push_author_checks_never_pass_rev(self):
         run, commands = self._fake_git_and_cli(resolves=True)
         with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", True),
-            patch("main.AUTHOR_EMAIL_ENABLED", True),
-            patch("main.is_pr_event", return_value=False),
-            patch("main.subprocess.run", side_effect=run),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", True),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", True),
+            patch("action.context.is_pr_event", return_value=False),
+            patch("subprocess.run", side_effect=run),
         ):
             _rc, _results, output = self._run_capturing_stdout()
         self.assertFalse([c for c in commands if c[0] == "git"], commands)
@@ -730,12 +738,12 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
     )
 
     def setUp(self):
-        main._RELAYED_NOTICES.clear()
+        cli._RELAYED_NOTICES.clear()
 
     def test_the_two_streams_are_read_separately(self):
         mock_result = MagicMock(returncode=0, stdout="{}", stderr="")
-        with patch("main.subprocess.run", return_value=mock_result) as mock_run:
-            main.run_check_json(["--branch"])
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            cli.run_check_json(["--branch"])
         self.assertIs(mock_run.call_args[1]["capture_output"], True)
 
     def test_a_notice_does_not_break_the_json(self):
@@ -745,23 +753,23 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
             stderr=self.NOTICE,
         )
         with (
-            patch("main.subprocess.run", return_value=mock_result),
+            patch("subprocess.run", return_value=mock_result),
             patch.object(sys, "stderr", io.StringIO()),
         ):
-            rc, data, _raw = main.run_check_json(["--branch"])
+            rc, data, _raw = cli.run_check_json(["--branch"])
         self.assertEqual(rc, 0)
         self.assertIsNotNone(data)
         self.assertEqual(data["status"], "pass")
         # And the scope built from it is a pass, not the "unparsable" fail.
-        self.assertEqual(main.check_scope("Branch", ["--branch"]).label, "Branch")
+        self.assertEqual(cli.check_scope("Branch", ["--branch"]).label, "Branch")
 
     def test_a_notice_alone_does_not_fail_the_scope(self):
         mock_result = MagicMock(returncode=0, stdout=json_output(), stderr=self.NOTICE)
         with (
-            patch("main.subprocess.run", return_value=mock_result),
+            patch("subprocess.run", return_value=mock_result),
             patch.object(sys, "stderr", io.StringIO()),
         ):
-            scope = main.check_scope("Branch", ["--branch"])
+            scope = cli.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.status, "pass")
         self.assertEqual(scope.raw_text, "")
 
@@ -771,11 +779,11 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
         )
         fake_err = io.StringIO()
         with (
-            patch("main.subprocess.run", return_value=mock_result),
+            patch("subprocess.run", return_value=mock_result),
             patch.object(sys, "stderr", fake_err),
         ):
             for _ in range(3):
-                main.run_check_json(["--branch"])
+                cli.run_check_json(["--branch"])
         printed = fake_err.getvalue()
         self.assertIn("--branch requested but no branch rules are configured", printed)
         # Once, not once per scope and per commit in the pull request.
@@ -786,10 +794,10 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
             returncode=2, stdout="", stderr="Error: cchk.toml: Expected ']'\n"
         )
         with (
-            patch("main.subprocess.run", return_value=mock_result),
+            patch("subprocess.run", return_value=mock_result),
             patch.object(sys, "stderr", io.StringIO()),
         ):
-            scope = main.check_scope("Branch", ["--branch"])
+            scope = cli.check_scope("Branch", ["--branch"])
         self.assertEqual(scope.status, "fail")
         self.assertIn("Expected ']'", scope.raw_text)
 
@@ -797,8 +805,8 @@ class TestStderrIsNotPartOfTheJson(unittest.TestCase):
 class TestCheckScopeAiTools(unittest.TestCase):
     def _scope(self, payload):
         result = MagicMock(returncode=0, stdout=json.dumps(payload), stderr="")
-        with patch("main.subprocess.run", return_value=result):
-            return main.check_scope("Commit 1/1", ["--message"])
+        with patch("subprocess.run", return_value=result):
+            return cli.check_scope("Commit 1/1", ["--message"])
 
     def test_reads_the_tools(self):
         scope = self._scope({"checks": [], "ai_tools": ["Claude Code"]})
@@ -811,27 +819,27 @@ class TestCheckScopeAiTools(unittest.TestCase):
 
 class TestRunCommitCheckPrBody(unittest.TestCase):
     def setUp(self):
-        main.PR_BODY_AI_TOOLS.clear()
-        self.addCleanup(main.PR_BODY_AI_TOOLS.clear)
+        cli.PR_BODY_AI_TOOLS.clear()
+        self.addCleanup(cli.PR_BODY_AI_TOOLS.clear)
 
     def _run(self, pr_body_enabled, ai_label, body="Adds a parser."):
-        body_scope = main.ScopeResult(
+        body_scope = model.ScopeResult(
             label="PR description", checks=[], ai_tools=["OpenAI Codex"]
         )
         with (
-            patch("main.PR_TITLE_ENABLED", False),
-            patch("main.PR_BODY_AI_ATTRIBUTION_ENABLED", pr_body_enabled),
+            patch("action.inputs.PR_TITLE_ENABLED", False),
+            patch("action.inputs.PR_BODY_AI_ATTRIBUTION_ENABLED", pr_body_enabled),
             patch.dict(os.environ, {"AI_LABEL": ai_label}),
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_body", return_value=body),
-            patch("main.check_scope", return_value=body_scope) as mock_scope,
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=True),
+            patch("action.context.get_pr_body", return_value=body),
+            patch("action.cli.check_scope", return_value=body_scope) as mock_scope,
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            _rc, results = main.run_commit_check()
+            _rc, results = cli.run_commit_check()
         return results, mock_scope
 
     def test_pr_body_is_a_scope_checked_with_the_ai_rules_only(self):
@@ -845,22 +853,22 @@ class TestRunCommitCheckPrBody(unittest.TestCase):
         """Under ai_attribution = "ignore" the CLI runs no rule on the description."""
         results, _ = self._run(True, "false")
         self.assertEqual(results[0].status, "skip")
-        self.assertEqual(results[0].skip_reason, main.AI_POLICY_IGNORED)
+        self.assertEqual(results[0].skip_reason, cli.AI_POLICY_IGNORED)
 
     def test_a_rule_that_ran_keeps_its_verdict(self):
         checks = [{"rule_id": "CC013", "check": "ai_attribution", "status": "pass"}]
-        scope = main.ScopeResult(label="PR description", checks=list(checks))
-        self.assertEqual(main.skip_when_no_ai_rule_ran(scope).checks, checks)
+        scope = model.ScopeResult(label="PR description", checks=list(checks))
+        self.assertEqual(cli.skip_when_no_ai_rule_ran(scope).checks, checks)
 
     def test_unparsable_output_still_fails(self):
-        scope = main.ScopeResult(label="PR description", raw_text="Error: bad config")
-        self.assertEqual(main.skip_when_no_ai_rule_ran(scope).status, "fail")
+        scope = model.ScopeResult(label="PR description", raw_text="Error: bad config")
+        self.assertEqual(cli.skip_when_no_ai_rule_ran(scope).status, "fail")
 
     def test_ai_label_alone_reads_it_but_reports_no_scope(self):
         results, mock_scope = self._run(False, "true")
         mock_scope.assert_called_once()
         self.assertEqual(results, [])
-        self.assertEqual(main.PR_BODY_AI_TOOLS, ["OpenAI Codex"])
+        self.assertEqual(cli.PR_BODY_AI_TOOLS, ["OpenAI Codex"])
 
     def test_off_by_default(self):
         results, mock_scope = self._run(False, "false")
@@ -885,10 +893,10 @@ class TestDescriptionLineChanges(unittest.TestCase):
     BODY = "## Summary\nAdds a parser.\n\nLink to Devin run: https://app.devin.ai/sessions/1\n"
 
     def _scope(self, *checks):
-        return main.ScopeResult(label="PR description", checks=list(checks))
+        return model.ScopeResult(label="PR description", checks=list(checks))
 
     def test_lines_removed_keeps_order_and_counts_copies(self):
-        self.assertEqual(main.lines_removed("a\nb\na\n\nc", "a\nc"), ["b", "a"])
+        self.assertEqual(cli.lines_removed("a\nb\na\n\nc", "a\nc"), ["b", "a"])
 
     def test_forbid_names_the_line_to_delete(self):
         scope = self._scope(
@@ -898,7 +906,7 @@ class TestDescriptionLineChanges(unittest.TestCase):
                 "fix": "## Summary\nAdds a parser.",
             }
         )
-        main.name_the_line_changes(scope, self.BODY)
+        cli.name_the_line_changes(scope, self.BODY)
         self.assertEqual(
             scope.checks[0]["suggest"],
             'In the description, remove "Link to Devin run: https://app.devin.ai/sessions/1"',
@@ -920,7 +928,7 @@ class TestDescriptionLineChanges(unittest.TestCase):
             },
             {"rule_id": "CC014", "suggest": "x", "fix": body + "\nAssisted-by: Claude"},
         )
-        main.name_the_line_changes(scope, body)
+        cli.name_the_line_changes(scope, body)
         self.assertEqual(
             [c["suggest"] for c in scope.checks],
             [
@@ -937,7 +945,7 @@ class TestDescriptionLineChanges(unittest.TestCase):
             {"rule_id": "CC013", "suggest": "s", "fix": ""},
             {"rule_id": "CC013", "suggest": "s", "fix": "same"},
         )
-        main.name_the_line_changes(scope, "same")
+        cli.name_the_line_changes(scope, "same")
         self.assertEqual(
             scope.checks,
             [
@@ -956,16 +964,16 @@ class TestDescriptionLineChanges(unittest.TestCase):
             }
         )
         with (
-            patch("main.PR_TITLE_ENABLED", False),
-            patch("main.PR_BODY_AI_ATTRIBUTION_ENABLED", True),
+            patch("action.inputs.PR_TITLE_ENABLED", False),
+            patch("action.inputs.PR_BODY_AI_ATTRIBUTION_ENABLED", True),
             patch.dict(os.environ, {"AI_LABEL": "false"}),
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_body", return_value=self.BODY),
-            patch("main.check_scope", return_value=scope),
-            patch("main.run_other_checks", return_value=[]),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.context.is_pr_event", return_value=True),
+            patch("action.context.get_pr_body", return_value=self.BODY),
+            patch("action.cli.check_scope", return_value=scope),
+            patch("action.cli.run_other_checks", return_value=[]),
         ):
-            _rc, results = main.run_commit_check()
+            _rc, results = cli.run_commit_check()
         self.assertEqual(results[0].checks[0]["fix"], "")
 
 
@@ -973,8 +981,8 @@ class TestPrAuthorChecksEveryCommit(unittest.TestCase):
     """The author checks read every PR commit's author, not only the tip."""
 
     def setUp(self):
-        main.API_AUTHORS.clear()
-        self.addCleanup(main.API_AUTHORS.clear)
+        context.API_AUTHORS.clear()
+        self.addCleanup(context.API_AUTHORS.clear)
 
     def _run(self, commits, authors, resolves=True, message=False):
         commands: list[list[str]] = []
@@ -998,18 +1006,22 @@ class TestPrAuthorChecksEveryCommit(unittest.TestCase):
             )
 
         with (
-            patch("main.MESSAGE_ENABLED", message),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", message),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.get_pr_commit_messages", return_value=commits) as listed,
-            patch("main._local_author", side_effect=lambda sha: authors.get(sha)),
-            patch("main.get_pr_head_sha", return_value=commits[-1][0]),
-            patch("main.subprocess.run", side_effect=run),
+            patch(
+                "action.context.get_pr_commit_messages", return_value=commits
+            ) as listed,
+            patch(
+                "action.context._local_author", side_effect=lambda sha: authors.get(sha)
+            ),
+            patch("action.context.get_pr_head_sha", return_value=commits[-1][0]),
+            patch("subprocess.run", side_effect=run),
             patch("sys.stdout", io.StringIO()),
         ):
-            rc, results = main.run_commit_check()
+            rc, results = cli.run_commit_check()
         self.listed_calls = listed.call_count
         return rc, results, commands
 
@@ -1054,7 +1066,7 @@ class TestPrAuthorChecksEveryCommit(unittest.TestCase):
         self.assertEqual([(s.label, s.sha) for s in results], [("Author email", "c3")])
 
     def test_an_api_listed_author_is_used(self):
-        main.API_AUTHORS["a1"] = ("Dev", "dev@users.noreply.github.com")
+        context.API_AUTHORS["a1"] = ("Dev", "dev@users.noreply.github.com")
         _rc, results, _ = self._run(
             [("a1", "feat: one")], {"a1": ("Dev", "dev@users.noreply.github.com")}
         )
@@ -1089,10 +1101,10 @@ class TestEmptyCommitMessage(unittest.TestCase):
             )
 
         with (
-            patch("main.subprocess.run", side_effect=run),
-            patch("main._local_author", return_value=None),
+            patch("subprocess.run", side_effect=run),
+            patch("action.context._local_author", return_value=None),
         ):
-            results = main.run_pr_message_checks([("a1", "")])
+            results = cli.run_pr_message_checks([("a1", "")])
         command, piped, content = seen[0]
         self.assertEqual(command[:4], ["commit-check", "--format", "json", "--message"])
         self.assertIsNone(piped)
@@ -1113,8 +1125,8 @@ class TestShallowBoundary(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(f"{SHA_A}\n{SHA_B}\n")
             located = MagicMock(returncode=0, stdout=f"{path}\n")
-            with patch("main.subprocess.run", return_value=located) as run:
-                self.assertEqual(main._shallow_boundary(), {SHA_A, SHA_B})
+            with patch("subprocess.run", return_value=located) as run:
+                self.assertEqual(cli._shallow_boundary(), {SHA_A, SHA_B})
         self.assertEqual(
             run.call_args.args[0], ["git", "rev-parse", "--git-path", "shallow"]
         )
@@ -1122,16 +1134,16 @@ class TestShallowBoundary(unittest.TestCase):
     def test_a_complete_clone_has_no_such_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             located = MagicMock(returncode=0, stdout=os.path.join(tmp, "shallow"))
-            with patch("main.subprocess.run", return_value=located):
-                self.assertEqual(main._shallow_boundary(), set())
+            with patch("subprocess.run", return_value=located):
+                self.assertEqual(cli._shallow_boundary(), set())
 
     def test_outside_a_repository_there_is_none(self):
-        with patch("main.subprocess.run", return_value=MagicMock(returncode=128)):
-            self.assertEqual(main._shallow_boundary(), set())
+        with patch("subprocess.run", return_value=MagicMock(returncode=128)):
+            self.assertEqual(cli._shallow_boundary(), set())
 
     def test_without_git_there_is_none(self):
-        with patch("main.subprocess.run", side_effect=OSError("no git")):
-            self.assertEqual(main._shallow_boundary(), set())
+        with patch("subprocess.run", side_effect=OSError("no git")):
+            self.assertEqual(cli._shallow_boundary(), set())
 
 
 class TestRunFilesChecks(unittest.TestCase):
@@ -1145,17 +1157,20 @@ class TestRunFilesChecks(unittest.TestCase):
             calls.append(args)
             answer = answers.get(args[-1], [])
             if isinstance(answer, str):
-                return main.ScopeResult(label=label, raw_text=answer, sha=sha)
-            return main.ScopeResult(label=label, checks=list(answer), sha=sha)
+                return model.ScopeResult(label=label, raw_text=answer, sha=sha)
+            return model.ScopeResult(label=label, checks=list(answer), sha=sha)
 
         out = io.StringIO()
         with (
-            patch("main._shallow_boundary", return_value=set(boundary)),
-            patch("main._rev_resolves", side_effect=lambda sha: sha not in missing),
-            patch("main.check_scope", side_effect=check_scope),
+            patch("action.cli._shallow_boundary", return_value=set(boundary)),
+            patch(
+                "action.context._rev_resolves",
+                side_effect=lambda sha: sha not in missing,
+            ),
+            patch("action.cli.check_scope", side_effect=check_scope),
             patch("sys.stdout", out),
         ):
-            results = main.run_files_checks(shas)
+            results = cli.run_files_checks(shas)
         return results, calls, out.getvalue()
 
     def test_every_commit_is_checked_at_its_own_revision(self):
@@ -1183,8 +1198,8 @@ class TestRunFilesChecks(unittest.TestCase):
         self.assertEqual(
             [(s.sha, s.status, s.skip_reason) for s in results],
             [
-                ("a1", "skip", main.FILES_NOT_IN_CLONE),
-                ("b2", "skip", main.FILES_NOT_IN_CLONE),
+                ("a1", "skip", cli.FILES_NOT_IN_CLONE),
+                ("b2", "skip", cli.FILES_NOT_IN_CLONE),
                 ("c3", "pass", ""),
             ],
         )
@@ -1203,7 +1218,7 @@ class TestRunFilesChecks(unittest.TestCase):
         self.assertEqual(calls, [["--files"]])
         self.assertEqual(
             [(s.label, s.sha, s.status, s.skip_reason) for s in results],
-            [("Files", "", "skip", main.FILES_NOT_IN_CLONE)],
+            [("Files", "", "skip", cli.FILES_NOT_IN_CLONE)],
         )
         self.assertIn("the files check was skipped", out)
 
@@ -1211,14 +1226,14 @@ class TestRunFilesChecks(unittest.TestCase):
         """Outside a PR the one commit is HEAD; git may fail to name it."""
         results, calls, _out = self._run([""], {"--files": "boom"})
         self.assertEqual(calls, [["--files"]])
-        self.assertEqual(results[0].skip_reason, main.FILES_NOT_IN_CLONE)
+        self.assertEqual(results[0].skip_reason, cli.FILES_NOT_IN_CLONE)
 
     def test_no_rule_set_is_one_skipped_scope_and_no_shallow_warning(self):
         for missing in ([], ["a1", "b2"]):
             results, _calls, out = self._run(["a1", "b2"], {}, missing=missing)
             self.assertEqual(
                 [(s.label, s.sha, s.status, s.skip_reason) for s in results],
-                [("Files", "", "skip", main.FILES_UNCONFIGURED)],
+                [("Files", "", "skip", cli.FILES_UNCONFIGURED)],
             )
             self.assertEqual(out, "")
 
@@ -1227,7 +1242,7 @@ class TestRunFilesChecks(unittest.TestCase):
         skipped["reason"] = ""
         results, _calls, _out = self._run(["a1"], {"a1": [skipped]})
         self.assertEqual(results[0].status, "skip")
-        self.assertEqual(results[0].skip_reason, main.FILES_NOTHING_CHANGED)
+        self.assertEqual(results[0].skip_reason, cli.FILES_NOTHING_CHANGED)
 
     def test_the_clis_own_skip_reason_is_kept(self):
         skipped = files_pass(value="", status="skip")
@@ -1243,18 +1258,18 @@ class TestRunFilesChecks(unittest.TestCase):
 
     def test_a_pull_request_whose_commits_cannot_be_listed_is_skipped(self):
         out = io.StringIO()
-        with patch("sys.stdout", out), patch("main.check_scope") as check:
-            results = main.run_pr_files_checks([])
+        with patch("sys.stdout", out), patch("action.cli.check_scope") as check:
+            results = cli.run_pr_files_checks([])
         check.assert_not_called()
         self.assertEqual(
             [(s.label, s.status, s.skip_reason) for s in results],
-            [("Files", "skip", main.FILES_UNLISTED)],
+            [("Files", "skip", cli.FILES_UNLISTED)],
         )
         self.assertIn("Could not list the pull request's commits", out.getvalue())
 
     def test_a_pull_request_hands_over_its_commits(self):
-        with patch("main.run_files_checks", return_value=[]) as run:
-            main.run_pr_files_checks([("a1", "feat: one"), ("b2", "feat: two")])
+        with patch("action.cli.run_files_checks", return_value=[]) as run:
+            cli.run_pr_files_checks([("a1", "feat: one"), ("b2", "feat: two")])
         run.assert_called_once_with(["a1", "b2"])
 
 
@@ -1265,30 +1280,32 @@ class TestRunCommitCheckFiles(unittest.TestCase):
         commits = [("a1", "feat: one"), ("b2", "feat: two")] if listable else []
 
         def check_scope(label, args, **kwargs):
-            return main.ScopeResult(
+            return model.ScopeResult(
                 label=label, checks=[files_pass()], sha=kwargs.get("sha", "")
             )
 
         with (
-            patch("main.MESSAGE_ENABLED", message),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
-            patch("main.FILES_ENABLED", files),
+            patch("action.inputs.MESSAGE_ENABLED", message),
+            patch("action.inputs.BRANCH_ENABLED", True),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.inputs.FILES_ENABLED", files),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}),
-            patch("main.get_pr_commit_messages", return_value=commits) as listed,
-            patch("main._local_author", return_value=None),
-            patch("main._shallow_boundary", return_value=set()),
-            patch("main._rev_resolves", return_value=True),
-            patch("main.head_sha", return_value="h0"),
-            patch("main.check_scope", side_effect=check_scope),
+            patch(
+                "action.context.get_pr_commit_messages", return_value=commits
+            ) as listed,
+            patch("action.context._local_author", return_value=None),
+            patch("action.cli._shallow_boundary", return_value=set()),
+            patch("action.context._rev_resolves", return_value=True),
+            patch("action.context.head_sha", return_value="h0"),
+            patch("action.cli.check_scope", side_effect=check_scope),
         ):
-            _rc, results = main.run_commit_check()
+            _rc, results = cli.run_commit_check()
         self.listed_calls = listed.call_count
         return [(s.label, s.sha) for s in results]
 
     def test_off_by_default(self):
-        self.assertFalse(main.FILES_ENABLED)
+        self.assertFalse(inputs.FILES_ENABLED)
         self.assertNotIn("Files", [label for label, _ in self._run(files=False)])
 
     def test_a_pull_request_gets_one_scope_per_commit_after_the_messages(self):

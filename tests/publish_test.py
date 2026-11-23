@@ -16,22 +16,22 @@ from helpers import (
     read_github_output,
 )
 
-import main
+from action import cli, model, publish, render
 
 
 class TestAddJobSummary(unittest.TestCase):
     def test_false_skips(self):
-        with patch("main.JOB_SUMMARY_ENABLED", False):
-            rc = main.add_job_summary([pass_scope()])
+        with patch("action.inputs.JOB_SUMMARY_ENABLED", False):
+            rc = publish.add_job_summary([pass_scope()])
         self.assertEqual(rc, 0)
 
     def test_success_writes_policy_report(self):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
-            patch("main.JOB_SUMMARY_ENABLED", True),
-            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", True),
+            patch("action.inputs.GITHUB_STEP_SUMMARY", summary_path),
         ):
-            rc = main.add_job_summary([pass_scope("Branch")])
+            rc = publish.add_job_summary([pass_scope("Branch")])
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
@@ -40,10 +40,10 @@ class TestAddJobSummary(unittest.TestCase):
     def test_failure_returns_nonzero(self):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
-            patch("main.JOB_SUMMARY_ENABLED", True),
-            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", True),
+            patch("action.inputs.GITHUB_STEP_SUMMARY", summary_path),
         ):
-            rc = main.add_job_summary([fail_scope()])
+            rc = publish.add_job_summary([fail_scope()])
         self.assertEqual(rc, 1)
         with open(summary_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
@@ -55,7 +55,7 @@ class TestSetResultOutput(unittest.TestCase):
     def test_writes_heredoc_json(self):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
-            main.set_result_output([fail_scope("Commit 1/1"), pass_scope("Branch")])
+            publish.set_result_output([fail_scope("Commit 1/1"), pass_scope("Branch")])
         with open(output_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
         self.assertRegex(content, r"(?m)^result<<ghadelimiter_[0-9a-f-]{36}$")
@@ -74,7 +74,7 @@ class TestSetResultOutput(unittest.TestCase):
         The runner-faithful parser raises on such a file.
         """
         results = [
-            main.ScopeResult(
+            model.ScopeResult(
                 label="Commit 1/1",
                 checks=[
                     make_check(
@@ -89,7 +89,7 @@ class TestSetResultOutput(unittest.TestCase):
         ]
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
-            main.set_result_output(results)
+            publish.set_result_output(results)
         outputs = read_github_output(output_path)
         payload = json.loads(outputs["result"])
         self.assertEqual(payload["status"], "fail")
@@ -102,7 +102,9 @@ class TestSetResultOutput(unittest.TestCase):
         field beside it, full length so it can be passed back to the API."""
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
-            main.set_result_output([fix_scope("Commit 2/3", sha=SHA_B), pass_scope()])
+            publish.set_result_output(
+                [fix_scope("Commit 2/3", sha=SHA_B), pass_scope()]
+            )
         payload = json.loads(read_github_output(output_path)["result"])
         self.assertEqual(payload["scopes"][0]["label"], "Commit 2/3")
         self.assertEqual(payload["scopes"][0]["sha"], SHA_B)
@@ -114,7 +116,7 @@ class TestSetResultOutput(unittest.TestCase):
     def test_all_pass_status(self):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
-            main.set_result_output([pass_scope()])
+            publish.set_result_output([pass_scope()])
         with open(output_path, encoding="utf-8") as file_obj:
             content = file_obj.read()
         self.assertIn('"status": "pass"', content)
@@ -122,13 +124,13 @@ class TestSetResultOutput(unittest.TestCase):
     def test_no_output_env_is_noop(self):
         with patch.dict(os.environ, {}, clear=True):
             os.environ["GITHUB_STEP_SUMMARY"] = "/tmp/step_summary.txt"
-            main.set_result_output([pass_scope()])  # should not raise
+            publish.set_result_output([pass_scope()])  # should not raise
 
 
 class TestAddPrComments(unittest.TestCase):
     def test_disabled_returns_zero(self):
-        with patch("main.PR_COMMENTS_ENABLED", False):
-            rc = main.add_pr_comments([pass_scope()])
+        with patch("action.inputs.PR_COMMENTS_ENABLED", False):
+            rc = publish.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
 
     def test_push_event_skips_comment_without_warning(self):
@@ -142,7 +144,7 @@ class TestAddPrComments(unittest.TestCase):
         with open(event_path, "w", encoding="utf-8") as f:
             json.dump({"ref": "refs/heads/main", "pusher": {"name": "octocat"}}, f)
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
             patch.dict(
                 os.environ,
                 {
@@ -153,10 +155,10 @@ class TestAddPrComments(unittest.TestCase):
                     "GITHUB_REPOSITORY": "owner/repo",
                 },
             ),
-            patch("main.get_pr_number") as mock_number,
+            patch("action.publish.get_pr_number") as mock_number,
             patch("builtins.print") as mock_print,
         ):
-            rc = main.add_pr_comments([fail_scope()])
+            rc = publish.add_pr_comments([fail_scope()])
         self.assertEqual(rc, 0)
         mock_number.assert_not_called()
         printed = [
@@ -170,13 +172,13 @@ class TestAddPrComments(unittest.TestCase):
 
     def test_fork_pr_skips_comment_and_warns(self):
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.is_fork_pr", return_value=True),
-            patch("main.JOB_SUMMARY_ENABLED", False),
+            patch("action.publish.is_fork_pr", return_value=True),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", False),
             patch("builtins.print") as mock_print,
         ):
-            rc = main.add_pr_comments([pass_scope()])
+            rc = publish.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
         printed = mock_print.call_args[0][0]
         self.assertIn("::warning::", printed)
@@ -187,14 +189,14 @@ class TestAddPrComments(unittest.TestCase):
         summary this run never wrote; the annotations are still named."""
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.is_fork_pr", return_value=True),
-            patch("main.JOB_SUMMARY_ENABLED", False),
-            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("action.publish.is_fork_pr", return_value=True),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", False),
+            patch("action.inputs.GITHUB_STEP_SUMMARY", summary_path),
             patch("builtins.print") as mock_print,
         ):
-            rc = main.add_pr_comments([pass_scope()])
+            rc = publish.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
         printed = mock_print.call_args[0][0]
         self.assertIn("annotations on the run page", printed)
@@ -202,28 +204,28 @@ class TestAddPrComments(unittest.TestCase):
         self.assertFalse(os.path.exists(summary_path))
 
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.is_fork_pr", return_value=True),
-            patch("main.JOB_SUMMARY_ENABLED", True),
-            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("action.publish.is_fork_pr", return_value=True),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", True),
+            patch("action.inputs.GITHUB_STEP_SUMMARY", summary_path),
             patch("builtins.print") as mock_print,
         ):
-            main.add_pr_comments([pass_scope()])
+            publish.add_pr_comments([pass_scope()])
         printed = mock_print.call_args[0][0]
         self.assertIn("in this job's summary and in the annotations", printed)
 
     def test_fork_pr_writes_job_summary_hint(self):
         summary_path = os.path.join(tempfile.mkdtemp(), "summary.txt")
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
-            patch("main.is_fork_pr", return_value=True),
-            patch("main.JOB_SUMMARY_ENABLED", True),
-            patch("main.GITHUB_STEP_SUMMARY", summary_path),
+            patch("action.publish.is_fork_pr", return_value=True),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", True),
+            patch("action.inputs.GITHUB_STEP_SUMMARY", summary_path),
             patch("builtins.print"),
         ):
-            rc = main.add_pr_comments([pass_scope()])
+            rc = publish.add_pr_comments([pass_scope()])
         self.assertEqual(rc, 0)
         with open(summary_path, encoding="utf-8") as f:
             content = f.read()
@@ -241,8 +243,8 @@ class TestAddPrComments(unittest.TestCase):
         github_module.Github.return_value.get_repo.return_value = mock_repo
 
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
             patch.dict(
                 os.environ,
                 {
@@ -254,11 +256,11 @@ class TestAddPrComments(unittest.TestCase):
             ),
             patch.dict(sys.modules, {"github": github_module}),
         ):
-            rc = main.add_pr_comments([fail_scope()])
+            rc = publish.add_pr_comments([fail_scope()])
         self.assertEqual(rc, 1)
         self.assertEqual(mock_pull_request.create_comment.call_count, 1)
         body = mock_pull_request.create_comment.call_args[1]["body"]
-        self.assertTrue(body.startswith(main.COMMENT_MARKER))
+        self.assertTrue(body.startswith(render.COMMENT_MARKER))
         self.assertIn("```diff\n@@ Commit 1/1 @@\n- bad message\n", body)
 
     def test_updates_existing_comment_when_changed(self):
@@ -275,8 +277,8 @@ class TestAddPrComments(unittest.TestCase):
         github_module.Github.return_value.get_repo.return_value = mock_repo
 
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
             patch.dict(
                 os.environ,
                 {
@@ -289,13 +291,13 @@ class TestAddPrComments(unittest.TestCase):
             patch.dict(sys.modules, {"github": github_module}),
             patch("builtins.print"),
         ):
-            rc = main.add_pr_comments([fail_scope()])
+            rc = publish.add_pr_comments([fail_scope()])
         self.assertEqual(rc, 1)
         old_comment.edit.assert_called_once()
         old_comment.delete.assert_not_called()
 
     def test_skips_when_comment_is_up_to_date(self):
-        body = main.render_pr_comment([fail_scope()])
+        body = render.render_pr_comment([fail_scope()])
         existing = MagicMock(body=body)
         existing.user.type = "Bot"
         mock_pull_request = MagicMock()
@@ -307,8 +309,8 @@ class TestAddPrComments(unittest.TestCase):
         github_module.Github.return_value.get_repo.return_value = mock_repo
 
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
             patch.dict(
                 os.environ,
                 {
@@ -321,7 +323,7 @@ class TestAddPrComments(unittest.TestCase):
             patch.dict(sys.modules, {"github": github_module}),
             patch("builtins.print"),
         ):
-            rc = main.add_pr_comments([fail_scope()])
+            rc = publish.add_pr_comments([fail_scope()])
         self.assertEqual(rc, 1)
         existing.edit.assert_not_called()
         mock_pull_request.create_comment.assert_not_called()
@@ -329,9 +331,9 @@ class TestAddPrComments(unittest.TestCase):
     def test_the_newest_report_is_updated_and_older_ones_deleted(self):
         """Duplicates (two runs racing to create the first comment, say)
         collapse into the newest one."""
-        older = MagicMock(body=f"{main.COMMENT_MARKER}\nolder report")
+        older = MagicMock(body=f"{render.COMMENT_MARKER}\nolder report")
         older.user.type = "Bot"
-        newer = MagicMock(body=f"{main.COMMENT_MARKER}\nnewer report")
+        newer = MagicMock(body=f"{render.COMMENT_MARKER}\nnewer report")
         newer.user.type = "Bot"
         mock_pull_request = MagicMock()
         mock_pull_request.get_comments.return_value = [older, newer]
@@ -341,8 +343,8 @@ class TestAddPrComments(unittest.TestCase):
         github_module.Github.return_value.get_repo.return_value = mock_repo
 
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
             patch.dict(
                 os.environ,
                 {
@@ -355,11 +357,11 @@ class TestAddPrComments(unittest.TestCase):
             patch.dict(sys.modules, {"github": github_module}),
             patch("builtins.print"),
         ):
-            rc = main.add_pr_comments([fail_scope()])
+            rc = publish.add_pr_comments([fail_scope()])
         self.assertEqual(rc, 1)
         github_module.Github.return_value.get_repo.assert_called_once_with("owner/repo")
         mock_repo.get_issue.assert_called_once_with(12)
-        newer.edit.assert_called_once_with(main.render_pr_comment([fail_scope()]))
+        newer.edit.assert_called_once_with(render.render_pr_comment([fail_scope()]))
         newer.delete.assert_not_called()
         older.delete.assert_called_once_with()
         older.edit.assert_not_called()
@@ -401,8 +403,8 @@ class TestAddPrCommentsFailures(unittest.TestCase):
         github_module.Github.return_value.get_repo.return_value = mock_repo
 
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
             patch.dict(
                 os.environ,
                 {
@@ -415,7 +417,7 @@ class TestAddPrCommentsFailures(unittest.TestCase):
             patch.dict(sys.modules, {"github": github_module}),
             patch("builtins.print") as mock_print,
         ):
-            rc = main.add_pr_comments([fail_scope()])
+            rc = publish.add_pr_comments([fail_scope()])
         printed = [
             call[0][0]
             for call in mock_print.call_args_list
@@ -468,13 +470,13 @@ class TestAddPrCommentsFailures(unittest.TestCase):
     def test_a_missing_pygithub_is_a_warning_not_a_crash(self):
         """``None`` in sys.modules makes the import raise ImportError."""
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
             patch.dict(sys.modules, {"github": None}),
             patch("builtins.print") as mock_print,
         ):
-            rc = main.add_pr_comments([fail_scope()])
+            rc = publish.add_pr_comments([fail_scope()])
         self.assertEqual(rc, 0)
         warning = mock_print.call_args[0][0]
         self.assertTrue(warning.startswith("::warning::Unable to post PR comment: "))
@@ -493,13 +495,16 @@ class TestAddPrCommentsFailures(unittest.TestCase):
                     missing: "",
                 }
                 with (
-                    patch("main.PR_COMMENTS_ENABLED", True),
-                    patch("main.is_fork_pr_with_readonly_token", return_value=False),
+                    patch("action.inputs.PR_COMMENTS_ENABLED", True),
+                    patch(
+                        "action.publish.is_fork_pr_with_readonly_token",
+                        return_value=False,
+                    ),
                     patch.dict(os.environ, env),
                     patch.dict(sys.modules, {"github": github_module}),
                     patch("builtins.print") as mock_print,
                 ):
-                    rc = main.add_pr_comments([fail_scope()])
+                    rc = publish.add_pr_comments([fail_scope()])
                 self.assertEqual(rc, 0)
                 self.assertEqual(
                     mock_print.call_args[0][0],
@@ -511,32 +516,32 @@ class TestAddPrCommentsFailures(unittest.TestCase):
 class TestIsForkPrWithReadonlyToken(unittest.TestCase):
     def test_fork_pr_with_pull_request_event(self):
         with (
-            patch("main.is_fork_pr", return_value=True),
+            patch("action.publish.is_fork_pr", return_value=True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
         ):
-            self.assertTrue(main.is_fork_pr_with_readonly_token())
+            self.assertTrue(publish.is_fork_pr_with_readonly_token())
 
     def test_fork_pr_with_pull_request_target_event(self):
         """pull_request_target has write token — not considered read-only."""
         with (
-            patch("main.is_fork_pr", return_value=True),
+            patch("action.publish.is_fork_pr", return_value=True),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request_target"}),
         ):
-            self.assertFalse(main.is_fork_pr_with_readonly_token())
+            self.assertFalse(publish.is_fork_pr_with_readonly_token())
 
     def test_same_repo_not_fork(self):
         with (
-            patch("main.is_fork_pr", return_value=False),
+            patch("action.publish.is_fork_pr", return_value=False),
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}),
         ):
-            self.assertFalse(main.is_fork_pr_with_readonly_token())
+            self.assertFalse(publish.is_fork_pr_with_readonly_token())
 
 
 class TestIsForkPr(unittest.TestCase):
     def test_no_event_path(self):
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("GITHUB_EVENT_PATH", None)
-            result = main.is_fork_pr()
+            result = publish.is_fork_pr()
         self.assertFalse(result)
 
     def test_same_repo_not_fork(self):
@@ -552,7 +557,7 @@ class TestIsForkPr(unittest.TestCase):
             json.dump(event, file_obj)
             event_path = file_obj.name
         with patch.dict(os.environ, {"GITHUB_EVENT_PATH": event_path}):
-            result = main.is_fork_pr()
+            result = publish.is_fork_pr()
         self.assertFalse(result)
         os.unlink(event_path)
 
@@ -569,7 +574,7 @@ class TestIsForkPr(unittest.TestCase):
             json.dump(event, file_obj)
             event_path = file_obj.name
         with patch.dict(os.environ, {"GITHUB_EVENT_PATH": event_path}):
-            result = main.is_fork_pr()
+            result = publish.is_fork_pr()
         self.assertTrue(result)
         os.unlink(event_path)
 
@@ -580,7 +585,7 @@ class TestIsForkPr(unittest.TestCase):
         with open(event_path, "w", encoding="utf-8") as f:
             f.write("not json")
         with patch.dict(os.environ, {"GITHUB_EVENT_PATH": event_path}):
-            self.assertFalse(main.is_fork_pr())
+            self.assertFalse(publish.is_fork_pr())
 
 
 class TestGetPrNumber(unittest.TestCase):
@@ -596,7 +601,7 @@ class TestGetPrNumber(unittest.TestCase):
         with patch.dict(
             os.environ, {"GITHUB_REF": "refs/pull/42/merge", "GITHUB_EVENT_PATH": ""}
         ):
-            self.assertEqual(main.get_pr_number(), 42)
+            self.assertEqual(publish.get_pr_number(), 42)
 
     def test_pull_request_target_reads_the_event_instead(self):
         """There GITHUB_REF is the base branch, which names no pull request."""
@@ -607,7 +612,7 @@ class TestGetPrNumber(unittest.TestCase):
                     "GITHUB_EVENT_PATH": self._event(payload),
                 }
                 with patch.dict(os.environ, env):
-                    self.assertEqual(main.get_pr_number(), 7)
+                    self.assertEqual(publish.get_pr_number(), 7)
 
     def test_no_number_anywhere_raises(self):
         for payload in ({"pull_request": None}, {}, "not json"):
@@ -617,7 +622,7 @@ class TestGetPrNumber(unittest.TestCase):
                     "GITHUB_EVENT_PATH": self._event(payload),
                 }
                 with patch.dict(os.environ, env), self.assertRaises(ValueError):
-                    main.get_pr_number()
+                    publish.get_pr_number()
 
     def test_no_event_payload_raises(self):
         with (
@@ -625,7 +630,7 @@ class TestGetPrNumber(unittest.TestCase):
             self.assertRaises(ValueError),
         ):
             os.environ.pop("GITHUB_EVENT_PATH", None)
-            main.get_pr_number()
+            publish.get_pr_number()
 
 
 class TestFindOwnComments(unittest.TestCase):
@@ -639,42 +644,42 @@ class TestFindOwnComments(unittest.TestCase):
         return comment
 
     def test_marked_comment_is_updated_and_older_ones_deleted(self):
-        first = self._comment(f"{main.COMMENT_MARKER}\nold")
-        second = self._comment(f"{main.COMMENT_MARKER}\nnewer")
-        target, stale = main._find_own_comments([first, second])
+        first = self._comment(f"{render.COMMENT_MARKER}\nold")
+        second = self._comment(f"{render.COMMENT_MARKER}\nnewer")
+        target, stale = publish._find_own_comments([first, second])
         self.assertIs(target, second)
         self.assertEqual(stale, [first])
 
     def test_human_comment_with_the_old_title_is_never_deleted(self):
         """A person can type '# Commit Check'; deleting on that is destructive."""
         human = self._comment("# Commit Check\nwhy is this failing?", user_type="User")
-        mine = self._comment(f"{main.COMMENT_MARKER}\nreport")
-        target, stale = main._find_own_comments([human, mine])
+        mine = self._comment(f"{render.COMMENT_MARKER}\nreport")
+        target, stale = publish._find_own_comments([human, mine])
         self.assertIs(target, mine)
         self.assertEqual(stale, [])
 
     def test_human_comment_with_the_old_title_is_not_adopted(self):
         human = self._comment("# Commit Check\nwhy is this failing?", user_type="User")
-        target, stale = main._find_own_comments([human])
+        target, stale = publish._find_own_comments([human])
         self.assertIsNone(target)
         self.assertEqual(stale, [])
 
     def test_bot_comment_from_an_older_version_is_adopted(self):
         legacy = self._comment("# Commit-Check\nold report")
-        target, stale = main._find_own_comments([legacy])
+        target, stale = publish._find_own_comments([legacy])
         self.assertIs(target, legacy)
         self.assertEqual(stale, [])
 
     def test_human_comment_with_the_marker_is_never_touched(self):
         """A person can paste the marker too, e.g. quoting a report."""
-        quoted = self._comment(f"{main.COMMENT_MARKER}\nquoted", user_type="User")
-        mine = self._comment(f"{main.COMMENT_MARKER}\nreport")
-        self.assertEqual(main._find_own_comments([quoted, mine]), (mine, []))
-        self.assertEqual(main._find_own_comments([mine, quoted]), (mine, []))
-        self.assertEqual(main._find_own_comments([quoted]), (None, []))
+        quoted = self._comment(f"{render.COMMENT_MARKER}\nquoted", user_type="User")
+        mine = self._comment(f"{render.COMMENT_MARKER}\nreport")
+        self.assertEqual(publish._find_own_comments([quoted, mine]), (mine, []))
+        self.assertEqual(publish._find_own_comments([mine, quoted]), (mine, []))
+        self.assertEqual(publish._find_own_comments([quoted]), (None, []))
 
     def test_no_comments_yields_nothing_to_update(self):
-        target, stale = main._find_own_comments([])
+        target, stale = publish._find_own_comments([])
         self.assertIsNone(target)
         self.assertEqual(stale, [])
 
@@ -683,45 +688,45 @@ class TestFindOwnComments(unittest.TestCase):
         and not a licence to adopt the comment either."""
         orphan = self._comment("# Commit Check\nold report")
         orphan.user = None
-        self.assertFalse(main._is_bot(orphan))
-        self.assertEqual(main._find_own_comments([orphan]), (None, []))
+        self.assertFalse(publish._is_bot(orphan))
+        self.assertEqual(publish._find_own_comments([orphan]), (None, []))
 
 
 class TestAiToolsFound(unittest.TestCase):
     def setUp(self):
-        main.PR_BODY_AI_TOOLS.clear()
-        self.addCleanup(main.PR_BODY_AI_TOOLS.clear)
+        cli.PR_BODY_AI_TOOLS.clear()
+        self.addCleanup(cli.PR_BODY_AI_TOOLS.clear)
 
     def test_union_of_scopes_description_and_opener(self):
-        main.PR_BODY_AI_TOOLS[:] = ["OpenAI Codex"]
+        cli.PR_BODY_AI_TOOLS[:] = ["OpenAI Codex"]
         results = [
-            main.ScopeResult(label="Commit 1/2", ai_tools=["Claude Code"]),
-            main.ScopeResult(label="Commit 2/2", ai_tools=["Claude Code", "Cursor"]),
+            model.ScopeResult(label="Commit 1/2", ai_tools=["Claude Code"]),
+            model.ScopeResult(label="Commit 2/2", ai_tools=["Claude Code", "Cursor"]),
         ]
         with (
-            patch("main.is_pr_event", return_value=True),
-            patch("main.get_pr_opener_tool", return_value="Devin"),
+            patch("action.context.is_pr_event", return_value=True),
+            patch("action.context.get_pr_opener_tool", return_value="Devin"),
         ):
-            found = main.ai_tools_found(results)
+            found = publish.ai_tools_found(results)
         self.assertEqual(found, ["Claude Code", "Cursor", "Devin", "OpenAI Codex"])
 
     def test_outside_a_pull_request_only_the_scopes(self):
-        results = [main.ScopeResult(label="Commit message", ai_tools=["Aider"])]
+        results = [model.ScopeResult(label="Commit message", ai_tools=["Aider"])]
         with (
-            patch("main.is_pr_event", return_value=False),
-            patch("main.get_pr_opener_tool") as opener,
+            patch("action.context.is_pr_event", return_value=False),
+            patch("action.context.get_pr_opener_tool") as opener,
         ):
-            self.assertEqual(main.ai_tools_found(results), ["Aider"])
+            self.assertEqual(publish.ai_tools_found(results), ["Aider"])
         opener.assert_not_called()
 
     def test_result_output_carries_them(self):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
-        results = [main.ScopeResult(label="Commit 1/1", ai_tools=["Claude Code"])]
+        results = [model.ScopeResult(label="Commit 1/1", ai_tools=["Claude Code"])]
         with (
             patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}),
-            patch("main.is_pr_event", return_value=False),
+            patch("action.context.is_pr_event", return_value=False),
         ):
-            main.set_result_output(results)
+            publish.set_result_output(results)
         payload = json.loads(read_github_output(output_path)["result"])
         self.assertEqual(payload["ai_tools"], ["Claude Code"])
 
@@ -729,10 +734,10 @@ class TestAiToolsFound(unittest.TestCase):
 class TestAddAiLabel(unittest.TestCase):
     """``ai-label``: added when an AI tool wrote any of the PR, never removed."""
 
-    AI_SCOPE = main.ScopeResult(label="Commit 1/1", ai_tools=["Claude Code"])
+    AI_SCOPE = model.ScopeResult(label="Commit 1/1", ai_tools=["Claude Code"])
 
     def setUp(self):
-        main.PR_BODY_AI_TOOLS.clear()
+        cli.PR_BODY_AI_TOOLS.clear()
 
     def _run(
         self, results, label="true", labels=(), get_label=None, add=None, create=None
@@ -764,12 +769,12 @@ class TestAddAiLabel(unittest.TestCase):
                     "GITHUB_API_URL": "https://ghe.example.com/api/v3",
                 },
             ),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
-            patch("main.get_pr_opener_tool", return_value=None),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.context.get_pr_opener_tool", return_value=None),
             patch.dict(sys.modules, {"github": github_module}),
             patch("builtins.print") as mock_print,
         ):
-            main.add_ai_label(results)
+            publish.add_ai_label(results)
         printed = [
             c[0][0]
             for c in mock_print.call_args_list
@@ -792,7 +797,7 @@ class TestAddAiLabel(unittest.TestCase):
             [self.AI_SCOPE], get_label=_StubGithubException(404)
         )
         repo.create_label.assert_called_once_with(
-            "ai-assisted", main.AI_LABEL_COLOR, "Written with the help of an AI tool"
+            "ai-assisted", publish.AI_LABEL_COLOR, "Written with the help of an AI tool"
         )
         issue.add_to_labels.assert_called_once_with("ai-assisted")
 
@@ -827,7 +832,7 @@ class TestAddAiLabel(unittest.TestCase):
 
     def test_no_ai_no_label_and_no_api_call(self):
         _repo, _issue, printed, github_module = self._run(
-            [main.ScopeResult(label="Commit 1/1")]
+            [model.ScopeResult(label="Commit 1/1")]
         )
         github_module.Github.assert_not_called()
         self.assertIn("No AI tool found in the pull request; no label added.", printed)
@@ -842,7 +847,7 @@ class TestAddAiLabel(unittest.TestCase):
             patch.dict(os.environ, {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "push"}),
             patch("builtins.print") as mock_print,
         ):
-            main.add_ai_label([self.AI_SCOPE])
+            publish.add_ai_label([self.AI_SCOPE])
         mock_print.assert_not_called()
 
     def test_forbidden_names_the_permission(self):
@@ -870,15 +875,15 @@ class TestAddAiLabel(unittest.TestCase):
                 {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "pull_request"},
                 clear=True,
             ),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
-            patch("main.get_pr_opener_tool", return_value=None),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.context.get_pr_opener_tool", return_value=None),
             patch.dict(
                 sys.modules,
                 {"github": MagicMock(GithubException=_StubGithubException)},
             ),
             patch("builtins.print") as mock_print,
         ):
-            main.add_ai_label([self.AI_SCOPE])
+            publish.add_ai_label([self.AI_SCOPE])
         self.assertIn("GITHUB_TOKEN is not set", mock_print.call_args[0][0])
 
     def test_missing_repository_warns(self):
@@ -892,15 +897,15 @@ class TestAddAiLabel(unittest.TestCase):
                 },
                 clear=True,
             ),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
-            patch("main.get_pr_opener_tool", return_value=None),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.context.get_pr_opener_tool", return_value=None),
             patch.dict(
                 sys.modules,
                 {"github": MagicMock(GithubException=_StubGithubException)},
             ),
             patch("builtins.print") as mock_print,
         ):
-            main.add_ai_label([self.AI_SCOPE])
+            publish.add_ai_label([self.AI_SCOPE])
         self.assertIn("GITHUB_REPOSITORY is not set", mock_print.call_args[0][0])
 
     def test_fork_with_a_read_only_token_warns(self):
@@ -908,11 +913,11 @@ class TestAddAiLabel(unittest.TestCase):
             patch.dict(
                 os.environ, {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "pull_request"}
             ),
-            patch("main.is_fork_pr_with_readonly_token", return_value=True),
-            patch("main.get_pr_opener_tool", return_value=None),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=True),
+            patch("action.context.get_pr_opener_tool", return_value=None),
             patch("builtins.print") as mock_print,
         ):
-            main.add_ai_label([self.AI_SCOPE])
+            publish.add_ai_label([self.AI_SCOPE])
         warning = mock_print.call_args[0][0]
         self.assertIn("::warning::AI tools found (Claude Code)", warning)
         self.assertIn("read-only", warning)
@@ -922,12 +927,12 @@ class TestAddAiLabel(unittest.TestCase):
             patch.dict(
                 os.environ, {"AI_LABEL": "true", "GITHUB_EVENT_NAME": "pull_request"}
             ),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
-            patch("main.get_pr_opener_tool", return_value=None),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.context.get_pr_opener_tool", return_value=None),
             patch.dict(sys.modules, {"github": None}),
             patch("builtins.print") as mock_print,
         ):
-            main.add_ai_label([self.AI_SCOPE])
+            publish.add_ai_label([self.AI_SCOPE])
         self.assertIn("Unable to add the AI label", mock_print.call_args[0][0])
 
 
@@ -940,9 +945,9 @@ class TestPrCommentApiUrl(unittest.TestCase):
         pull_request.get_comments.return_value = []
         github_module.Github.return_value.get_repo.return_value.get_issue.return_value = pull_request
         with (
-            patch("main.PR_COMMENTS_ENABLED", True),
-            patch("main.is_fork_pr_with_readonly_token", return_value=False),
-            patch("main.get_pr_number", return_value=7),
+            patch("action.inputs.PR_COMMENTS_ENABLED", True),
+            patch("action.publish.is_fork_pr_with_readonly_token", return_value=False),
+            patch("action.publish.get_pr_number", return_value=7),
             patch.dict(
                 os.environ,
                 {
@@ -954,6 +959,6 @@ class TestPrCommentApiUrl(unittest.TestCase):
             ),
             patch.dict(sys.modules, {"github": github_module}),
         ):
-            main.add_pr_comments([fail_scope()])
+            publish.add_pr_comments([fail_scope()])
         _, kwargs = github_module.Github.call_args
         self.assertEqual(kwargs["base_url"], "https://ghe.example.com/api/v3")
