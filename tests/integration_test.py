@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 import main
+from action import cli, model, render
 
 
 class TestCommitCheckVersionPin(unittest.TestCase):
@@ -77,7 +78,7 @@ STATUSES = {"pass", "fail", "warn", "skip"}
 class TestRealCommitCheckBinary(unittest.TestCase):
     """Run the pinned commit-check once, unmocked.
 
-    Every other test patches ``main.subprocess.run`` and feeds back the JSON
+    Every other test patches ``subprocess.run`` and feeds back the JSON
     shape ``make_check()`` hard-codes, so a renamed key or a new status in
     the CLI would leave the whole suite green while the action rendered "—"
     for every value. This is the one place that drift can fail a build. CI
@@ -121,7 +122,7 @@ class TestRealCommitCheckBinary(unittest.TestCase):
         self.addCleanup(env_patch.stop)
 
     def _run(self, message: str, check_type: str = "--message") -> tuple[int, dict]:
-        rc, data, raw = main.run_check_json(
+        rc, data, raw = cli.run_check_json(
             [check_type, "--config", self.config], input_text=message
         )
         self.assertIsInstance(data, dict, f"CLI did not emit JSON:\n{raw}")
@@ -143,9 +144,9 @@ class TestRealCommitCheckBinary(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(data["status"], "pass")
         self.assertTrue(all(c["status"] == "pass" for c in data["checks"]))
-        scope = main.ScopeResult(label="Commit 1/1", checks=data["checks"])
+        scope = model.ScopeResult(label="Commit 1/1", checks=data["checks"])
         self.assertEqual(scope.status, "pass")
-        self.assertEqual(main.overall_status([scope]), "pass")
+        self.assertEqual(model.overall_status([scope]), "pass")
 
     def test_failing_message(self):
         rc, data = self._run("Bad subject\n")
@@ -154,13 +155,13 @@ class TestRealCommitCheckBinary(unittest.TestCase):
         failed = [c for c in data["checks"] if c["status"] == "fail"]
         self.assertEqual([c["rule_id"] for c in failed], ["CC001"])
         self.assertTrue(failed[0]["error"])
-        scope = main.ScopeResult(label="Commit 1/1", checks=data["checks"])
+        scope = model.ScopeResult(label="Commit 1/1", checks=data["checks"])
         self.assertEqual(scope.status, "fail")
-        self.assertEqual(main.overall_status([scope]), "fail")
+        self.assertEqual(model.overall_status([scope]), "fail")
         # The rendered report must carry the rule link the CLI supplied.
         self.assertIn(
             "<sub>Rules: [CC001](https://commit-check.com/rules/#cc001)</sub>",
-            main.render_report([scope]),
+            render.render_report([scope]),
         )
 
     def test_a_title_meets_only_the_rules_a_title_can(self):
@@ -176,7 +177,7 @@ class TestRealCommitCheckBinary(unittest.TestCase):
         ran = {c["rule_id"] for c in data["checks"]}
         self.assertEqual(rc, 0)
         self.assertFalse(ran & {"CC011", "CC012", "CC017"})
-        scope = main.ScopeResult(label="PR title", checks=data["checks"])
+        scope = model.ScopeResult(label="PR title", checks=data["checks"])
         self.assertEqual(scope.status, "pass")
 
     def test_a_bad_title_still_fails(self):
@@ -243,7 +244,7 @@ class TestFilesAgainstRealCommits(unittest.TestCase):
         bad = self._commit("feat: key", {"key.pem": "k\n"})
         gone = self._commit("fix: drop key", {"key.pem": None})
         with patch("sys.stdout", io.StringIO()):
-            results = main.run_files_checks([good, bad, gone])
+            results = cli.run_files_checks([good, bad, gone])
         self.assertEqual(
             [(s.sha, s.status) for s in results],
             [(good, "pass"), (bad, "fail"), (gone, "skip")],
@@ -252,15 +253,15 @@ class TestFilesAgainstRealCommits(unittest.TestCase):
             [(c["rule_id"], c["value"]) for c in results[1].failures],
             [("CC303", "key.pem (pattern *.pem)")],
         )
-        self.assertEqual(results[2].skip_reason, main.FILES_NOTHING_CHANGED)
+        self.assertEqual(results[2].skip_reason, cli.FILES_NOTHING_CHANGED)
 
     def test_no_rule_set_is_reported_as_skipped(self):
         sha = self._commit("chore: no rules", {"cchk.toml": ""})
         with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
-            results = main.run_files_checks([sha])
+            results = cli.run_files_checks([sha])
         self.assertEqual(
             [(s.status, s.skip_reason) for s in results],
-            [("skip", main.FILES_UNCONFIGURED)],
+            [("skip", cli.FILES_UNCONFIGURED)],
         )
 
     def test_a_shallow_clone_skips_the_commit_at_its_edge(self):
@@ -280,12 +281,12 @@ class TestFilesAgainstRealCommits(unittest.TestCase):
             cwd=os.path.dirname(self.repo),
         )
         os.chdir(shallow)
-        self.assertEqual(main._shallow_boundary(), {tip})
+        self.assertEqual(cli._shallow_boundary(), {tip})
         out = io.StringIO()
         with patch("sys.stdout", out):
-            results = main.run_files_checks([tip])
+            results = cli.run_files_checks([tip])
         self.assertEqual(
             [(s.status, s.skip_reason) for s in results],
-            [("skip", main.FILES_NOT_IN_CLONE)],
+            [("skip", cli.FILES_NOT_IN_CLONE)],
         )
         self.assertIn("fetch-depth: 0", out.getvalue())

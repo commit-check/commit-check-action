@@ -24,7 +24,7 @@ from helpers import (
     warn_scope,
 )
 
-import main
+from action import cli, model, publish, render
 
 #: The report footer names the installed commit-check version, which differs
 #: between a contributor's machine and CI. Golden tests pin it so they assert on
@@ -56,7 +56,7 @@ def group_line(glyph: str, word: str, text: str) -> str:
     )
 
 
-pin_version = patch("main._commit_check_version", new=lambda: PINNED_VERSION)
+pin_version = patch("action.render._commit_check_version", new=lambda: PINNED_VERSION)
 
 #: Fixed lines of the report's "How to fix" section.
 AGENT_PROMPT = "Fix these Commit Check findings without changing any code:"
@@ -78,10 +78,10 @@ class TestRenderJobSummary(unittest.TestCase):
             pass_scope("Branch", value="feature/add-login"),
         ]
         results[1].sha, results[2].sha = SHA_A, SHA_B
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertEqual(
             body,
-            f"{main.COMMENT_MARKER}\n"
+            f"{render.COMMENT_MARKER}\n"
             f"{heading('✔', 'passed', 'passed')}\n"
             "\n"
             f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
@@ -115,10 +115,10 @@ class TestRenderJobSummary(unittest.TestCase):
             fail_scope("Commit 2/2"),
             pass_scope("Branch", value="feature/add-login"),
         ]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertEqual(
             body,
-            f"{main.COMMENT_MARKER}\n"
+            f"{render.COMMENT_MARKER}\n"
             f"{heading('✖', 'failed', 'failed')}\n"
             "\n"
             f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
@@ -190,11 +190,11 @@ class TestRenderJobSummary(unittest.TestCase):
         results[3].sha = "37d6def82ffcc6dbfa0af2ea1ec90512d89979ae"
         env = {"GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SERVER_URL": ""}
         with patch.dict(os.environ, env):
-            body = main.render_report(results)
+            body = render.render_report(results)
         commits = "https://github.com/acme/widgets/commit"
         self.assertEqual(
             body,
-            f"{main.COMMENT_MARKER}\n"
+            f"{render.COMMENT_MARKER}\n"
             f"{heading('✖', 'failed', 'failed')}\n"
             "\n"
             f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
@@ -273,7 +273,7 @@ class TestRenderJobSummary(unittest.TestCase):
             "GITHUB_SERVER_URL": "https://ghe.example.com/",
         }
         with patch.dict(os.environ, env):
-            body = main.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
+            body = render.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
         self.assertIn(
             f"<sub>Commits: [`5584f46`](https://ghe.example.com/acme/widgets/commit/{SHA_B}) ",
             body,
@@ -281,14 +281,14 @@ class TestRenderJobSummary(unittest.TestCase):
 
     def test_no_commit_link_without_a_repository_to_link_into(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": ""}):
-            body = main.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
+            body = render.render_report([fix_scope("Commit 1/1", sha=SHA_B)])
         self.assertIn("@@ 5584f46 @@\n- feat: add login page\n", body)
         self.assertIn("\n<sub>Rules: [CC002](", body)
         self.assertNotIn("/commit/", body)
 
     def test_scopes_without_a_commit_are_never_linked(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/widgets"}):
-            body = main.render_report([fail_scope("Branch")])
+            body = render.render_report([fail_scope("Branch")])
         self.assertIn("@@ Branch @@\n- bad message\n", body)
         self.assertNotIn("/commit/", body)
 
@@ -296,7 +296,7 @@ class TestRenderJobSummary(unittest.TestCase):
         """An author check runs on a commit, but the finding is the author."""
         scope = fail_scope("Author email", sha=SHA_A)
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/widgets"}):
-            body = main.render_report([scope])
+            body = render.render_report([scope])
         self.assertIn("@@ Author email @@\n", body)
         self.assertIn("  ✖ email        bad message\n", body)
         self.assertNotIn("/commit/", body)
@@ -304,7 +304,7 @@ class TestRenderJobSummary(unittest.TestCase):
     def test_skipped_scope_carries_the_sha_too(self):
         scope = skip_scope("Commit 1/1")
         scope.sha = SHA_A
-        self.assertIn("  ⊘ d87faca      skipped\n", main.render_report([scope]))
+        self.assertIn("  ⊘ d87faca      skipped\n", render.render_report([scope]))
 
     def test_a_check_is_a_thing_checked_not_a_rule_evaluation(self):
         """The total counts scopes, so it tracks the policy, not the PR size.
@@ -315,14 +315,14 @@ class TestRenderJobSummary(unittest.TestCase):
         commit out of fifteen look negligible. Two rules failing on one commit
         is still one thing to go and fix.
         """
-        two_failures = main.ScopeResult(
+        two_failures = model.ScopeResult(
             label="Commit 1/2",
             checks=[
                 make_check("message", status="fail", rule_id="CC001"),
                 make_check("subject_min_length", status="fail", rule_id="CC005"),
             ],
         )
-        body = main.render_report(
+        body = render.render_report(
             [pass_scope("Branch"), two_failures, pass_scope("Commit 2/2")]
         )
         self.assertIn("> Commits: 1 of 2 failed", body)
@@ -336,7 +336,7 @@ class TestRenderJobSummary(unittest.TestCase):
         """Adding rules to one scope must not change the totals."""
         one_rule = [pass_scope("Branch")]
         many_rules = [
-            main.ScopeResult(
+            model.ScopeResult(
                 label="Branch",
                 checks=[
                     make_check(f"rule_{i}", rule_id=f"CC{i:03d}") for i in range(9)
@@ -344,13 +344,13 @@ class TestRenderJobSummary(unittest.TestCase):
             )
         ]
         for results in (one_rule, many_rules):
-            body = main.render_report(results)
+            body = render.render_report(results)
             self.assertIn("> Branch: passed\n", body)
             self.assertIn("<summary>All 1 check</summary>", body)
 
     def test_body_opens_with_hidden_marker(self):
-        body = main.render_job_summary([pass_scope("Branch")])
-        self.assertTrue(body.startswith(main.COMMENT_MARKER))
+        body = render.render_job_summary([pass_scope("Branch")])
+        self.assertTrue(body.startswith(render.COMMENT_MARKER))
 
     def test_the_heading_is_the_verdict(self):
         """The mark carries the status, so no tick ever sits next to a failure."""
@@ -362,11 +362,11 @@ class TestRenderJobSummary(unittest.TestCase):
         ]
         for results, expected in cases:
             with self.subTest(expected=expected):
-                lines = main.render_report(results).splitlines()
+                lines = render.render_report(results).splitlines()
                 self.assertEqual(lines[1], expected)
 
     def test_all_pass(self):
-        body = main.render_job_summary([pass_scope("Branch", value="main")])
+        body = render.render_job_summary([pass_scope("Branch", value="main")])
         self.assertIn("Commit Check passed\n", body)
         self.assertIn("<details>", body)
         self.assertIn("<summary>All 1 check</summary>", body)
@@ -384,7 +384,7 @@ class TestRenderJobSummary(unittest.TestCase):
             pass_scope("Author name", value="Jane Doe"),
             pass_scope("Author email", value="jane@example.com"),
         ]
-        body = main.render_job_summary(results)
+        body = render.render_job_summary(results)
         listing = body.split("```text\n")[1]
         # Group headers in the listing mirror the step log ordering.
         self.assertLess(listing.index("Commits\n"), listing.index("Branch\n"))
@@ -396,15 +396,15 @@ class TestRenderJobSummary(unittest.TestCase):
 
     def test_all_pass_truncates_long_values(self):
         long_value = "x" * 200
-        body = main.render_job_summary([pass_scope("Commit 1/1", value=long_value)])
+        body = render.render_job_summary([pass_scope("Commit 1/1", value=long_value)])
         self.assertIn(f"  ✔ 1/1          {'x' * 79}…\n", body)
 
     def test_all_pass_without_value_shows_plain_label(self):
-        body = main.render_job_summary([pass_scope("Branch")])
+        body = render.render_job_summary([pass_scope("Branch")])
         self.assertIn("  ✔ branch\n", body)
 
     def test_failure_shows_the_diff_and_the_rule_links(self):
-        body = main.render_job_summary([fail_scope("Commit 1/1")])
+        body = render.render_job_summary([fail_scope("Commit 1/1")])
         self.assertIn("Commit Check failed\n", body)
         self.assertIn("> Commits: failed\n", body)
         self.assertIn(
@@ -429,7 +429,7 @@ class TestRenderJobSummary(unittest.TestCase):
         """It is the one value the reader has to act on; the cap is for the
         rows that passed."""
         subject = "feat: " + "x" * 100
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             checks=[
                 make_check(
@@ -437,7 +437,7 @@ class TestRenderJobSummary(unittest.TestCase):
                 )
             ],
         )
-        body = main.render_report([scope])
+        body = render.render_report([scope])
         self.assertIn(f"- {subject}\n", body)
         self.assertIn(f"  ✖ 1/1          {subject}\n", body)
 
@@ -446,22 +446,24 @@ class TestRenderJobSummary(unittest.TestCase):
             fail_scope("Commit 1/2"),
             pass_scope("Commit 2/2", value="fix: resolve timeout"),
         ]
-        body = main.render_job_summary(results)
+        body = render.render_job_summary(results)
         self.assertIn("  ✔ 2/2          fix: resolve timeout\n", body)
         self.assertIn("  ✖ 1/2          bad message\n", body)
 
     def test_passing_scopes_stay_out_of_the_diff(self):
-        body = main.render_job_summary([pass_scope("Branch"), fail_scope("Commit 1/1")])
+        body = render.render_job_summary(
+            [pass_scope("Branch"), fail_scope("Commit 1/1")]
+        )
         diff = body.split("```diff\n")[1].split("```")[0]
         self.assertEqual(diff.count("@@ "), 1)
         self.assertIn("@@ Commit 1/1 @@", diff)
         self.assertIn("  ✔ branch\n", body)
 
 
-def ai_scope(label: str = "Commit 1/1", sha: str = SHA_A) -> main.ScopeResult:
+def ai_scope(label: str = "Commit 1/1", sha: str = SHA_A) -> model.ScopeResult:
     """A commit that credits an AI co-author, under ``ai_attribution = "forbid"``:
     the rule's value is the tool, and its fix the message without the trailer."""
-    return main.ScopeResult(
+    return model.ScopeResult(
         label=label,
         sha=sha,
         text=(
@@ -491,13 +493,13 @@ class TestLineEdits(unittest.TestCase):
         scope = fix_scope()
         scope.text = "feat: add login page\n\nThe body stays.\n"
         self.assertEqual(
-            main._line_edits(scope, scope.checks[0]),
+            render._line_edits(scope, scope.checks[0]),
             (["feat: add login page"], ["feat: Add login page"]),
         )
 
     def test_a_whole_message_fix_is_compared_with_the_whole_message(self):
         message = "feat: add login page\n\nThe body stays."
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             text=message + "\n",
             checks=[
@@ -511,7 +513,7 @@ class TestLineEdits(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            main._line_edits(scope, scope.checks[0]),
+            render._line_edits(scope, scope.checks[0]),
             ([], ["Signed-off-by: Jane Doe <jane@example.com>"]),
         )
 
@@ -519,16 +521,16 @@ class TestLineEdits(unittest.TestCase):
         """The value is the tool's name; the fix drops the trailer."""
         scope = ai_scope()
         self.assertEqual(
-            main._line_edits(scope, scope.checks[0]),
+            render._line_edits(scope, scope.checks[0]),
             (["Co-authored-by: Claude <noreply@anthropic.com>"], []),
         )
 
     def test_an_ai_rule_without_the_message_has_no_line_to_name(self):
         scope = ai_scope()
         scope.text = ""
-        self.assertEqual(main._line_edits(scope, scope.checks[0]), ([], []))
+        self.assertEqual(render._line_edits(scope, scope.checks[0]), ([], []))
         self.assertEqual(
-            main._instruction(scope, scope.checks[0]),
+            render._instruction(scope, scope.checks[0]),
             "Remove the AI trailer lines and re-commit.",
         )
 
@@ -539,20 +541,20 @@ class TestLineEdits(unittest.TestCase):
         scope.checks.insert(0, make_check("message", value=scope.text.strip()))
         scope.text = ""
         self.assertEqual(
-            main._line_edits(scope, scope.checks[1]),
+            render._line_edits(scope, scope.checks[1]),
             (["Co-authored-by: Claude <noreply@anthropic.com>"], []),
         )
-        self.assertEqual(main._first_value(scope), "feat: add OAuth providers")
+        self.assertEqual(render._first_value(scope), "feat: add OAuth providers")
 
     def test_a_rule_without_a_fix_has_no_edits(self):
         scope = fail_scope()
-        self.assertEqual(main._line_edits(scope, scope.checks[0]), ([], []))
+        self.assertEqual(render._line_edits(scope, scope.checks[0]), ([], []))
 
     def test_a_fix_with_nothing_to_compare_it_with_has_no_edits(self):
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Branch", checks=[make_check("branch", status="fail", fix="x")]
         )
-        self.assertEqual(main._line_edits(scope, scope.checks[0]), ([], []))
+        self.assertEqual(render._line_edits(scope, scope.checks[0]), ([], []))
 
     def test_recorded_edits_win_over_the_fix(self):
         """A description is too long to carry as a fix, so its line changes
@@ -560,7 +562,7 @@ class TestLineEdits(unittest.TestCase):
         scope = fail_scope("PR description")
         scope.edits["CC001"] = (["Generated with Claude Code"], [])
         self.assertEqual(
-            main._line_edits(scope, scope.checks[0]),
+            render._line_edits(scope, scope.checks[0]),
             (["Generated with Claude Code"], []),
         )
 
@@ -576,7 +578,7 @@ class TestLineEdits(unittest.TestCase):
         for edits, expected in cases:
             with self.subTest(expected=expected):
                 scope.edits["CC001"] = edits
-                self.assertEqual(main._instruction(scope, check), expected)
+                self.assertEqual(render._instruction(scope, check), expected)
 
     def test_advice_drops_what_only_the_rule_page_needs(self):
         cases = {
@@ -593,7 +595,7 @@ class TestLineEdits(unittest.TestCase):
         for suggest, expected in cases.items():
             with self.subTest(suggest=suggest):
                 check = make_check("message", status="fail", suggest=suggest)
-                self.assertEqual(main._advice(check), expected)
+                self.assertEqual(render._advice(check), expected)
 
     def test_advice_falls_back_to_the_error_without_its_link(self):
         check = make_check(
@@ -601,12 +603,12 @@ class TestLineEdits(unittest.TestCase):
             status="fail",
             error="Follow Conventional Commits. See https://www.conventionalcommits.org",
         )
-        self.assertEqual(main._advice(check), "Follow Conventional Commits.")
+        self.assertEqual(render._advice(check), "Follow Conventional Commits.")
 
 
 class TestDiffBlock(unittest.TestCase):
     def _hunks(self, results, status="fail"):
-        lines = main._diff_block(results, status)
+        lines = render._diff_block(results, status)
         return lines[1 : lines.index("```")]
 
     def test_a_fix_on_another_line_leaves_the_subject_as_context(self):
@@ -642,7 +644,7 @@ class TestDiffBlock(unittest.TestCase):
 
     def test_an_ai_author_leaves_the_subject_as_context(self):
         # CC017 is about who made the commit, not what its subject says.
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             sha=SHA_A,
             text="fix: handle the empty case\n",
@@ -666,7 +668,7 @@ class TestDiffBlock(unittest.TestCase):
 
     def test_an_ai_rules_value_never_stands_in_for_the_subject(self):
         # An empty message has no subject; the author CC017 reports is not one.
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="Commit 1/1",
             sha=SHA_A,
             checks=[
@@ -676,8 +678,8 @@ class TestDiffBlock(unittest.TestCase):
                 ),
             ],
         )
-        self.assertEqual(main._first_value(scope), "")
-        self.assertEqual(main._render_scopes([scope], False), ["  ✔ d87faca"])
+        self.assertEqual(render._first_value(scope), "")
+        self.assertEqual(render._render_scopes([scope], False), ["  ✔ d87faca"])
 
     def test_two_rules_that_ask_for_the_same_line_show_it_once(self):
         scope = ai_scope()
@@ -696,21 +698,21 @@ class TestDiffBlock(unittest.TestCase):
     def test_a_long_list_is_cut_and_the_rest_folded(self):
         results = [fail_scope(f"Commit {n}/8", sha=f"{n}" * 40) for n in range(1, 9)]
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/widgets"}):
-            lines = main._diff_block(results)
+            lines = render._diff_block(results)
         body = "\n".join(lines)
         shown, folded = body.split("<details>")
-        self.assertEqual(shown.count("@@ "), main.MAX_HUNKS)
+        self.assertEqual(shown.count("@@ "), render.MAX_HUNKS)
         self.assertIn("<summary>and 3 more</summary>\n\n```diff\n@@ 6666666 @@", folded)
         self.assertEqual(folded.count("@@ "), 3)
         # Only the commits in view are linked; the rule is named once.
         links = lines[-1]
-        self.assertEqual(links.count("/commit/"), main.MAX_HUNKS)
+        self.assertEqual(links.count("/commit/"), render.MAX_HUNKS)
         self.assertNotIn("6666666", links)
         self.assertEqual(links.count("[CC001]"), 1)
 
     def test_one_or_two_leftovers_are_not_worth_a_fold(self):
         results = [fail_scope(f"Commit {n}/7", sha=f"{n}" * 40) for n in range(1, 8)]
-        body = "\n".join(main._diff_block(results))
+        body = "\n".join(render._diff_block(results))
         self.assertEqual(body.count("@@ "), 7)
         self.assertNotIn("<details>", body)
 
@@ -723,10 +725,10 @@ class TestDiffBlock(unittest.TestCase):
 
 class TestHowToFix(unittest.TestCase):
     def _body(self, results):
-        return "\n".join(main._how_to_fix(results))
+        return "\n".join(render._how_to_fix(results))
 
     def test_nothing_failed_nothing_to_fix(self):
-        self.assertEqual(main._how_to_fix([pass_scope(), warn_scope()]), [])
+        self.assertEqual(render._how_to_fix([pass_scope(), warn_scope()]), [])
 
     def test_the_prompt_lists_every_failing_scope_with_its_instruction(self):
         results = [
@@ -810,17 +812,17 @@ class TestHowToFix(unittest.TestCase):
 
 class TestRenderPrComment(unittest.TestCase):
     def test_all_pass_matches_job_summary(self):
-        comment = main.render_pr_comment([pass_scope("Branch")])
-        summary = main.render_job_summary([pass_scope("Branch")])
+        comment = render.render_pr_comment([pass_scope("Branch")])
+        summary = render.render_job_summary([pass_scope("Branch")])
         self.assertEqual(comment, summary)
-        self.assertTrue(comment.startswith(main.COMMENT_MARKER))
+        self.assertTrue(comment.startswith(render.COMMENT_MARKER))
         self.assertIn("Commit Check passed\n", comment)
 
     def test_failure_matches_job_summary(self):
-        comment = main.render_pr_comment([fail_scope("Commit 1/1")])
-        summary = main.render_job_summary([fail_scope("Commit 1/1")])
+        comment = render.render_pr_comment([fail_scope("Commit 1/1")])
+        summary = render.render_job_summary([fail_scope("Commit 1/1")])
         self.assertEqual(comment, summary)
-        self.assertTrue(comment.startswith(main.COMMENT_MARKER))
+        self.assertTrue(comment.startswith(render.COMMENT_MARKER))
         self.assertIn("Commit Check failed\n", comment)
         self.assertIn("```diff\n@@ Commit 1/1 @@\n", comment)
 
@@ -837,12 +839,12 @@ class TestPrCommentSizeLimit(unittest.TestCase):
             "GITHUB_SERVER_URL": "https://github.com",
         }
 
-    def _failing_commits(self, count: int) -> list[main.ScopeResult]:
+    def _failing_commits(self, count: int) -> list[model.ScopeResult]:
         body = "\n".join(
             f"Line {i} of a body that explains the change." for i in range(8)
         )
         return [
-            main.ScopeResult(
+            model.ScopeResult(
                 label=f"Commit {i}/{count}",
                 sha=f"{i:040x}",
                 checks=[
@@ -862,20 +864,22 @@ class TestPrCommentSizeLimit(unittest.TestCase):
     def test_a_report_that_fits_is_the_job_summary(self):
         results = self._failing_commits(3)
         self.assertEqual(
-            main.render_pr_comment(results), main.render_job_summary(results)
+            render.render_pr_comment(results), render.render_job_summary(results)
         )
 
     def test_dozens_of_failing_commits_still_fit(self):
         results = self._failing_commits(60)
-        self.assertGreater(len(main.render_job_summary(results)), main.COMMENT_LIMIT)
+        self.assertGreater(
+            len(render.render_job_summary(results)), render.COMMENT_LIMIT
+        )
         with (
             patch.dict(os.environ, self.RUN),
-            patch("main.JOB_SUMMARY_ENABLED", True),
-            patch("main.GITHUB_STEP_SUMMARY", "/tmp/summary.md"),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", True),
+            patch("action.inputs.GITHUB_STEP_SUMMARY", "/tmp/summary.md"),
         ):
-            comment = main.render_pr_comment(results)
-        self.assertLessEqual(main._comment_length(comment), main.COMMENT_LIMIT)
-        self.assertTrue(comment.startswith(main.COMMENT_MARKER))
+            comment = render.render_pr_comment(results)
+        self.assertLessEqual(render._comment_length(comment), render.COMMENT_LIMIT)
+        self.assertTrue(comment.startswith(render.COMMENT_MARKER))
         self.assertIn("Commit Check failed", comment)
         self.assertNotIn("<summary>All 60 checks</summary>", comment)
         self.assertIn(
@@ -887,11 +891,11 @@ class TestPrCommentSizeLimit(unittest.TestCase):
         results = self._failing_commits(2)
         with (
             patch.dict(os.environ, self.RUN),
-            patch("main.JOB_SUMMARY_ENABLED", False),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", False),
         ):
-            short = main.render_report(results, "short")
-            with patch("main.COMMENT_LIMIT", len(short) - 1):
-                comment = main.render_pr_comment(results)
+            short = render.render_report(results, "short")
+            with patch("action.render.COMMENT_LIMIT", len(short) - 1):
+                comment = render.render_pr_comment(results)
         self.assertNotIn("```diff", comment)
         self.assertNotIn("How to fix</b>", comment)
         self.assertIn(
@@ -905,21 +909,21 @@ class TestPrCommentSizeLimit(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "GITHUB_RUN_ID"}
         with (
             patch.dict(os.environ, env, clear=True),
-            patch("main.JOB_SUMMARY_ENABLED", False),
+            patch("action.inputs.JOB_SUMMARY_ENABLED", False),
         ):
-            body = main.render_report([pass_scope("Branch")], "headline")
+            body = render.render_report([pass_scope("Branch")], "headline")
         self.assertIn("All checks are in the step log of this run.", body)
 
     def test_length_is_counted_as_github_counts_it(self):
-        self.assertEqual(main._comment_length("a🤖"), 3)
+        self.assertEqual(render._comment_length("a🤖"), 3)
 
 
 class TestUnparsableScopeInTheReport(unittest.TestCase):
     """A CLI response that is not JSON is a failure with no rule to link."""
 
     def test_the_diff_points_at_the_step_log(self):
-        scope = main.ScopeResult(label="Branch", raw_text="Error: cchk.toml: oops")
-        body = main.render_report([scope])
+        scope = model.ScopeResult(label="Branch", raw_text="Error: cchk.toml: oops")
+        body = render.render_report([scope])
         self.assertIn("Commit Check failed\n", body)
         self.assertIn(
             "```diff\n"
@@ -935,17 +939,17 @@ class TestUnparsableScopeInTheReport(unittest.TestCase):
         self.assertIn("  ✖ branch\n      Error: cchk.toml: oops\n", body)
 
     def test_it_never_reaches_the_warnings(self):
-        scope = main.ScopeResult(label="Branch", raw_text="garbage")
-        self.assertNotIn("**Warnings**", main.render_report([scope]))
-        self.assertEqual(main._diff_block([scope], "warn")[:2], ["```diff", "```"])
+        scope = model.ScopeResult(label="Branch", raw_text="garbage")
+        self.assertNotIn("**Warnings**", render.render_report([scope]))
+        self.assertEqual(render._diff_block([scope], "warn")[:2], ["```diff", "```"])
 
 
 class TestReportFooter(unittest.TestCase):
     def test_names_the_installed_commit_check(self):
         with patch("importlib.metadata.version", return_value="9.8.7") as version:
-            self.assertEqual(main._commit_check_version(), "9.8.7")
+            self.assertEqual(render._commit_check_version(), "9.8.7")
             self.assertEqual(
-                main._report_footer(),
+                render._report_footer(),
                 "<sub>Checked by [Commit Check](https://commit-check.com) 9.8.7 · "
                 "[Rules](https://commit-check.com/rules/) · "
                 f"[Check before you push]({HOOK_GUIDE})</sub>",
@@ -956,9 +960,9 @@ class TestReportFooter(unittest.TestCase):
         """The footer is decoration: an unknown version drops out of it."""
         missing = importlib.metadata.PackageNotFoundError("commit-check")
         with patch("importlib.metadata.version", side_effect=missing):
-            self.assertEqual(main._commit_check_version(), "")
+            self.assertEqual(render._commit_check_version(), "")
             self.assertEqual(
-                main._report_footer(),
+                render._report_footer(),
                 "<sub>Checked by [Commit Check](https://commit-check.com) · "
                 "[Rules](https://commit-check.com/rules/) · "
                 f"[Check before you push]({HOOK_GUIDE})</sub>",
@@ -978,7 +982,7 @@ class TestSkippedScopes(unittest.TestCase):
 
     def test_one_real_verdict_outranks_the_skips(self):
         """A scope only counts as skipped when nothing in it ran."""
-        mixed = main.ScopeResult(
+        mixed = model.ScopeResult(
             label="PR title",
             checks=[
                 make_check("message", status="skip", value=""),
@@ -991,10 +995,10 @@ class TestSkippedScopes(unittest.TestCase):
     def test_all_skipped_golden_output(self):
         """Pin the fully skipped report: no ✔, no pass claim."""
         results = [skip_scope("PR title"), skip_scope("Commit 1/1")]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertEqual(
             body,
-            f"{main.COMMENT_MARKER}\n"
+            f"{render.COMMENT_MARKER}\n"
             f"{heading('⊘', 'skipped', 'skipped')}\n"
             "\n"
             "Nothing was validated.\n"
@@ -1020,7 +1024,7 @@ class TestSkippedScopes(unittest.TestCase):
     def test_partial_skip_does_not_claim_all_passed(self):
         results = [pass_scope("Branch", value="main"), skip_scope("PR title")]
         results.append(pass_scope("PR description"))
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertIn("Commit Check passed\n", body)
         self.assertIn("> Branch: passed<br>", body)
         # Two scopes in the group, one of which ran: never "2 passed".
@@ -1028,14 +1032,14 @@ class TestSkippedScopes(unittest.TestCase):
 
     def test_failure_still_wins_over_skips(self):
         results = [fail_scope("Commit 1/1"), skip_scope("PR title")]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertIn("Commit Check failed\n", body)
         self.assertIn("> Commits: failed<br>", body)
         self.assertIn("> Pull request: skipped\n", body)
 
     def test_skipped_scope_reports_no_checked_value(self):
         """The ⊘ line carries no value, because nothing was examined."""
-        body = main.render_report([skip_scope("PR title")])
+        body = render.render_report([skip_scope("PR title")])
         self.assertIn("  ⊘ title        skipped\n", body)
 
     def test_skip_reason_is_shown_on_the_scope_and_under_the_verdict(self):
@@ -1047,7 +1051,7 @@ class TestSkippedScopes(unittest.TestCase):
             skip_scope("Commit 1/1", reason=commit),
             skip_scope("Branch", reason=branch),
         ]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertIn("Commit Check skipped\n\nNothing was validated.\n", body)
         self.assertIn(
             "> Branch: skipped\n\n"
@@ -1060,7 +1064,7 @@ class TestSkippedScopes(unittest.TestCase):
     def test_skip_reason_follows_a_partial_skip_verdict(self):
         reason = "author dependabot[bot] is in [branch].ignore_authors"
         results = [pass_scope("PR title"), skip_scope("Branch", reason=reason)]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertIn(
             "> Branch: skipped\n\n"
             "Skipped because author dependabot[bot] is in ignore_authors.\n",
@@ -1070,7 +1074,7 @@ class TestSkippedScopes(unittest.TestCase):
     def test_skip_reason_reaches_the_step_log(self):
         reason = "author dependabot[bot] is in [commit].ignore_authors"
         with patch("sys.stdout", new_callable=io.StringIO) as out:
-            main.render_step_log([skip_scope("PR title", reason=reason)])
+            render.render_step_log([skip_scope("PR title", reason=reason)])
         self.assertIn("::group::⊘ Pull request: skipped\n", out.getvalue())
         self.assertIn(
             f"  ⊘ title        skipped: {reason}\n", ANSI_CODES.sub("", out.getvalue())
@@ -1084,7 +1088,7 @@ class TestSkippedScopes(unittest.TestCase):
         reason = "author dependabot[bot] is in [branch].ignore_authors"
         results = [pass_scope("PR title"), skip_scope("Branch", reason=reason)]
         with patch("sys.stdout", new_callable=io.StringIO) as out:
-            main.render_step_log(results)
+            render.render_step_log(results)
         self.assertIn(
             "Skipped because author dependabot[bot] is in ignore_authors.",
             out.getvalue(),
@@ -1096,7 +1100,7 @@ class TestSkippedScopes(unittest.TestCase):
     def test_older_engine_without_skip_is_unaffected(self):
         """Back-compat: engines that only emit pass/fail render as before."""
         results = [pass_scope("Branch", value="main")]
-        self.assertIn("Commit Check passed\n", main.render_report(results))
+        self.assertIn("Commit Check passed\n", render.render_report(results))
 
 
 class TestWarnedScopes(unittest.TestCase):
@@ -1108,7 +1112,7 @@ class TestWarnedScopes(unittest.TestCase):
 
     def test_a_real_failure_outranks_a_warning_in_the_same_scope(self):
         """CC2xx groups both branch and merge_base; the two can disagree."""
-        mixed = main.ScopeResult(
+        mixed = model.ScopeResult(
             label="Branch",
             checks=[
                 make_check("branch", status="warn", rule_id="CC201"),
@@ -1123,7 +1127,7 @@ class TestWarnedScopes(unittest.TestCase):
         listing. Filtering any of those on ``scope.status == "warn"`` drops
         this scope's warning the moment its sibling rule fails.
         """
-        mixed = main.ScopeResult(
+        mixed = model.ScopeResult(
             label="Branch",
             checks=[
                 make_check(
@@ -1145,9 +1149,9 @@ class TestWarnedScopes(unittest.TestCase):
                 ),
             ],
         )
-        self.assertEqual(main._warn_count([mixed]), 1)
+        self.assertEqual(render._warn_count([mixed]), 1)
 
-        body = main.render_report([mixed])
+        body = render.render_report([mixed])
         self.assertIn("Commit Check failed\n", body)
         failed, warned = body.split("**Warnings**")
         self.assertIn(
@@ -1179,7 +1183,7 @@ class TestWarnedScopes(unittest.TestCase):
     def test_step_log_and_report_agree_on_a_mixed_scope(self):
         """The step log's ::warning annotation must not be the only surface
         that shows this scope's warning — the report has to as well."""
-        mixed = main.ScopeResult(
+        mixed = model.ScopeResult(
             label="Branch",
             checks=[
                 make_check("branch", status="warn", rule_id="CC201", error="e1"),
@@ -1188,17 +1192,17 @@ class TestWarnedScopes(unittest.TestCase):
         )
         buf = io.StringIO()
         with patch("sys.stdout", buf):
-            main.render_step_log([mixed])
+            render.render_step_log([mixed])
         step_log = buf.getvalue()
         self.assertIn("::warning title=CC201 branch::", step_log)
         self.assertIn("::error title=CC202 merge-base::", step_log)
 
-        body = main.render_report([mixed])
+        body = render.render_report([mixed])
         self.assertIn("CC201 branch", body)
         self.assertIn("CC202 merge-base", body)
 
     def test_a_warning_outranks_a_skip_in_the_same_scope(self):
-        mixed = main.ScopeResult(
+        mixed = model.ScopeResult(
             label="Author",
             checks=[
                 make_check("author_name", status="skip"),
@@ -1208,7 +1212,7 @@ class TestWarnedScopes(unittest.TestCase):
         self.assertEqual(mixed.status, "warn")
 
     def test_warnings_property_lists_only_the_warned_checks(self):
-        mixed = main.ScopeResult(
+        mixed = model.ScopeResult(
             label="Branch",
             checks=[
                 make_check("branch", status="warn", rule_id="CC201"),
@@ -1220,25 +1224,25 @@ class TestWarnedScopes(unittest.TestCase):
     def test_overall_status_is_warn_but_the_exit_code_is_still_zero(self):
         """``warn`` is for downstream steps; it must never fail the job."""
         results = [pass_scope("PR title"), warn_scope()]
-        self.assertEqual(main.overall_status(results), "warn")
-        self.assertEqual(main.exit_code_for(results), 0)
+        self.assertEqual(model.overall_status(results), "warn")
+        self.assertEqual(model.exit_code_for(results), 0)
 
     def test_a_warning_outranks_a_skip_but_not_an_all_skipped_run(self):
-        self.assertEqual(main.overall_status([warn_scope(), skip_scope()]), "warn")
-        self.assertEqual(main.overall_status([skip_scope()]), "skip")
+        self.assertEqual(model.overall_status([warn_scope(), skip_scope()]), "warn")
+        self.assertEqual(model.overall_status([skip_scope()]), "skip")
 
     def test_result_output_reports_warn(self):
         output_path = os.path.join(tempfile.mkdtemp(), "output.txt")
         with patch.dict(os.environ, {"GITHUB_OUTPUT": output_path}):
-            main.set_result_output([pass_scope("PR title"), warn_scope()])
+            publish.set_result_output([pass_scope("PR title"), warn_scope()])
         payload = json.loads(read_github_output(output_path)["result"])
         self.assertEqual(payload["status"], "warn")
         self.assertEqual([s["status"] for s in payload["scopes"]], ["pass", "warn"])
 
     def test_a_real_failure_still_fails_the_run_alongside_a_warning(self):
         results = [fail_scope("Commit 1/1"), warn_scope()]
-        self.assertEqual(main.overall_status(results), "fail")
-        self.assertEqual(main.exit_code_for(results), 1)
+        self.assertEqual(model.overall_status(results), "fail")
+        self.assertEqual(model.exit_code_for(results), 1)
 
     @pin_version
     def test_warning_only_golden_output(self):
@@ -1247,10 +1251,10 @@ class TestWarnedScopes(unittest.TestCase):
             pass_scope("PR title", value="feat: add login page"),
             warn_scope("Branch"),
         ]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertEqual(
             body,
-            f"{main.COMMENT_MARKER}\n"
+            f"{render.COMMENT_MARKER}\n"
             f"{heading('⚠', 'warned', 'passed with warnings')}\n"
             "\n"
             f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
@@ -1287,7 +1291,7 @@ class TestWarnedScopes(unittest.TestCase):
 
     def test_warning_and_skip_each_get_their_own_group_line(self):
         results = [pass_scope("PR title"), warn_scope(), skip_scope("Author name")]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertIn("Commit Check passed with warnings\n", body)
         self.assertIn(
             f"{group_line('✔', 'passed', 'Pull request: passed')}<br>"
@@ -1298,7 +1302,7 @@ class TestWarnedScopes(unittest.TestCase):
 
     def test_a_failure_still_fails_and_names_the_warning_too(self):
         results = [fail_scope("Commit 1/1"), warn_scope()]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertIn("Commit Check failed\n", body)
         self.assertEqual(body.count("```diff\n"), 2)
         # The failures come first, the warnings under their own heading, and
@@ -1311,7 +1315,7 @@ class TestWarnedScopes(unittest.TestCase):
     def test_step_log_prints_a_warning_annotation_not_an_error(self):
         buf = io.StringIO()
         with patch("sys.stdout", buf):
-            main.render_step_log([warn_scope()])
+            render.render_step_log([warn_scope()])
         out = buf.getvalue()
         self.assertIn(
             '::warning title=CC201 branch::Branch "jsmith/fix-x": '
@@ -1326,7 +1330,7 @@ class TestWarnedScopes(unittest.TestCase):
     def test_step_log_friendly_line_mentions_the_warning(self):
         buf = io.StringIO()
         with patch("sys.stdout", buf):
-            main.render_step_log([pass_scope("PR title"), warn_scope()])
+            render.render_step_log([pass_scope("PR title"), warn_scope()])
         out = buf.getvalue()
         self.assertIn("1 of 2 checks passed, 1 warning", out)
         self.assertNotIn("all checks passed", out)
@@ -1342,8 +1346,8 @@ class TestMarkdownEscaping(unittest.TestCase):
     so the CC001 outcome is flipped to make it a finding).
     """
 
-    def _scope(self, value: str) -> main.ScopeResult:
-        return main.ScopeResult(
+    def _scope(self, value: str) -> model.ScopeResult:
+        return model.ScopeResult(
             label="Commit 1/1",
             sha=SHA_B,
             checks=[
@@ -1360,13 +1364,13 @@ class TestMarkdownEscaping(unittest.TestCase):
         )
 
     def test_diff_fence_outgrows_a_triple_backtick_in_the_subject(self):
-        diff = main._diff_block([self._scope("docs: show ``` usage")])
+        diff = render._diff_block([self._scope("docs: show ``` usage")])
         self.assertEqual(diff[0], "````diff")
         self.assertEqual(diff[2], "- docs: show ``` usage")
         self.assertEqual(diff[4], "````")
 
     def test_prompt_fence_outgrows_a_triple_backtick_in_the_subject(self):
-        how = main._how_to_fix([self._scope("docs: show ``` usage")])
+        how = render._how_to_fix([self._scope("docs: show ``` usage")])
         self.assertIn("````text", how)
         self.assertEqual(how.count("````"), 1)
         # The commands quote nothing of the user's, so their fence stays.
@@ -1375,7 +1379,7 @@ class TestMarkdownEscaping(unittest.TestCase):
     def test_a_subject_with_a_pipe_or_backticks_is_shown_as_it_is(self):
         """Every place a value lands is a code block, so nothing is escaped."""
         subject = "fix: handle `None` | retry"
-        body = main.render_report([self._scope(subject)])
+        body = render.render_report([self._scope(subject)])
         self.assertIn(f"- {subject}\n", body)
         self.assertIn(f"  ✖ 5584f46      {subject}\n", body)
 
@@ -1383,21 +1387,21 @@ class TestMarkdownEscaping(unittest.TestCase):
         """The cap can cut inside a backtick run."""
         value = "fix: `" + "x " * 60 + "`"
         scope = pass_scope("Commit 1/1", value=value)
-        capped = main._scope_value(scope)
+        capped = render._scope_value(scope)
         self.assertTrue(capped.endswith("x…"), capped)  # cut mid-span
-        listing = main._all_checks([scope])
+        listing = render._all_checks([scope])
         self.assertEqual(listing[3], "```text")
         self.assertEqual(listing[-3], "```")
 
     def test_details_fence_outgrows_a_triple_backtick_in_the_value(self):
-        details = "\n".join(main._all_checks([self._scope("docs: show ``` usage")]))
+        details = "\n".join(render._all_checks([self._scope("docs: show ``` usage")]))
         lines = details.splitlines()
         self.assertEqual(lines[3], "````text")
         self.assertEqual(lines[-3], "````")
         self.assertIn("value: docs: show ``` usage", details)
 
     def test_details_fence_stays_three_backticks_for_ordinary_values(self):
-        lines = main._all_checks([pass_scope(value="feat: add `login`")])
+        lines = render._all_checks([pass_scope(value="feat: add `login`")])
         self.assertEqual(lines[3], "```text")
         self.assertEqual(lines[-3], "```")
 
@@ -1406,7 +1410,7 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
     def test_the_diff_omits_skipped_scopes(self):
         """A skipped scope has no failed checks, so it must not get a hunk:
         a blank accusation among what failed otherwise."""
-        diff = main._diff_block([fail_scope("Commit 1/1"), skip_scope("PR title")])
+        diff = render._diff_block([fail_scope("Commit 1/1"), skip_scope("PR title")])
         self.assertEqual(
             diff[:5],
             [
@@ -1420,7 +1424,7 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
 
     def test_empty_result_set_is_not_reported_as_all_skipped(self):
         """`skipped == total` is trivially true for no scopes at all."""
-        body = main.render_report([])
+        body = render.render_report([])
         self.assertNotIn("skipped", body)
         self.assertIn("Commit Check passed\n\n<details>\n", body)
         self.assertIn("<summary>Details</summary>", body)
@@ -1428,7 +1432,7 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
     def test_step_log_partial_skip_does_not_claim_all_passed(self):
         buf = io.StringIO()
         with patch("sys.stdout", buf):
-            main.render_step_log([pass_scope(), skip_scope()])
+            render.render_step_log([pass_scope(), skip_scope()])
         out = buf.getvalue()
         self.assertIn("1 of 2 checks passed, 1 skipped", out)
         self.assertNotIn("all checks passed", out)
@@ -1436,7 +1440,7 @@ class TestSkipRenderingEdgeCases(unittest.TestCase):
     def test_step_log_all_skipped_claims_no_pass(self):
         buf = io.StringIO()
         with patch("sys.stdout", buf):
-            main.render_step_log([skip_scope(), skip_scope("Branch")])
+            render.render_step_log([skip_scope(), skip_scope("Branch")])
         out = buf.getvalue()
         self.assertIn("  \x1b[90m⊘\x1b[0m title        skipped\n", out)
         self.assertTrue(
@@ -1452,20 +1456,20 @@ class TestFilesInTheReport(unittest.TestCase):
 
     def test_the_first_finding_stands_for_the_scope(self):
         scope = files_scope(SHA_B, files_pass("3 file(s)"), *files_scope().checks)
-        self.assertEqual(main._first_value(scope), "big.bin (4 KB)")
+        self.assertEqual(render._first_value(scope), "big.bin (4 KB)")
         self.assertEqual(
-            main._first_value(files_scope(SHA_A, files_pass())), "2 file(s)"
+            render._first_value(files_scope(SHA_A, files_pass())), "2 file(s)"
         )
         warned = files_scope(
             SHA_A, files_pass("3 file(s)"), files_pass("a.pem (pattern *.pem)", "warn")
         )
-        self.assertEqual(main._first_value(warned), "a.pem (pattern *.pem)")
-        self.assertEqual(main._first_value(main.skipped_files_scope("why")), "")
+        self.assertEqual(render._first_value(warned), "a.pem (pattern *.pem)")
+        self.assertEqual(render._first_value(cli.skipped_files_scope("why")), "")
 
     def test_the_listing_names_each_commit_by_its_hash(self):
         results = [files_scope(SHA_A, files_pass()), files_scope()]
         self.assertEqual(
-            main._render_tree(results, include_docs=False),
+            render._render_tree(results, include_docs=False),
             [
                 "Files",
                 "  ✔ d87faca      2 file(s)",
@@ -1484,13 +1488,13 @@ class TestFilesInTheReport(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            main._render_tree([main.skipped_files_scope("why")], include_docs=False),
+            render._render_tree([cli.skipped_files_scope("why")], include_docs=False),
             ["Files", "  ⊘ files        skipped: why"],
         )
 
     def test_the_diff_shows_each_path_with_its_advice(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r"}):
-            lines = main._diff_block(
+            lines = render._diff_block(
                 [fail_scope("Commit 1/1", sha=SHA_B), files_scope()]
             )
         self.assertEqual(
@@ -1520,7 +1524,7 @@ class TestFilesInTheReport(unittest.TestCase):
     def test_a_warned_finding_goes_in_the_warning_diff(self):
         warned = files_scope(SHA_A, files_pass("a.pem (pattern *.pem)", "warn"))
         warned.checks[0]["suggest"] = "Remove the file from the commit"
-        lines = main._diff_block([warned], "warn")
+        lines = render._diff_block([warned], "warn")
         self.assertEqual(
             lines[1:4],
             [
@@ -1533,23 +1537,23 @@ class TestFilesInTheReport(unittest.TestCase):
     def test_a_finding_that_names_nothing_still_gives_its_advice(self):
         scope = files_scope(SHA_A, make_check("file_size", "fail", "CC302"))
         self.assertEqual(
-            main._hunk(scope, "fail"), ["@@ d87faca files @@", "# check failed"]
+            render._hunk(scope, "fail"), ["@@ d87faca files @@", "# check failed"]
         )
 
     def test_without_a_commit_the_scope_goes_by_its_label(self):
         scope = files_scope("")
-        self.assertEqual(main._hunk(scope, "fail")[0], "@@ Files @@")
+        self.assertEqual(render._hunk(scope, "fail")[0], "@@ Files @@")
         self.assertEqual(
-            main._agent_prompt([scope])[1],
+            render._agent_prompt([scope])[1],
             '- Files "big.bin (4 KB)": Keep files under 1 KB, or raise max_size '
             "in the [files] config",
         )
-        self.assertEqual(main._row_label(scope), "files")
+        self.assertEqual(render._row_label(scope), "files")
 
     def test_unparsable_output_points_to_the_step_log(self):
-        scope = main.ScopeResult(label="Files", sha=SHA_A, raw_text="Traceback ...")
+        scope = model.ScopeResult(label="Files", sha=SHA_A, raw_text="Traceback ...")
         self.assertEqual(
-            main._hunk(scope, "fail"),
+            render._hunk(scope, "fail"),
             [
                 "@@ d87faca files @@",
                 "# the output could not be parsed, see the step log",
@@ -1557,7 +1561,7 @@ class TestFilesInTheReport(unittest.TestCase):
         )
 
     def test_how_to_fix_gives_each_finding_a_line_and_no_reword_commands(self):
-        how = "\n".join(main._how_to_fix([files_scope()]))
+        how = "\n".join(render._how_to_fix([files_scope()]))
         self.assertIn(
             '- Files of commit 5584f46 "big.bin (4 KB)": Keep files under 1 KB, '
             "or raise max_size in the [files] config\n"
@@ -1565,23 +1569,25 @@ class TestFilesInTheReport(unittest.TestCase):
             "from the commit",
             how,
         )
-        self.assertIn(main.FILES_HELP, how)
+        self.assertIn(render.FILES_HELP, how)
         self.assertNotIn("Reword", how)
-        self.assertNotIn(main.FILES_HELP, "\n".join(main._how_to_fix([fail_scope()])))
+        self.assertNotIn(
+            render.FILES_HELP, "\n".join(render._how_to_fix([fail_scope()]))
+        )
 
     def test_the_prompt_lets_the_named_files_change(self):
         """Taking a file out of a commit cannot be done "without changing any code"."""
-        self.assertEqual(main._agent_prompt([fail_scope()])[0], AGENT_PROMPT)
+        self.assertEqual(render._agent_prompt([fail_scope()])[0], AGENT_PROMPT)
         for failing in ([files_scope()], [fail_scope(), files_scope()]):
             self.assertEqual(
-                main._agent_prompt(failing)[0],
+                render._agent_prompt(failing)[0],
                 "Fix these Commit Check findings, changing only the files they name:",
             )
 
     def test_each_finding_is_an_annotation_about_its_own_path(self):
         out = io.StringIO()
-        with patch("sys.stdout", out), patch("main.DRY_RUN_ENABLED", False):
-            main.render_step_log([files_scope()])
+        with patch("sys.stdout", out), patch("action.inputs.DRY_RUN_ENABLED", False):
+            render.render_step_log([files_scope()])
         log = ANSI_CODES.sub("", out.getvalue())
         self.assertIn("::group::✖ Files: failed", log)
         self.assertIn(
@@ -1601,7 +1607,7 @@ class TestFilesInTheReport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "output")
             with patch.dict(os.environ, {"GITHUB_OUTPUT": path}):
-                main.set_result_output([files_scope()])
+                publish.set_result_output([files_scope()])
             with open(path, encoding="utf-8") as f:
                 payload = json.loads(f.read().split("\n", 1)[1].rsplit("\n", 2)[0])
         self.assertEqual(
@@ -1615,13 +1621,13 @@ class TestListingRows(unittest.TestCase):
 
     REASON = "author pre-commit-ci[bot] is in [commit].ignore_authors"
 
-    def _skipped_commit(self, reason: str = REASON) -> main.ScopeResult:
+    def _skipped_commit(self, reason: str = REASON) -> model.ScopeResult:
         scope = skip_scope("Commit 2/2", reason=reason)
         scope.sha = SHA_B
         scope.text = "chore: auto fixes from pre-commit.com hooks\n"
         return scope
 
-    def _skipped_author(self, label: str, subject: str) -> main.ScopeResult:
+    def _skipped_author(self, label: str, subject: str) -> model.ScopeResult:
         scope = skip_scope(label, reason=self.REASON)
         scope.sha = SHA_B
         scope.subject = subject
@@ -1634,7 +1640,7 @@ class TestListingRows(unittest.TestCase):
             self._skipped_author("Author name", "pre-commit-ci[bot]"),
             self._skipped_author("Author email", "bot@users.noreply.github.com"),
         ]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertEqual(body.count("ignore_authors"), 1, body)
         self.assertIn(
             "Skipped because author pre-commit-ci[bot] is in ignore_authors.", body
@@ -1646,7 +1652,7 @@ class TestListingRows(unittest.TestCase):
         self.assertIn("  ⊘ name         pre-commit-ci[bot]\n", body)
         self.assertIn("  ⊘ email        bot@users.noreply.github.com\n", body)
         with patch("sys.stdout", new_callable=io.StringIO) as out:
-            main.render_step_log(results)
+            render.render_step_log(results)
         self.assertIn(
             "  ⊘ name         pre-commit-ci[bot]\n", ANSI_CODES.sub("", out.getvalue())
         )
@@ -1654,49 +1660,51 @@ class TestListingRows(unittest.TestCase):
     def test_rows_keep_their_reason_when_the_reasons_differ(self):
         other = "author dependabot[bot] is in [commit].ignore_authors"
         results = [self._skipped_commit(), self._skipped_commit(other)]
-        body = main.render_report(results)
+        body = render.render_report(results)
         self.assertIn(f"skipped: {self.REASON}\n", body)
         self.assertIn(f"skipped: {other}\n", body)
 
     def test_a_skip_nobody_explained_still_says_skipped(self):
         scope = self._skipped_commit(reason="")
-        self.assertFalse(main._one_skip_reason([scope]))
-        self.assertIn("  ⊘ ", main.render_report([scope]))
-        self.assertIn("skipped\n", main.render_report([scope]))
+        self.assertFalse(render._one_skip_reason([scope]))
+        self.assertIn("  ⊘ ", render.render_report([scope]))
+        self.assertIn("skipped\n", render.render_report([scope]))
 
     def test_a_long_subject_is_cut_at_a_word(self):
         subject = (
             "feat: add a config-source input that reads the config from the base branch"
         )
         scope = pass_scope("Commit 1/1", value=subject)
-        self.assertEqual(main._scope_value(scope), subject)  # 75 characters fit
+        self.assertEqual(render._scope_value(scope), subject)  # 75 characters fit
         scope = pass_scope("Commit 1/1", value=subject + " for every run")
         self.assertEqual(
-            main._scope_value(scope),
+            render._scope_value(scope),
             "feat: add a config-source input that reads the config from the base "
             "branch for…",
         )
 
     def test_a_passing_description_says_what_was_found(self):
-        scope = main.ScopeResult(
+        scope = model.ScopeResult(
             label="PR description", checks=[make_check("ai_attribution", value="")]
         )
-        self.assertEqual(main._scope_value(scope), "no AI attribution")
+        self.assertEqual(render._scope_value(scope), "no AI attribution")
         scope.ai_tools = ["Claude Code"]
-        self.assertEqual(main._scope_value(scope), "AI attribution: Claude Code")
+        self.assertEqual(render._scope_value(scope), "AI attribution: Claude Code")
 
     def test_each_author_scope_carries_the_author_it_checked(self):
         with (
-            patch("main._local_author", return_value=("Dev", "dev@example.org")),
-            patch("main._rev_resolves", return_value=True),
             patch(
-                "main.check_scope",
-                side_effect=lambda label, args, sha: main.ScopeResult(
+                "action.context._local_author", return_value=("Dev", "dev@example.org")
+            ),
+            patch("action.context._rev_resolves", return_value=True),
+            patch(
+                "action.cli.check_scope",
+                side_effect=lambda label, args, sha: model.ScopeResult(
                     label=label, sha=sha
                 ),
             ),
         ):
-            results = main.run_pr_author_checks(
+            results = cli.run_pr_author_checks(
                 ["--author-name", "--author-email"], [("a1", "feat: one")]
             )
         self.assertEqual(

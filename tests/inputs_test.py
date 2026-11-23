@@ -3,25 +3,25 @@
 import io
 import os
 import re
-import sys
 import unittest
 from unittest.mock import patch
 
 import main
+from action import cli, inputs
 
 
 class TestEnvFlag(unittest.TestCase):
     def test_true_value(self):
         with patch.dict(os.environ, {"FEATURE_FLAG": "true"}):
-            self.assertTrue(main.env_flag("FEATURE_FLAG"))
+            self.assertTrue(inputs.env_flag("FEATURE_FLAG"))
 
     def test_false_value(self):
         with patch.dict(os.environ, {"FEATURE_FLAG": "false"}):
-            self.assertFalse(main.env_flag("FEATURE_FLAG"))
+            self.assertFalse(inputs.env_flag("FEATURE_FLAG"))
 
     def test_missing_uses_default(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertTrue(main.env_flag("FEATURE_FLAG", default="true"))
+            self.assertTrue(inputs.env_flag("FEATURE_FLAG", default="true"))
 
 
 class TestLogEnvVars(unittest.TestCase):
@@ -36,7 +36,7 @@ class TestLogEnvVars(unittest.TestCase):
             ),
             patch("sys.stdout", buffer),
         ):
-            main.log_env_vars()
+            inputs.log_env_vars()
         self.assertEqual(
             buffer.getvalue().splitlines(),
             [
@@ -57,90 +57,38 @@ class TestLogEnvVars(unittest.TestCase):
         )
 
 
-class TestReconfigureIo(unittest.TestCase):
-    def test_reconfigures_streams_to_utf8(self):
-        class FakeStream:
-            def __init__(self):
-                self.reconfigured = None
-
-            def reconfigure(self, **kwargs):
-                self.reconfigured = kwargs
-
-        fake_out = FakeStream()
-        fake_err = FakeStream()
-        with (
-            patch.object(sys, "stdout", fake_out),
-            patch.object(sys, "stderr", fake_err),
-        ):
-            main._reconfigure_io()
-        self.assertEqual(
-            fake_out.reconfigured, {"encoding": "utf-8", "errors": "replace"}
-        )
-        self.assertEqual(
-            fake_err.reconfigured, {"encoding": "utf-8", "errors": "replace"}
-        )
-
-    def test_streams_without_reconfigure_are_ignored(self):
-        class NoopStream:
-            pass
-
-        with (
-            patch.object(sys, "stdout", NoopStream()),
-            patch.object(sys, "stderr", NoopStream()),
-        ):
-            main._reconfigure_io()  # should not raise
-
-
 class TestBuildCheckArgs(unittest.TestCase):
     def test_all_true(self):
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", True),
-            patch("main.AUTHOR_EMAIL_ENABLED", True),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", True),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", True),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", True),
         ):
-            result = main.build_check_args()
+            result = cli.build_check_args()
         self.assertEqual(
             result, ["--message", "--branch", "--author-name", "--author-email"]
         )
 
     def test_all_false(self):
         with (
-            patch("main.MESSAGE_ENABLED", False),
-            patch("main.BRANCH_ENABLED", False),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.inputs.MESSAGE_ENABLED", False),
+            patch("action.inputs.BRANCH_ENABLED", False),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
         ):
-            result = main.build_check_args()
+            result = cli.build_check_args()
         self.assertEqual(result, [])
 
     def test_message_and_branch(self):
         with (
-            patch("main.MESSAGE_ENABLED", True),
-            patch("main.BRANCH_ENABLED", True),
-            patch("main.AUTHOR_NAME_ENABLED", False),
-            patch("main.AUTHOR_EMAIL_ENABLED", False),
+            patch("action.inputs.MESSAGE_ENABLED", True),
+            patch("action.inputs.BRANCH_ENABLED", True),
+            patch("action.inputs.AUTHOR_NAME_ENABLED", False),
+            patch("action.inputs.AUTHOR_EMAIL_ENABLED", False),
         ):
-            result = main.build_check_args()
+            result = cli.build_check_args()
         self.assertEqual(result, ["--message", "--branch"])
-
-
-class TestLogErrorAndExit(unittest.TestCase):
-    def test_exits_with_specified_code(self):
-        with self.assertRaises(SystemExit) as ctx:
-            main.log_error_and_exit(0)
-        self.assertEqual(ctx.exception.code, 0)
-
-    def test_failure_exits_without_a_second_annotation(self):
-        """The findings are already one ::error each; a summary ::error on
-        top made GitHub count one more error than there were findings."""
-        with (
-            patch("builtins.print") as mock_print,
-            self.assertRaises(SystemExit) as ctx,
-        ):
-            main.log_error_and_exit(1)
-        self.assertEqual(ctx.exception.code, 1)
-        mock_print.assert_not_called()
 
 
 class TestAiLabelName(unittest.TestCase):
@@ -157,19 +105,19 @@ class TestAiLabelName(unittest.TestCase):
         }
         for value, expected in cases.items():
             with self.subTest(value=value), patch.dict(os.environ, {"AI_LABEL": value}):
-                self.assertEqual(main.ai_label_name(), expected)
+                self.assertEqual(inputs.ai_label_name(), expected)
 
     def test_unset_is_off(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertIsNone(main.ai_label_name())
+            self.assertIsNone(inputs.ai_label_name())
 
 
 class TestBooleanInputs(unittest.TestCase):
     """A boolean input is true or false; anything else fails the step."""
 
     def setUp(self):
-        main.INVALID_FLAGS.clear()
-        self.addCleanup(main.INVALID_FLAGS.clear)
+        inputs.INVALID_FLAGS.clear()
+        self.addCleanup(inputs.INVALID_FLAGS.clear)
 
     def test_true_and_false_in_any_case_and_padding(self):
         for value, expected in (
@@ -179,20 +127,20 @@ class TestBooleanInputs(unittest.TestCase):
             ("false", False),
         ):
             with patch.dict(os.environ, {"MESSAGE": value}):
-                self.assertIs(main.env_flag("MESSAGE"), expected, value)
-        self.assertEqual(main.INVALID_FLAGS, [])
+                self.assertIs(inputs.env_flag("MESSAGE"), expected, value)
+        self.assertEqual(inputs.INVALID_FLAGS, [])
 
     def test_unset_input_takes_the_default(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertFalse(main.env_flag("MESSAGE"))
-        self.assertEqual(main.INVALID_FLAGS, [])
+            self.assertFalse(inputs.env_flag("MESSAGE"))
+        self.assertEqual(inputs.INVALID_FLAGS, [])
 
     def test_other_values_are_recorded(self):
         for value in ("yes", "on", "1", "maybe"):
             with patch.dict(os.environ, {"MESSAGE": value}):
-                self.assertFalse(main.env_flag("MESSAGE"))
+                self.assertFalse(inputs.env_flag("MESSAGE"))
         self.assertEqual(
-            main.INVALID_FLAGS,
+            inputs.INVALID_FLAGS,
             [
                 ("MESSAGE", "yes"),
                 ("MESSAGE", "on"),
@@ -202,11 +150,11 @@ class TestBooleanInputs(unittest.TestCase):
         )
 
     def test_invalid_input_fails_before_any_check(self):
-        main.INVALID_FLAGS.append(("PR_TITLE", "yes"))
+        inputs.INVALID_FLAGS.append(("PR_TITLE", "yes"))
         out = io.StringIO()
         with (
             patch("sys.stdout", out),
-            patch("main.run_commit_check") as run,
+            patch("action.cli.run_commit_check") as run,
             self.assertRaises(SystemExit) as cm,
         ):
             main.main()
