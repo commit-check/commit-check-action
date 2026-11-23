@@ -14,6 +14,7 @@ and exposes the check data as JSON in the ``result`` action output.
 
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -21,6 +22,8 @@ import tempfile
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+import tomllib
 
 COMMIT_MESSAGE_DELIMITER = "\x00"
 RULES_URL = "https://commit-check.com/rules/"
@@ -90,6 +93,24 @@ PR_COMMENTS_ENABLED = env_flag("PR_COMMENTS")
 PR_TITLE_ENABLED = env_flag("PR_TITLE")
 PR_BODY_AI_ATTRIBUTION_ENABLED = env_flag("PR_BODY_AI_ATTRIBUTION")
 MESSAGE_AI_ATTRIBUTION_ENABLED = env_flag("MESSAGE_AI_ATTRIBUTION")
+
+#: Where the checks read the config: ``head``, the files the workflow
+#: checked out, or ``base``, the pull request's base branch, so that a pull
+#: request cannot loosen the rules it is checked against.
+CONFIG_SOURCES = ("head", "base")
+CONFIG_SOURCE = os.getenv("CONFIG_SOURCE", "head").strip().lower() or "head"
+
+#: The config files commit-check looks for, in its order.
+CONFIG_PATHS = (
+    "cchk.toml",
+    "commit-check.toml",
+    ".github/cchk.toml",
+    ".github/commit-check.toml",
+)
+
+#: Passed to every commit-check run: ``--config`` and the base branch's
+#: config, when ``config-source`` is ``base``; empty otherwise.
+CONFIG_ARGS: list[str] = []
 
 
 #: The AI attribution rules: what ``message-ai-attribution: true`` keeps.
@@ -275,6 +296,7 @@ def log_env_vars():
     ):
         value = os.getenv(name, "false")
         print(f"::debug::{name}={value}")
+    print(f"::debug::CONFIG_SOURCE={CONFIG_SOURCE}")
 
 
 def is_pr_event() -> bool:
@@ -392,6 +414,165 @@ def _fetch_commit(sha: str) -> bool:
     except OSError:
         return False
     return result.returncode == 0 and _rev_resolves(sha)
+
+
+def _base_blob(sha: str, path: str) -> bytes | None:
+    """The file at ``path`` in commit ``sha``, or ``None`` when it has none."""
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "blob", f"{sha}:{path}"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _checked_out_config() -> tuple[str, bytes] | None:
+    """The config file the checkout holds, as (path, contents), or ``None``."""
+    for path in CONFIG_PATHS:
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                return path, f.read()
+    return None
+
+
+def _local_parent(data: bytes) -> str | None:
+    """A config's ``inherit_from`` when it names a file by relative path.
+
+    A ``github:`` or HTTPS parent is fetched from where it names, whichever
+    branch the config came from, and an absolute path is outside the
+    checkout; only a relative path could be read from the pull request.
+    """
+    try:
+        parent = tomllib.loads(data.decode("utf-8")).get("inherit_from")
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None  # commit-check reports the broken file itself
+    if not isinstance(parent, str) or not parent:
+        return None
+    if parent.startswith(("github:", "https://", "http://")):
+        return None
+    if posixpath.isabs(parent) or os.path.isabs(parent):
+        return None
+    return parent
+
+
+def _outside(path: str) -> bool:
+    """Whether a normalised repository path climbs out of the repository."""
+    return path == ".." or path.startswith("../")
+
+
+def _config_error(text: str) -> bool:
+    print(f"::error title=commit-check::{_annotation_escape(text)}")
+    return False
+
+
+def use_base_config() -> bool:
+    """With ``config-source: base``, point every check at the base config.
+
+    The base branch's config file is written under ``RUNNER_TEMP`` at its
+    path in the repository, and ``CONFIG_ARGS`` names it. A parent it names
+    by relative path (``inherit_from``) is copied from the base branch too,
+    next to it, where commit-check looks first; otherwise commit-check would
+    go on to find the pull request's copy. Without a config on the base
+    branch the checks run on the defaults.
+
+    Fails closed: if the base branch cannot be read, the step fails rather
+    than check against a config the pull request may have changed.
+
+    Returns whether the checks can run.
+    """
+    if CONFIG_SOURCE != "base":
+        return True
+    if not is_pr_event():
+        print(
+            "::notice title=commit-check::config-source: base applies to pull "
+            "requests; this run reads the checked-out config"
+        )
+        return True
+    sha = get_pr_base_sha()
+    if not sha or not (_rev_resolves(sha) or _fetch_commit(sha)):
+        return _config_error(
+            "config-source is base, but the base branch commit could not be "
+            f"read ({checkout_hint()}); nothing was checked, so that a config "
+            "the pull request changes cannot apply"
+        )
+
+    found = next(
+        (
+            (path, data)
+            for path in CONFIG_PATHS
+            if (data := _base_blob(sha, path)) is not None
+        ),
+        None,
+    )
+    path, data = found or ("cchk.toml", b"")
+    work = tempfile.mkdtemp(prefix="commit-check-config-", dir=os.getenv("RUNNER_TEMP"))
+    target = os.path.join(work, *path.split("/"))
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "wb") as f:
+        f.write(data)
+
+    parent = _local_parent(data)
+    if parent is not None:
+        config_dir = posixpath.dirname(path)
+        # commit-check looks next to the config first, then from the top of
+        # the repository; the copy goes where it looks first.
+        beside = posixpath.normpath(posixpath.join(config_dir, parent))
+        if _outside(beside):
+            return _config_error(
+                f"config-source is base, but the base branch config {path} "
+                f'inherits from "{parent}", outside the repository; nothing '
+                "was checked"
+            )
+        top = posixpath.normpath(parent)
+        candidates = [beside] + ([] if _outside(top) else [top])
+        parent_data = next(
+            (
+                blob
+                for candidate in candidates
+                if (blob := _base_blob(sha, candidate)) is not None
+            ),
+            None,
+        )
+        if parent_data is None:
+            # As on the base branch itself, a parent that is missing leaves
+            # the config in force; the empty copy keeps the pull request's
+            # file, if it adds one, from being read in its place.
+            print(
+                "::notice title=commit-check::"
+                + _annotation_escape(
+                    f'inherit_from "{parent}" in {path} is not on the base '
+                    "branch; checking with that config alone"
+                )
+            )
+            parent_data = b""
+        dest = os.path.join(work, *beside.split("/"))
+        # A parent that names a directory ("." or the config's own folder)
+        # is no file: commit-check says so and keeps the config, as it would
+        # on the base branch.
+        if not os.path.isdir(dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(parent_data)
+
+    CONFIG_ARGS[:] = ["--config", target]
+    if _checked_out_config() != found:
+        if found is None:
+            text = (
+                "This pull request adds a commit-check config. The checks "
+                "use the defaults, as the base branch has no config; the new "
+                "config takes effect after it merges"
+            )
+        else:
+            text = (
+                f"This pull request changes the commit-check config. The "
+                f"checks use {path} from the base branch; the change takes "
+                "effect after it merges"
+            )
+        print(f"::notice title=commit-check::{_annotation_escape(text)}")
+    return True
 
 
 def pr_head_rev() -> str | None:
@@ -830,7 +1011,7 @@ def run_check_json(
     raw output is kept so callers can fall back to showing it as text, and
     in that case it carries both streams so nothing the CLI said is lost.
     """
-    command = ["commit-check", "--format", "json"] + args
+    command = ["commit-check", "--format", "json", *CONFIG_ARGS] + args
     result = subprocess.run(
         command,
         input=input_text,
@@ -2724,14 +2905,20 @@ def log_error_and_exit(ret_code: int) -> None:
 
 
 def fail_on_invalid_flags() -> None:
-    """Stop with an error when a boolean input is neither true nor false."""
-    if not INVALID_FLAGS:
+    """Stop with an error when an input holds a value it does not take."""
+    invalid = CONFIG_SOURCE not in CONFIG_SOURCES
+    if not INVALID_FLAGS and not invalid:
         return
     for name, value in INVALID_FLAGS:
         input_name = name.lower().replace("_", "-")
         print(
             f"::error::Input {input_name} must be true or false, got "
             f"{_log_safe(repr(value))}"
+        )
+    if invalid:
+        print(
+            "::error::Input config-source must be head or base, got "
+            f"{_log_safe(repr(os.getenv('CONFIG_SOURCE', '')))}"
         )
     sys.exit(1)
 
@@ -2741,6 +2928,8 @@ def main():
     _reconfigure_io()
     fail_on_invalid_flags()
     log_env_vars()
+    if not use_base_config():
+        sys.exit(1)
 
     ret_code, results = run_commit_check()
 
