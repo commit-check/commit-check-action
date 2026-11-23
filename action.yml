@@ -53,6 +53,10 @@ inputs:
     description: label the pull request when an AI tool wrote any of it; true for the label ai-assisted, or the label's name
     required: false
     default: false
+  config-source:
+    description: where a pull request run reads cchk.toml; head for the checked-out files, base for the pull request's base branch, so a pull request cannot loosen its own rules
+    required: false
+    default: head
 outputs:
   result:
     description: Structured check results as JSON (status pass/warn/skip/fail + per-scope label, sha and checks). Consume with fromJSON(steps.<id>.outputs.result).
@@ -134,4 +138,5 @@ runs:
         MESSAGE_AI_ATTRIBUTION: ${{ inputs.message-ai-attribution }}
         PR_BODY_AI_ATTRIBUTION: ${{ inputs.pr-body-ai-attribution }}
         AI_LABEL: ${{ inputs.ai-label }}
+        CONFIG_SOURCE: ${{ inputs.config-source }}
         GITHUB_TOKEN: ${{ github.token }}

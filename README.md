@@ -87,6 +87,7 @@ runners need a few tools — see [Good to know](#good-to-know).
 | `pr-comments` | `false` | Post the report as a pull request comment, edited in place on later runs. Needs `pull-requests: write`; skipped on fork pull requests |
 | `job-summary` | `true` | Write the report to the job summary |
 | `dry-run` | `false` | Report failures as warnings and always exit 0 |
+| `config-source` | `head` | Where a pull request run reads the config: `head`, the checked-out files, or `base`, the base branch, so a pull request cannot loosen the rules it is checked against. See [Configuration](#configuration) |
 
 > [!TIP]
 > `pull_request` does not fire when a title or description is edited. With
@@ -111,6 +112,12 @@ file the CLI and the pre-commit hook use. Any setting can also come from a
 Priority: inputs > environment variables > config file > defaults. A rule
 listed under the config's top-level `warn` is reported in full but never fails
 the run. Every key: [configuration reference](https://commit-check.com/configuration/).
+
+With `config-source: base`, a pull request is checked against the config on its
+base branch, as CODEOWNERS is: a config change takes effect once it merges. If
+the base branch cannot be read, the step fails rather than fall back to the pull
+request's config. Under `pull_request` the workflow file itself comes from the
+pull request, so protect `.github/` with a CODEOWNERS review as well.
 
 ## What it looks like
 

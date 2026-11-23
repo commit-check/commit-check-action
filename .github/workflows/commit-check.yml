@@ -49,3 +49,6 @@ jobs:
           pr-body-ai-attribution: true
           # One leg is enough: all three would try to add the same label.
           ai-label: ${{ matrix.os == 'ubuntu-latest' }}
+          # Check every pull request against the rules on main, so a pull
+          # request cannot loosen them for itself.
+          config-source: base
