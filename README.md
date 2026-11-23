@@ -42,9 +42,9 @@ on:
 jobs:
   commit-check:
     runs-on: ubuntu-latest
-    permissions:  # use permissions because use of pr-comments
+    permissions:
       contents: read
-      pull-requests: write
+      pull-requests: write  # needed for pr-comments
     steps:
       - uses: actions/checkout@v7
         with:
