@@ -490,7 +490,7 @@ def _render_findings(checks: list[dict[str, str]], include_docs: bool) -> list[s
         # warning says so on its own line rather than borrow the row's mark.
         kind = " (warning)" if check.get("status") == "warn" else ""
         lines.append(f"      {_rule_label(check)}{kind}")
-        lines.extend(f"        {line}" for line in _finding_lines(check))
+        lines.extend(f"        {line}" if line else "" for line in _finding_lines(check))
         if include_docs and check.get("docs_url"):
             lines.append(f"        Docs: {check['docs_url']}")
     return lines

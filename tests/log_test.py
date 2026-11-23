@@ -259,7 +259,7 @@ class TestRenderStepLog(unittest.TestCase):
         listing = output.split("::endgroup::")[0]
         self.assertIn(
             "        Fix: feat: add login page\n"
-            "        \n"
+            "\n"
             "        Signed-off-by: Jane Doe <jane@example.com>\n",
             listing,
         )
