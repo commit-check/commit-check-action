@@ -168,8 +168,9 @@ class TestRenderStepLog(unittest.TestCase):
             ],
         )
 
-    def test_a_commit_body_in_the_value_stays_flush(self):
-        """A commit message is prose: its body is not indented."""
+    def test_a_commit_body_lines_up_under_the_subject(self):
+        """The body sits under the subject, so the error after it is not
+        read as a line of the message. The blank line stays empty."""
         check = make_check(
             "message",
             status="fail",
@@ -182,7 +183,7 @@ class TestRenderStepLog(unittest.TestCase):
             [
                 "value: added login page",
                 "",
-                "It also fixes the redirect.",
+                "       It also fixes the redirect.",
                 "The commit message should follow Conventional Commits.",
             ],
         )

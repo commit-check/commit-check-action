@@ -453,19 +453,16 @@ def _finding_lines(check: dict[str, str]) -> list[str]:
     or suggestion is split the same way, so every line of user text sits
     inside the tree rather than at column 0.
 
-    A value that is a list (the declaration boxes CC501 found in a PR
-    description) is aligned under its first item instead, so the second box
-    does not read as a line of its own. A commit message stays flush: its
-    body is prose, and the blank line already sets it apart.
+    The rest of a multi-line value (a commit body, the second declaration
+    box CC501 found) is aligned under its first line, so the value reads as
+    one block and the error after it is not mistaken for part of it. A blank
+    line stays empty, with no trailing spaces.
     """
     lines: list[str] = []
     if check.get("value"):
         first, *rest = str(check["value"]).splitlines()
         lines.append(f"value: {first}")
-        if _is_list([first, *rest]):
-            lines.extend(f"{'':7}{line}" for line in rest)
-        else:
-            lines.extend(rest)
+        lines.extend(f"{'':7}{line}" if line else "" for line in rest)
     lines.extend(check.get("error", "").splitlines())
     fix = check.get("fix", "")
     suggest = check.get("suggest", "")
@@ -478,11 +475,6 @@ def _finding_lines(check: dict[str, str]) -> list[str]:
         lines.append(f"Fix: {first}")
         lines.extend(rest)
     return lines
-
-
-def _is_list(lines: list[str]) -> bool:
-    """Whether every line is a Markdown list item (``- [ ] ...``, ``* ...``)."""
-    return all(line.lstrip().startswith(("- ", "* ", "+ ")) for line in lines)
 
 
 def _render_findings(checks: list[dict[str, str]], include_docs: bool) -> list[str]:
