@@ -18,11 +18,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
-
-import tomllib
 
 COMMIT_MESSAGE_DELIMITER = "\x00"
 RULES_URL = "https://commit-check.com/rules/"
