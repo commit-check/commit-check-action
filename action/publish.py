@@ -9,11 +9,6 @@ from typing import Any
 
 from action import cli, context, inputs, model, render
 
-#: Prefixes of report bodies written by earlier versions, kept so the first run
-#: after upgrading adopts the existing comment instead of posting a second one.
-#: Drop these once a release has been out long enough.
-LEGACY_TITLES = ("# Commit Check", "# Commit-Check")
-
 #: The colour a label gets when the Action has to create it.
 AI_LABEL_COLOR = "8250df"
 
@@ -142,18 +137,13 @@ def _find_own_comments(comments: list[Any]) -> tuple[Any | None, list[Any]]:
 
     Returns ``(target, stale)``. Only comments a bot posted with
     ``COMMENT_MARKER`` in them are ever edited or deleted: a person can paste
-    the marker too (quoting a report, say), and their comment is theirs. A comment from an earlier
-    version has no marker, so it is adopted (edited, which adds the marker)
-    when there is no marked comment yet, and only if a bot posted it: the
-    legacy signal is a title prefix, which a person can type by accident, and
-    editing someone's comment out from under them is not recoverable.
+    the marker too (quoting a report, say), and their comment is theirs.
+    A report from before v2.13.0 has no marker and is left as it is.
     """
     marked = [c for c in comments if render.COMMENT_MARKER in c.body and _is_bot(c)]
     if marked:
         return marked[-1], marked[:-1]
-
-    legacy = [c for c in comments if c.body.startswith(LEGACY_TITLES) and _is_bot(c)]
-    return (legacy[-1], []) if legacy else (None, [])
+    return None, []
 
 
 def add_pr_comments(results: list[model.ScopeResult]) -> int:
