@@ -48,6 +48,10 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Point to v2
+      shell: bash
+      run: |
+        echo "::notice title=Commit Check Action v2 is available::v1 gets no more updates. v2 shows each failure as a diff with how to fix it, and adds AI attribution and pull request title checks. Switch to commit-check/commit-check-action@v2; the commit-signoff, merge-base and imperative inputs and any .commit-check.yml move to cchk.toml: https://commit-check.com/migration/"
     - name: Install dependencies and run commit-check
       shell: bash
       run: |
