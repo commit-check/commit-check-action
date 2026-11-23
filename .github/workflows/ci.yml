@@ -42,7 +42,7 @@ jobs:
           python -m pip install -r requirements.txt pytest
 
       - name: Run unit tests
-        run: python -m pytest main_test.py -v
+        run: python -m pytest tests -v
 
   coverage:
     runs-on: ubuntu-latest
@@ -61,7 +61,7 @@ jobs:
           pip install pytest pytest-cov
       - name: Run tests with coverage
         run: |
-          pytest --cov=main --cov-report=xml --cov-report=term-missing main_test.py
+          pytest --cov=main --cov-report=xml --cov-report=term-missing tests
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
