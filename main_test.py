@@ -5807,7 +5807,7 @@ class TestConfigSource(unittest.TestCase):
         ok, out = self._use_base()
         self.assertTrue(ok)
         config = self._config_file()
-        self.assertTrue(config.startswith(self.runner_temp), config)
+        self.assertTrue(config.startswith(os.path.realpath(self.runner_temp)), config)
         self.assertTrue(config.endswith(os.path.join(".github", "cchk.toml")))
         self.assertEqual(self._read(config), 'inherit_from = "../shared.toml"\n')
         parent = os.path.join(os.path.dirname(os.path.dirname(config)), "shared.toml")
